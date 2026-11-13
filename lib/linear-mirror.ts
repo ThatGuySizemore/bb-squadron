@@ -157,7 +157,9 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
         id: node.id, identifier: node.identifier, title: node.title, description: node.description, url: node.url,
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
         state: node.state, labels: labels.length ? labels : existing?.labels ?? [],
-        inProject: node.team.id === binding.team.id && node.project?.id === binding.project.id,
+        // Match the open-issue walk's board eligibility, including relation endpoints.
+        inProject: node.team.id === binding.team.id && node.project?.id === binding.project.id &&
+          node.state.type !== "completed" && node.state.type !== "canceled",
       });
     }
     function putRelations(nodes: z.infer<typeof relationNode>[]) {

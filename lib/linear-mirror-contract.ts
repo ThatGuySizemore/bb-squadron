@@ -11,7 +11,10 @@ export const linearBindingSchema = z.object({
 export const mirrorIssueSchema = z.object({
   id, identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
   updatedAt: z.string(), teamId: id, projectId: id.nullable(), parentId: id.nullable(),
-  state: mirrorStateSchema, labels: z.array(mirrorLabelSchema), inProject: z.boolean(),
+  state: mirrorStateSchema, labels: z.array(mirrorLabelSchema),
+  // Eligible for the bound project's open board rows. Closed and external
+  // relation endpoints remain in issues with their status and inProject:false.
+  inProject: z.boolean(),
 });
 export const mirrorRelationSchema = z.object({ id, type: z.literal("blocks"), issueId: id, relatedIssueId: id });
 export const mirrorSnapshotSchema = z.object({

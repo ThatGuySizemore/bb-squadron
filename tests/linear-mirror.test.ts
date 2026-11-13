@@ -363,3 +363,31 @@ test("the owner binding RPC syncs immediately and rejects a project outside the 
   assert.equal(retained.binding.project.id, "linear-one");
   assert.equal(retained.issues[0].identifier, "FIX-1");
 });
+
+import { closedBlockerGraph } from "./fixtures/linear-mirror.js";
+
+test("completed and canceled project blockers retain their status without entering open board rows", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
+  t.after(() => harness.lifecycle.dispose());
+  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+    const request = JSON.parse(String(init?.body));
+    if (request.query.includes("SquadronBinding")) return Response.json(target);
+    if (request.query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
+    assert.ok(request.query.includes("SquadronIssues"));
+    return Response.json(closedBlockerGraph);
+  } }));
+  await mirror.bind(binding);
+  const snapshot = await mirror.sync("proj-one");
+  assert.deepEqual(snapshot.issues.filter((issue) => issue.inProject).map((issue) => issue.id), ["spec-one", "ticket-one"]);
+  assert.deepEqual(snapshot.issues.filter((issue) => !issue.inProject).map((issue) => [issue.id, issue.state.type]), [
+    ["same-done", "completed"], ["same-canceled", "canceled"],
+    ["outside-one", "completed"], ["outside-two", "unstarted"],
+  ]);
+  assert.deepEqual(snapshot.relations, [
+    { id: "blocks-ticket", type: "blocks", issueId: "spec-one", relatedIssueId: "ticket-one" },
+    { id: "same-done-block", type: "blocks", issueId: "same-done", relatedIssueId: "spec-one" },
+    { id: "same-canceled-block", type: "blocks", issueId: "same-canceled", relatedIssueId: "spec-one" },
+    { id: "external-done-block", type: "blocks", issueId: "outside-one", relatedIssueId: "spec-one" },
+    { id: "external-open-block", type: "blocks", issueId: "outside-two", relatedIssueId: "spec-one" },
+  ]);
+});

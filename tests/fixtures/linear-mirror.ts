@@ -45,3 +45,28 @@ export const remainingBlockers = { data: { issue: {
 export const vocabularyResponse = { data: {
   workflowStates: { nodes: [ready], pageInfo: end }, issueLabels: { nodes: [label], pageInfo: end },
 } };
+
+// Closed same-project endpoints arrive through relations, outside the open walk.
+export const completedProjectBlocker = {
+  id: "same-done", identifier: "FIX-8", title: "Completed project blocker", description: null,
+  url: "https://linear.app/fixture/issue/FIX-8", updatedAt: "2026-11-13T20:00:00.000Z",
+  team: { id: "team-one" }, project: { id: "linear-one" }, parent: null,
+  state: { id: "state-done", name: "Done", type: "completed" },
+};
+export const canceledProjectBlocker = {
+  id: "same-canceled", identifier: "FIX-9", title: "Canceled project blocker", description: null,
+  url: "https://linear.app/fixture/issue/FIX-9", updatedAt: "2026-11-13T20:00:00.000Z",
+  team: { id: "team-one" }, project: { id: "linear-one" }, parent: null,
+  state: { id: "state-canceled", name: "Canceled", type: "canceled" },
+};
+export const closedBlockerGraph = { data: { issues: {
+  nodes: [{ ...specIssue,
+    relations: { nodes: [{ id: "blocks-ticket", type: "blocks", issue: specIssue, relatedIssue: ticketIssue }], pageInfo: end },
+    inverseRelations: { nodes: [
+      { id: "same-done-block", type: "blocks", issue: completedProjectBlocker, relatedIssue: specIssue },
+      { id: "same-canceled-block", type: "blocks", issue: canceledProjectBlocker, relatedIssue: specIssue },
+      { id: "external-done-block", type: "blocks", issue: externalBlocker, relatedIssue: specIssue },
+      { id: "external-open-block", type: "blocks", issue: openExternalBlocker, relatedIssue: specIssue },
+    ], pageInfo: end },
+  }, ticketIssue], pageInfo: end,
+} } };

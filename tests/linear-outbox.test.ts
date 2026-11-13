@@ -16,7 +16,7 @@ test("the outbox sends an exact status payload once for a repeated key", async (
     return Response.json({ data: { issueUpdate: { success: true, issue: { id: "issue-1" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth);
-  const write = { dedupeKey: "status-1", operation: { type: "status" as const, issueId: "issue-1", stateId: "state-2" } };
+  const write = { bbProjectId: "bb-project-1", dedupeKey: "status-1", operation: { type: "status" as const, issueId: "issue-1", stateId: "state-2" } };
   const queued = await outbox.enqueue(write);
   assert.deepEqual(await outbox.enqueue(write), queued);
   await outbox.flush();
@@ -44,7 +44,7 @@ test("the scoped writer preserves a budget exhausted by its identity check", asy
     return Response.json({ data: { issueUpdate: { success: true, issue: { id: "issue-1" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth, { now: () => 0 });
-  const receipt = await outbox.enqueue({ dedupeKey: "identity-budget", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
+  const receipt = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "identity-budget", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
   await outbox.flush();
   assert.equal(writes, 0);
   assert.equal((await outbox.get(receipt.id))?.lastError, "rate_limited");
@@ -63,7 +63,7 @@ test("an ambiguous blocking-link creation reconciles its native relation UUID", 
     return Response.json({ data: { issueRelation: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", type: "blocks", issue: { id: "ticket-1" }, relatedIssue: { id: "ticket-2" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth, { uuid: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
-  const receipt = await outbox.enqueue({ dedupeKey: "ambiguous-blocks", operation: { type: "blocks", issueId: "ticket-1", blockedIssueId: "ticket-2" } });
+  const receipt = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "ambiguous-blocks", operation: { type: "blocks", issueId: "ticket-1", blockedIssueId: "ticket-2" } });
   await outbox.flush();
   assert.equal((await outbox.get(receipt.id))?.status, "delivered");
   assert.deepEqual(requests, [{
@@ -89,7 +89,7 @@ test("an unconfirmed comment stays pending and a missing reconciliation result r
     return Response.json({ data: { commentCreate: { success: true, comment: { id: writes++ === 0 ? "unrelated-comment" : body.variables.input.id } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth, { now: () => now, uuid: () => "99999999-9999-4999-8999-999999999999" });
-  const receipt = await outbox.enqueue({ dedupeKey: "confirm", operation: { type: "comment", issueId: "issue-1", body: "A comment", author: { role: "Worker", model: "model-1", avatarUrl: "https://example.test/avatar.png" } } });
+  const receipt = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "confirm", operation: { type: "comment", issueId: "issue-1", body: "A comment", author: { role: "Worker", model: "model-1", avatarUrl: "https://example.test/avatar.png" } } });
   await outbox.flush();
   assert.equal((await outbox.get(receipt.id))?.status, "pending");
   now = 1_000;
@@ -113,7 +113,7 @@ test("a new issue with a lost response reconciles the same UUID before dependent
     throw new Error("accepted but response lost");
   } });
   const outbox = registerLinearOutbox(bb, auth, { now: () => now, uuid: () => "88888888-8888-4888-8888-888888888888" });
-  const queued = await outbox.enqueue({ dedupeKey: "issue-lost", operation: { type: "issue", teamId: "team-1", projectId: "project-1", title: "A ticket", description: "Scope", labelIds: [] } });
+  const queued = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "issue-lost", operation: { type: "issue", teamId: "team-1", projectId: "project-1", title: "A ticket", description: "Scope", labelIds: [] } });
   await outbox.flush();
   now = 1_000;
   await outbox.flush();
@@ -143,7 +143,7 @@ test("a credential change during identity lookup cannot send a queued mutation t
     return Response.json({ data: { issueUpdate: { success: true, issue: { id: "issue-1" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth);
-  const receipt = await outbox.enqueue({ dedupeKey: "connection-race", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
+  const receipt = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "connection-race", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
   switchDuringLookup = true;
   await outbox.flush();
   assert.equal(sent, false);
@@ -162,7 +162,7 @@ test("the background service drains queued writes on startup and stops when abor
     return Response.json({ data: { issueUpdate: { success: true, issue: { id: "issue-1" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth);
-  const receipt = await outbox.enqueue({ dedupeKey: "startup", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
+  const receipt = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "startup", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
   const service = harness.behavior.runService("linear-outbox");
   t.after(() => service.controller.abort());
   await sent;
@@ -187,7 +187,7 @@ test("retries back off exponentially and never drain a queued write into another
     throw new Error("fake-sensitive-detail");
   } });
   const outbox = registerLinearOutbox(bb, auth, { now: () => now });
-  const queued = await outbox.enqueue({ dedupeKey: "backoff", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
+  const queued = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "backoff", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
   await outbox.flush();
   assert.equal((await outbox.get(queued.id))?.nextAttemptAt, 1_000);
   now = 1_000;
@@ -197,8 +197,8 @@ test("retries back off exponentially and never drain a queued write into another
   otherWorkspace = true;
   await outbox.flush();
   assert.equal(attempts, 2);
-  assert.equal((await outbox.get(queued.id))?.status, "pending");
-  assert.equal((await outbox.get(queued.id))?.lastError, "connection_changed");
+  assert.equal((await outbox.get(queued.id))?.status, "blocked");
+  assert.equal((await outbox.get(queued.id))?.lastError, "workspace_changed");
 });
 
 test("an accepted comment with a lost response reconciles by its original UUID after reload", async (t) => {
@@ -214,7 +214,7 @@ test("an accepted comment with a lost response reconciles by its original UUID a
     return Response.json({ data: { comments: { nodes: [{ id: "66666666-6666-4666-8666-666666666666", body: "Worker · model-1 (via Squadron)\n\nChecks passed.", issue: { id: "issue-1" } }] } } });
   };
   let outbox = registerLinearOutbox(bb, registerLinearAuth(bb, { fetch: fetcher }), { now: () => now, uuid: () => "66666666-6666-4666-8666-666666666666" });
-  const queued = await outbox.enqueue({ dedupeKey: "lost-comment", operation: { type: "comment", issueId: "issue-1", body: "Checks passed.", author: { role: "Worker", model: "model-1", avatarUrl: "https://example.test/avatar.png" } } });
+  const queued = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "lost-comment", operation: { type: "comment", issueId: "issue-1", body: "Checks passed.", author: { role: "Worker", model: "model-1", avatarUrl: "https://example.test/avatar.png" } } });
   await outbox.flush();
   assert.equal((await outbox.get(queued.id))?.lastError, "unavailable");
   ({ bb, harness } = await harness.lifecycle.reload((next) => {
@@ -247,8 +247,8 @@ test("a rate-limited head survives reload, honors retry-after and keeps later wr
   };
   let auth = registerLinearAuth(bb, { fetch: fetcher, now: () => now });
   let outbox = registerLinearOutbox(bb, auth, { now: () => now });
-  const first = await outbox.enqueue({ dedupeKey: "first", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
-  const second = await outbox.enqueue({ dedupeKey: "second", operation: { type: "labels", issueId: "issue-1", add: ["new-label"], remove: [] } });
+  const first = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "first", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } });
+  const second = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "second", operation: { type: "labels", issueId: "issue-1", add: ["new-label"], remove: [] } });
   await outbox.flush();
   assert.deepEqual(await outbox.get(first.id), { id: first.id, status: "pending", attempts: 1, nextAttemptAt: 6_000, lastError: "rate_limited" });
   ({ bb, harness } = await harness.lifecycle.reload((next) => {
@@ -280,8 +280,8 @@ test("blocking links and parent links use Linear's native relations", async (t) 
   } });
   let id = 0;
   const outbox = registerLinearOutbox(bb, auth, { uuid: () => id++ === 0 ? "44444444-4444-4444-8444-444444444444" : "55555555-5555-4555-8555-555555555555" });
-  await outbox.enqueue({ dedupeKey: "blocks-1", operation: { type: "blocks", issueId: "ticket-1", blockedIssueId: "ticket-2" } });
-  await outbox.enqueue({ dedupeKey: "parent-1", operation: { type: "parent", issueId: "ticket-2", parentId: "spec-1" } });
+  await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "blocks-1", operation: { type: "blocks", issueId: "ticket-1", blockedIssueId: "ticket-2" } });
+  await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "parent-1", operation: { type: "parent", issueId: "ticket-2", parentId: "spec-1" } });
   await outbox.flush();
   assert.deepEqual(writes, [{
     query: "mutation SquadronIssueRelationCreate($input: IssueRelationCreateInput!) { issueRelationCreate(input: $input) { success issueRelation { id } } }",
@@ -303,7 +303,7 @@ test("new issues preserve parent, project and route labels and return their dura
     return Response.json({ data: { issueCreate: { success: true, issue: { id: "33333333-3333-4333-8333-333333333333" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth, { uuid: () => "33333333-3333-4333-8333-333333333333" });
-  const queued = await outbox.enqueue({ dedupeKey: "ticket-1", operation: {
+  const queued = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "ticket-1", operation: {
     type: "issue", teamId: "team-1", projectId: "project-1", title: "Build the adapter", description: "A visible ticket.",
     parentId: "spec-1", labelIds: ["route-gpt", "ready-label"],
   } });
@@ -326,7 +326,7 @@ test("personal-key comments use a visible role/model label without app-only fiel
     return Response.json({ data: { commentCreate: { success: true, comment: { id: "22222222-2222-4222-8222-222222222222" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth, { uuid: () => "22222222-2222-4222-8222-222222222222" });
-  await outbox.enqueue({ dedupeKey: "personal-comment", operation: {
+  await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "personal-comment", operation: {
     type: "comment", issueId: "issue-1", body: "Ready for review.",
     author: { role: "Worker", model: "GPT-6.1 Sol", avatarUrl: "https://example.test/worker.png" },
   } });
@@ -350,7 +350,7 @@ test("app comments carry the agent name and avatar with a persisted caller UUID"
     return Response.json({ data: { commentCreate: { success: true, comment: { id: "11111111-1111-4111-8111-111111111111" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth, { uuid: () => "11111111-1111-4111-8111-111111111111" });
-  const queued = await outbox.enqueue({ dedupeKey: "comment-1", operation: {
+  const queued = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "comment-1", operation: {
     type: "comment", issueId: "issue-1", body: "The focused checks passed.",
     author: { role: "Worker", model: "GPT-6.1 Sol", avatarUrl: "https://example.test/worker.png" },
   } });
@@ -374,8 +374,8 @@ test("label changes use atomic add/remove payloads and reject a conflicting dedu
     return Response.json({ data: { issueUpdate: { success: true, issue: { id: "issue-1" } } } });
   } });
   const outbox = registerLinearOutbox(bb, auth);
-  await outbox.enqueue({ dedupeKey: "labels-1", operation: { type: "labels", issueId: "issue-1", add: ["label-route"], remove: ["label-old"] } });
-  await assert.rejects(outbox.enqueue({ dedupeKey: "labels-1", operation: { type: "labels", issueId: "issue-1", add: ["label-other"], remove: [] } }), /already belongs/);
+  await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "labels-1", operation: { type: "labels", issueId: "issue-1", add: ["label-route"], remove: ["label-old"] } });
+  await assert.rejects(outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "labels-1", operation: { type: "labels", issueId: "issue-1", add: ["label-other"], remove: [] } }), /already belongs/);
   await outbox.flush();
   assert.deepEqual(writes, [{
     query: "mutation SquadronIssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id } } }",

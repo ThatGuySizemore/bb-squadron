@@ -32,7 +32,93 @@ test("only a server-granted thread can write, and its signature comes from the a
   await assert.rejects(harness.behavior.callAgentTool("squadron_linear_write", { ...input, operation: { ...input.operation, issueId: "unrelated" } }, context), /not authorized/);
   await harness.behavior.callAgentTool("squadron_linear_write", input, context);
   await outbox.flush();
-  assert.deepEqual(writes, [{ input: { id: "77777777-7777-4777-8777-777777777777", issueId: "seed-1", body: "Planning thread · actual-model (via Squadron)\n\nThe spec is drafted." } }]);
+  assert.deepEqual(writes, [{ input: { id: "77777777-7777-4777-8777-777777777777", issueId: "seed-1", body: "Planning thread · Actual Model (via Squadron)\n\nThe spec is drafted." } }]);
+});
+
+test("blocked agent receipts and project health expose safe reasons and references", async (t) => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-key" }, sdk: { threads: {
+    get: async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "bb-project-1" }),
+    defaultExecutionOptions: async () => ({ model: "gpt-6.1-sol", permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/start" }),
+  } } });
+  t.after(() => harness.lifecycle.dispose());
+  const outbox = registerLinearOutbox(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.query.startsWith("query SquadronIdentity")) return Response.json(personalIdentity);
+    return Response.json({ detail: "fake-private-error-detail" }, { status: 403 });
+  } }));
+  await outbox.bindThread({ threadId: "planner-thread", bbProjectId: "bb-project-1", workspaceId: "workspace-1", teamId: "team-1", projectId: "project-1", role: "Planning thread", avatarUrl: "https://example.test/planner.png", issueIds: ["seed-1"], labelIds: [], allowCreateIssues: false });
+  const context = { threadId: "planner-thread", projectId: "bb-project-1" };
+  const queued = JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", { dedupeKey: "blocked", operation: { type: "comment", issueId: "seed-1", body: "fake-private-body" } }, context)));
+  await outbox.flush();
+  assert.equal(JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_receipt", { id: queued.id }, context))).status, "blocked");
+  assert.deepEqual(await outbox.getHealth("bb-project-1"), { bbProjectId: "bb-project-1", pendingCount: 0, blockedCount: 1,
+    blocked: [{ id: queued.id, threadId: "planner-thread", issueIds: ["seed-1"], reason: "authentication" }], hasMore: false });
+});
+
+test("a custom model's provider display name is used instead of its identifier", async (t) => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-key" }, sdk: {
+    threads: {
+      get: async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "bb-project-1", providerId: "custom-provider" }),
+      defaultExecutionOptions: async () => ({ model: "custom-model-id", permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/start" }),
+    },
+    providers: { models: async () => ({ modelLoadError: null, models: [{ id: "catalog-id", model: "custom-model-id", displayName: "Fixture Model", defaultReasoningEffort: "high", description: "Fixture", isDefault: true, reasoningDiscovery: "known", supportedReasoningEfforts: [] }], permissionCeiling: "auto", providers: [], selectedOnlyModels: [] }) },
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  const outbox = registerLinearOutbox(bb, registerLinearAuth(bb, { fetch: async () => Response.json(personalIdentity) }));
+  await outbox.bindThread({ threadId: "planner-thread", bbProjectId: "bb-project-1", workspaceId: "workspace-1", teamId: "team-1", projectId: "project-1", role: "Planning thread", avatarUrl: "https://example.test/planner.png", issueIds: ["seed-1"], labelIds: [], allowCreateIssues: false });
+  const receipt = JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", { dedupeKey: "model", operation: { type: "comment", issueId: "seed-1", body: "The report." } }, { threadId: "planner-thread", projectId: "bb-project-1" })));
+  assert.equal(receipt.signature, "Planning thread · Fixture Model");
+});
+
+test("new comments use readable model names and an identical key keeps its original signature after a model change", async (t) => {
+  let model = "claude-opus-5-5";
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-key" }, sdk: { threads: {
+    get: async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "bb-project-1" }),
+    defaultExecutionOptions: async () => ({ model, permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/start" }),
+  } } });
+  t.after(() => harness.lifecycle.dispose());
+  const bodies: string[] = [];
+  const outbox = registerLinearOutbox(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.query.startsWith("query SquadronIdentity")) return Response.json(personalIdentity);
+    bodies.push(body.variables.input.body);
+    return Response.json({ data: { commentCreate: { success: true, comment: { id: body.variables.input.id } } } });
+  } }));
+  await outbox.bindThread({ threadId: "planner-thread", bbProjectId: "bb-project-1", workspaceId: "workspace-1", teamId: "team-1", projectId: "project-1", role: "Planning thread", avatarUrl: "https://example.test/planner.png", issueIds: ["seed-1"], labelIds: [], allowCreateIssues: false });
+  const context = { threadId: "planner-thread", projectId: "bb-project-1" };
+  const input = { dedupeKey: "report", operation: { type: "comment", issueId: "seed-1", body: "The approved plan." } };
+  const original = JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", input, context)));
+  assert.equal(original.signature, "Planning thread · Opus 5.5");
+  model = "gpt-6.1-sol";
+  assert.deepEqual(JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", input, context))), original);
+  await assert.rejects(harness.behavior.callAgentTool("squadron_linear_write", { ...input, operation: { ...input.operation, body: "Changed logical content." } }, context), /already belongs/);
+  await harness.behavior.callAgentTool("squadron_linear_write", { ...input, dedupeKey: "second-report", operation: { ...input.operation, body: "The new report." } }, context);
+  await outbox.flush();
+  assert.deepEqual(bodies, ["Planning thread · Opus 5.5 (via Squadron)\n\nThe approved plan.", "Planning thread · GPT-6.1 Sol (via Squadron)\n\nThe new report."]);
+});
+
+test("same-scope rebind retains only created issue ownership and a scope change drops it", async (t) => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-key" }, sdk: { threads: {
+    get: async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "bb-project-1" }),
+    defaultExecutionOptions: async () => ({ model: "actual-model", permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/start" }),
+  } } });
+  t.after(() => harness.lifecycle.dispose());
+  const outbox = registerLinearOutbox(bb, registerLinearAuth(bb, { fetch: async () => Response.json(personalIdentity) }));
+  const grant = { threadId: "planner-thread", bbProjectId: "bb-project-1", workspaceId: "workspace-1", teamId: "team-1", projectId: "project-1", role: "Planning thread" as const, avatarUrl: "https://example.test/planner.png", issueIds: ["seed-1"], labelIds: ["route-1", "ready-1"], allowCreateIssues: true };
+  const context = { threadId: "planner-thread", projectId: "bb-project-1" };
+  const call = (dedupeKey: string, operation: unknown) => harness.behavior.callAgentTool("squadron_linear_write", { dedupeKey, operation }, context);
+  await outbox.bindThread(grant);
+  const created = JSON.parse(String(await call("create", { type: "issue", title: "The ticket", description: "Scope", labelIds: ["ready-1"] })));
+  await outbox.bindThread({ ...grant, issueIds: [], labelIds: ["route-1"], allowCreateIssues: false });
+  await call("label-created", { type: "labels", issueId: created.entityId, add: ["route-1"], remove: [] });
+  await assert.rejects(call("old-seed", { type: "comment", issueId: "seed-1", body: "No retained seed" }), /not authorized/);
+  await assert.rejects(call("old-label", { type: "labels", issueId: created.entityId, add: ["ready-1"], remove: [] }), /not authorized/);
+  await assert.rejects(call("new-issue", { type: "issue", title: "Not allowed", description: "Scope", labelIds: [] }), /not authorized/);
+  await outbox.bindThread({ ...grant, projectId: "project-2", issueIds: [] });
+  await assert.rejects(call("old-project", { type: "comment", issueId: created.entityId, body: "No carried grant" }), /not authorized/);
+  await outbox.bindThread({ ...grant, issueIds: [] });
+  await outbox.bindThread({ ...grant, issueIds: [] });
+  await assert.rejects(call("old-tenure", { type: "comment", issueId: created.entityId, body: "No restored old ownership" }), /not authorized/);
 });
 
 test("an agent can inspect only its own safe receipts after a plugin reload", async (t) => {
@@ -47,7 +133,7 @@ test("an agent can inspect only its own safe receipts after a plugin reload", as
   const context = { threadId: "planner-thread", projectId: "bb-project-1" };
   const input = { dedupeKey: "receipt", operation: { type: "issue", title: "A ticket", description: "Private fixture body", labelIds: [] } };
   const queued = JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", input, context)));
-  const helper = await outbox.enqueue({ dedupeKey: "helper-receipt", operation: { type: "status", issueId: "seed-1", stateId: "state-1" } });
+  const helper = await outbox.enqueue({ bbProjectId: "bb-project-1", dedupeKey: "helper-receipt", operation: { type: "status", issueId: "seed-1", stateId: "state-1" } });
   ({ bb, harness } = await harness.lifecycle.reload((next) => { outbox = registerLinearOutbox(next, registerLinearAuth(next, { fetch: fetcher })); }));
   assert.deepEqual(JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", input, context))), queued);
   const receipt = await harness.behavior.callAgentTool("squadron_linear_receipt", { id: queued.id }, context);
@@ -82,12 +168,14 @@ test("planning writes stay in the granted project and can link only seed and new
   assert.deepEqual(JSON.parse(String(await call("spec", create))), spec);
   const ticket = JSON.parse(String(await call("ticket", { ...create, title: "The ticket", parentId: spec.entityId })));
   await call("parent", { type: "parent", issueId: "seed-1", parentId: spec.entityId });
-  await call("blocks", { type: "blocks", issueId: "seed-1", blockedIssueId: ticket.entityId });
+  const blocks = JSON.parse(String(await call("blocks", { type: "blocks", issueId: "seed-1", blockedIssueId: ticket.entityId })));
   await call("labels", { type: "labels", issueId: ticket.entityId, add: ["route-1"], remove: ["ready-1"] });
   await assert.rejects(call("external-blocker", { type: "blocks", issueId: "external", blockedIssueId: ticket.entityId }), /not authorized/);
   await outbox.flush();
   assert.equal(writes.length, 5);
   assert.deepEqual(writes[0], { input: { id: spec.entityId, teamId: "team-1", projectId: "project-1", title: "The spec", description: "Approved scope.", labelIds: ["ready-1"] } });
   assert.equal(writes[1].input.parentId, spec.entityId);
+  assert.deepEqual(writes[3], { input: { id: blocks.entityId, issueId: "seed-1", relatedIssueId: ticket.entityId, type: "blocks" } });
+  assert.deepEqual(writes[4], { id: ticket.entityId, input: { addedLabelIds: ["route-1"], removedLabelIds: ["ready-1"] } });
   assert.equal((await outbox.get(ticket.id))?.status, "delivered");
 });

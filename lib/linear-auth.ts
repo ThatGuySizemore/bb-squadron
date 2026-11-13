@@ -12,6 +12,8 @@ const messages = {
   graphql: "Linear could not complete the request.",
   configuration: "Configure the Squadron OAuth app in settings first.",
   rate_limited: "Linear's request budget is exhausted. Try again after the reset.",
+  workspace_changed: "Reconnect to the queued write's original Linear workspace before retrying.",
+  auth_mode_changed: "The queued write needs explicit recovery after the Linear auth mode changed.",
 } as const;
 
 export class LinearRequestError extends Error {
@@ -27,7 +29,7 @@ const credentialsSchema = z.object({ accessToken: z.string().min(1), refreshToke
 const tokenResponseSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive(), token_type: z.literal("Bearer") });
 
 export interface LinearAuth {
-  getConnection(): Promise<LinearConnectionState>;
+  getConnection(options?: { throwOnFailure: boolean }): Promise<LinearConnectionState>;
   graphql<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal, expected?: { workspaceId: string; mode: "app" | "personal" }): Promise<T>;
 }
 
@@ -177,8 +179,10 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());
     const expectedGeneration = generation;
     if (expected) {
-      const connection = await getConnection();
-      if (connection.status !== "connected" || connection.workspace?.id !== expected.workspaceId || connection.mode !== expected.mode) throw new LinearRequestError("not_connected");
+      const connection = await getConnection({ throwOnFailure: true });
+      if (connection.status !== "connected") throw new LinearRequestError("not_connected");
+      if (connection.workspace?.id !== expected.workspaceId) throw new LinearRequestError("workspace_changed");
+      if (connection.mode !== expected.mode) throw new LinearRequestError("auth_mode_changed");
     }
     if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());
     const header = await authorization();
@@ -221,7 +225,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     if (!body.data) throw new LinearRequestError("invalid_response");
     return body.data;
   }
-  async function getConnection(): Promise<LinearConnectionState> {
+  async function getConnection(options?: { throwOnFailure: boolean }): Promise<LinearConnectionState> {
     const expectedGeneration = generation;
     const { linearApiKey, linearCredentials } = await settings.get();
     const mode = linearCredentials ? "app" : "personal";
@@ -240,6 +244,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
         message: mode === "app" ? "Writes go out as the Squadron app." : `Writes go out under ${data.viewer.name}'s name.`,
       };
     } catch (error) {
+      if (options?.throwOnFailure) throw error;
       return { status: "failed", mode, actor: null, workspace: null,
         message: error instanceof LinearRequestError ? error.message : messages.unavailable };
     }
@@ -251,7 +256,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     return getConnection();
   }
   bb.rpc.register(linearContract, {
-    "linear.connection": getConnection, "linear.connect": connect, "linear.disconnect": disconnect,
+    "linear.connection": () => getConnection(), "linear.connect": connect, "linear.disconnect": disconnect,
     "linear.setup": async () => {
       const config = await settings.get();
       return { callbackUrl: redirectUri(), oauthConfigured: Boolean(config.linearOAuthClientId && config.linearOAuthClientSecret) };

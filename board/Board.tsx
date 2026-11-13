@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbNavigate } from "@get-bb/plugin-sdk/app";
+import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model";
-import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model";
-import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board";
-import type { BoardAction } from "../lib/fake-board";
-import { DITHER_VARS, layoutPixels } from "../lib/pixels";
-import { DoctorPanel } from "./Doctor";
+import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
+import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
+import { BOARD_CHANGED, type BoardChanged, type boardContract } from "../lib/board-contract.js";
+import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
+import type { BoardAction } from "../lib/fake-board.js";
+import { DITHER_VARS, layoutPixels } from "../lib/pixels.js";
+import { BindProject } from "./BindProject.js";
+import { DoctorPanel } from "./Doctor.js";
 
 // ---------- pixel primitives ----------
 
@@ -124,7 +126,7 @@ function Btn({ children, onClick, tone = "plain", disabled, title }: { children:
 
 const PRIORITY_LABEL = ["No priority", "Urgent", "High", "Medium", "Low"] as const;
 
-function PriorityDot({ priority }: { priority: UnplannedIssue["priority"] }) {
+function PriorityDot({ priority }: { priority: NonNullable<UnplannedIssue["priority"]> }) {
   const filled = priority === 1 ? 3 : priority === 0 ? 0 : 5 - priority;
   return (
     <span className="sq-priority" data-priority={priority} title={PRIORITY_LABEL[priority]}>
@@ -169,7 +171,7 @@ function useOpen() {
     },
     external(url: string, label: string) {
       if (url.includes("example")) toast(`Prototype: opens ${label}.`);
-      else window.open(url, "_blank", "noopener");
+      else if (!navigate.openUrl(url)) toast(`Couldn't open ${label}.`);
     },
   };
 }
@@ -350,10 +352,17 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
   );
 }
 
-const NEEDS_LABEL = { question: "Question", stopped: "Stopped", merge: "Merge" } as const;
+const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = { setup: "Setup", question: "Question", stopped: "Stopped", write: "Write", merge: "Merge" };
 
-function NeedsYouStrip({ items, dispatch }: { items: NeedsYouItem[]; dispatch: (a: BoardAction) => void }) {
+function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
+  items: NeedsYouItem[];
+  dispatch: (a: BoardAction) => void;
+  /** Controls for a setup item, such as choosing the Linear project. */
+  setup?: ReactNode;
+  onRetry?: (writeId: string) => Promise<void>;
+}) {
   const open = useOpen();
+  const [retrying, setRetrying] = useState<string | null>(null);
   if (items.length === 0) {
     return <p className="sq-clear">Nothing needs you. Every lane is flying on its own.</p>;
   }
@@ -363,14 +372,33 @@ function NeedsYouStrip({ items, dispatch }: { items: NeedsYouItem[]; dispatch: (
         <li key={item.key} className="sq-need" data-kind={item.kind}>
           <Dither levels={[3, 6, 3]} />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
-          <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" />
-          <span className="sq-need-text">{item.text}</span>
+          {item.ticketId ?? item.specId ? <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" /> : <span />}
+          <span className="sq-need-text">
+            {item.text}
+            {item.writeId ? <span className="sq-need-receipt"> Receipt <span className="sq-mono">{item.writeId}</span></span> : null}
+          </span>
           <span className="sq-need-actions">
-            {item.kind === "question" ? (
+            {item.kind === "setup" ? setup : null}
+            {item.kind === "write" && item.writeId && onRetry ? (
+              <Btn
+                tone="amber"
+                disabled={retrying === item.writeId}
+                onClick={() => {
+                  setRetrying(item.writeId!);
+                  void onRetry(item.writeId!).finally(() => setRetrying(null));
+                }}
+              >
+                {retrying === item.writeId ? "Retrying" : "Retry"}
+              </Btn>
+            ) : null}
+            {item.kind === "write" && item.threadId ? (
+              <Btn onClick={() => open.thread(item.threadId!, "the thread that asked for this write")}>Open thread</Btn>
+            ) : null}
+            {item.kind === "question" && item.threadId ? (
               <Btn
                 tone="amber"
                 onClick={() => {
-                  open.thread(item.threadId, `the worker thread for ${item.ticketId}`);
+                  open.thread(item.threadId!, `the worker thread for ${item.ticketId}`);
                   window.setTimeout(() => dispatch({ type: "answer", ticketId: item.ticketId! }), 900);
                 }}
               >
@@ -397,13 +425,28 @@ function NeedsYouStrip({ items, dispatch }: { items: NeedsYouItem[]; dispatch: (
   );
 }
 
+/** An issue's title, opening it in Linear when the row is real. */
+function IssueTitle({ title, url, className }: { title: string; url?: string; className: string }) {
+  const open = useOpen();
+  return url ? (
+    <button type="button" className={`${className} sq-issue-link`} title="Open in Linear" onClick={() => open.external(url, title)}>
+      {title}
+    </button>
+  ) : (
+    <span className={className}>{title}</span>
+  );
+}
+
 function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void }) {
-  const blocked = canStart(board, spec);
+  // Real specs carry the Helper core's reason; the demo computes its own.
+  const blocked = spec.startReason !== undefined ? spec.startReason : canStart(board, spec);
   return (
     <li className="sq-ready" data-blocked={blocked !== null}>
       <PixelText text={spec.id} cell={2} className="sq-ready-id" />
-      <span className="sq-ready-title">{spec.title}</span>
-      <span className="sq-ready-meta sq-num">{spec.ticketCount} tickets</span>
+      <IssueTitle title={spec.title} url={spec.url} className="sq-ready-title" />
+      <span className="sq-ready-meta sq-num">
+        {spec.ticketCount} {spec.ticketCount === 1 ? "ticket" : "tickets"}
+      </span>
       <span className="sq-ready-routes">
         {spec.routes.map((r, i) => (
           <AiChip key={i} route={r} />
@@ -417,6 +460,28 @@ function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; di
     </li>
   );
 }
+
+function UnplannedRow({ issue, onPlan }: { issue: UnplannedIssue; onPlan: (issueId: string) => void }) {
+  return (
+    <li>
+      {issue.priority !== undefined ? <PriorityDot priority={issue.priority} /> : <span />}
+      <span className="sq-unplanned-id sq-num">{issue.id}</span>
+      <span className="sq-unplanned-main">
+        <IssueTitle title={issue.title} url={issue.url} className="sq-unplanned-title" />
+        {issue.under ? <span className="sq-unplanned-under">{issue.under}</span> : null}
+      </span>
+      <span className="sq-unplanned-labels">
+        {issue.labels.map((l) => (
+          <span key={l} className="sq-tag">
+            {l}
+          </span>
+        ))}
+      </span>
+      <Btn onClick={() => onPlan(issue.id)}>Plan</Btn>
+    </li>
+  );
+}
+
 
 // ---------- simulation ----------
 
@@ -465,16 +530,39 @@ function useLandingClock(lanes: Lane[]): number {
   return Math.max(now, ...lanes.map((l) => l.landedAt ?? 0));
 }
 
-export function BoardPage() {
-  const [sim, send] = useReducer(simReducer, undefined, () => ({ board: initialBoard(), playing: true, speed: 1 as const }));
+/** Where the board's copy of Linear stands, in one muted line under the header. */
+function LinearLine({ board, now }: { board: Board; now: number }) {
+  const linear = board.linear;
+  if (!linear || linear.state === "disconnected" || linear.state === "unbound") return null;
+  const age = linear.syncedAt === null ? null : Math.max(0, Math.round((now - linear.syncedAt) / 60_000));
+  const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
+  const pending = board.writes?.pending ?? 0;
+  return (
+    <p className="sq-linear" data-state={linear.state} role="status" aria-live="polite">
+      <span className="sq-linear-project">{linear.project}</span>
+      <span>{linear.state === "current" ? read : linear.state === "failed" ? `${linear.message} ${read}` : linear.message}</span>
+      {pending > 0 ? <span className="sq-num">{pending} Linear {pending === 1 ? "write" : "writes"} waiting to send.</span> : null}
+    </p>
+  );
+}
+
+interface BoardViewProps {
+  board: Board;
+  dispatch: (a: BoardAction) => void;
+  /** The synthetic simulation; the live board passes false. */
+  demo: boolean;
+  modeSwitch: ReactNode;
+  onPlan: (issueId?: string) => void;
+  setup?: ReactNode;
+  onRetry?: (writeId: string) => Promise<void>;
+  /** Replaces Ready and Unplanned while the board can't show them. */
+  notice?: ReactNode;
+  footer?: ReactNode;
+}
+
+/** The board page, fed by the live Helper or by the synthetic simulation. */
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, setup, onRetry, notice, footer }: BoardViewProps) {
   const reduced = usePrefersReducedMotion();
-  useEffect(() => {
-    if (!sim.playing) return;
-    const id = window.setInterval(() => send({ type: "tick" }), sim.speed === 3 ? 700 : 2100);
-    return () => window.clearInterval(id);
-  }, [sim.playing, sim.speed]);
-  const board = sim.board;
-  const dispatch = (action: BoardAction) => send({ type: "board", action });
   const items = needsYou(board);
   const now = useLandingClock(board.lanes);
   const isLanding = (l: Lane) => l.state === "landed" && l.landedAt !== undefined && now - l.landedAt < LANDING_MS;
@@ -490,41 +578,50 @@ export function BoardPage() {
           <div className="sq-head-title">
             <h1>Squadron</h1>
             <FormationMark flying={flying.length} capacity={board.laneCapacity} />
+            {demo ? (
+              <span className="sq-tag" data-tone="amber">
+                Synthetic data
+              </span>
+            ) : null}
           </div>
           <p className="sq-head-counts sq-num">
             {flying.length} of {board.laneCapacity} lanes flying · {openTickets} tickets open · {items.length} {items.length === 1 ? "needs" : "need"} you
           </p>
           <div className="sq-head-actions">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={board.autoStart}
-              className="sq-switch"
-              onClick={() => dispatch({ type: "autoStart", on: !board.autoStart })}
-            >
-              <span className="sq-switch-track" aria-hidden="true">
-                <span className="sq-switch-knob" />
-              </span>
-              Auto-start ready specs
-            </button>
-            <Btn tone="primary" onClick={() => toast("Prototype: opens a planning thread (grill-with-docs → to-spec → to-tickets).")}>
+            {demo ? (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={board.autoStart}
+                className="sq-switch"
+                onClick={() => dispatch({ type: "autoStart", on: !board.autoStart })}
+              >
+                <span className="sq-switch-track" aria-hidden="true">
+                  <span className="sq-switch-knob" />
+                </span>
+                Auto-start ready specs
+              </button>
+            ) : null}
+            {modeSwitch}
+            <Btn tone="primary" onClick={() => onPlan()}>
               Plan a spec
             </Btn>
             <DoctorPanel />
           </div>
         </header>
+        <LinearLine board={board} now={Date.now()} />
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <h2 id="sq-needs-h">
             Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
           </h2>
-          <NeedsYouStrip items={items} dispatch={dispatch} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} />
         </section>
 
         <section className="sq-section" aria-labelledby="sq-flying-h">
           <h2 id="sq-flying-h">Flying</h2>
           {onLine.length === 0 ? (
-            <p className="sq-clear">No lanes flying. Start a ready spec below.</p>
+            <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
           ) : (
             onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} />)
           )}
@@ -532,7 +629,9 @@ export function BoardPage() {
 
         <section className="sq-section" aria-labelledby="sq-ready-h">
           <h2 id="sq-ready-h">Ready</h2>
-          {board.ready.length === 0 ? (
+          {notice ? (
+            <p className="sq-clear">{notice}</p>
+          ) : board.ready.length === 0 ? (
             <p className="sq-clear">No specs are ready. Plan one from Unplanned.</p>
           ) : (
             <ul className="sq-ready-list">
@@ -545,23 +644,15 @@ export function BoardPage() {
 
         <section className="sq-section" aria-labelledby="sq-unplanned-h">
           <h2 id="sq-unplanned-h">Unplanned</h2>
-          <ul className="sq-unplanned">
-            {board.unplanned.map((issue) => (
-              <li key={issue.id}>
-                <PriorityDot priority={issue.priority} />
-                <span className="sq-unplanned-id sq-num">{issue.id}</span>
-                <span className="sq-unplanned-title">{issue.title}</span>
-                <span className="sq-unplanned-labels">
-                  {issue.labels.map((l) => (
-                    <span key={l} className="sq-tag">
-                      {l}
-                    </span>
-                  ))}
-                </span>
-                <Btn onClick={() => toast(`Prototype: opens a planning thread on ${issue.id}.`)}>Plan</Btn>
-              </li>
-            ))}
-          </ul>
+          {notice ? null : board.unplanned.length === 0 ? (
+            <p className="sq-clear">Nothing unplanned. Every open issue belongs to a ready spec.</p>
+          ) : (
+            <ul className="sq-unplanned">
+              {board.unplanned.map((issue) => (
+                <UnplannedRow key={issue.id} issue={issue} onPlan={onPlan} />
+              ))}
+            </ul>
+          )}
         </section>
 
         {landed.length > 0 ? (
@@ -580,6 +671,39 @@ export function BoardPage() {
           </section>
         ) : null}
 
+        {footer}
+      </div>
+    </div>
+  );
+}
+
+function DemoSwitch({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} className="sq-switch" onClick={() => onChange(!on)}>
+      <span className="sq-switch-track" aria-hidden="true">
+        <span className="sq-switch-knob" />
+      </span>
+      Synthetic demo
+    </button>
+  );
+}
+
+/** The simulated factory. Every screen of it is labelled as synthetic. */
+function DemoBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
+  const [sim, send] = useReducer(simReducer, undefined, () => ({ board: initialBoard(), playing: true, speed: 1 as const }));
+  useEffect(() => {
+    if (!sim.playing) return;
+    const id = window.setInterval(() => send({ type: "tick" }), sim.speed === 3 ? 700 : 2100);
+    return () => window.clearInterval(id);
+  }, [sim.playing, sim.speed]);
+  return (
+    <BoardView
+      board={sim.board}
+      demo
+      modeSwitch={modeSwitch}
+      dispatch={(action) => send({ type: "board", action })}
+      onPlan={(issueId) => toast(issueId ? `Prototype: opens a planning thread on ${issueId}.` : "Prototype: opens a planning thread (grill-with-docs → to-spec → to-tickets).")}
+      footer={
         <footer className="sq-sim">
           <span className="sq-tag" data-tone="amber">
             Synthetic data
@@ -591,7 +715,72 @@ export function BoardPage() {
             <Btn onClick={() => send({ type: "reset" })}>Reset</Btn>
           </span>
         </footer>
-      </div>
-    </div>
+      }
+    />
   );
+}
+
+const EMPTY_BOARD: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], unplanned: [] };
+
+/** What the live page shows before it has a board, or when it can't get one. */
+export function liveNotice(state: { projectId: string | null; board: Board | null; failed: boolean }): string | null {
+  if (!state.projectId) return "Choose a BB project to see its board.";
+  if (state.failed) return "Couldn't load the board. Make sure BB is running, then try again.";
+  if (!state.board) return "Reading the board.";
+  const linear = state.board.linear?.state;
+  if (linear === "disconnected") return "Connect Linear to see this project's issues.";
+  if (linear === "unbound") return "Choose this project's Linear team and project above.";
+  if (linear === "catching-up" && state.board.linear?.syncedAt === null) return "Reading this project's issues from Linear.";
+  return null;
+}
+
+/** The real board for the BB project in view, read from the Helper. */
+function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
+  const { projectId } = useBbContext();
+  const rpc = useRpc<typeof boardContract>();
+  const [board, setBoard] = useState<Board | null>(null);
+  const [failed, setFailed] = useState(false);
+  const request = useRef(0);
+  const load = useCallback(async () => {
+    if (!projectId) return;
+    const current = ++request.current;
+    try {
+      const next = await rpc.call("board", { projectId });
+      if (current === request.current) { setBoard(next); setFailed(false); }
+    } catch {
+      if (current === request.current) setFailed(true);
+    }
+  }, [rpc, projectId]);
+  useEffect(() => {
+    setBoard(null); setFailed(false);
+    void load();
+    return () => { request.current++; };
+  }, [load]);
+  useRealtime(BOARD_CHANGED, (payload) => {
+    if ((payload as BoardChanged | null)?.projectId === projectId) void load();
+  });
+  useRealtime("linear-connection-changed", () => { void load(); });
+  const notice = liveNotice({ projectId, board, failed });
+  return (
+    <BoardView
+      board={board ?? EMPTY_BOARD}
+      demo={false}
+      modeSwitch={modeSwitch}
+      dispatch={() => undefined}
+      onPlan={() => toast("Planning threads aren't connected yet.")}
+      notice={notice ? (
+        <>
+          {notice}
+          {failed ? <> <Btn onClick={() => void load()}>Try again</Btn></> : null}
+        </>
+      ) : undefined}
+      setup={board?.linear?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
+    />
+  );
+}
+
+export function BoardPage() {
+  const [demo, setDemo] = useState(false);
+  const modeSwitch = <DemoSwitch on={demo} onChange={setDemo} />;
+  return demo ? <DemoBoard modeSwitch={modeSwitch} /> : <LiveBoard modeSwitch={modeSwitch} />;
 }

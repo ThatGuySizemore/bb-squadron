@@ -1,8 +1,8 @@
 // SYNTHETIC DATA. A simulated factory for the board prototype: specs,
 // tickets, threads and PRs here are invented so every state and animation
 // can be judged. The live Helper replaces this module.
-import type { Board, Lane, ReadySpec, Route, Ticket } from "./board-model";
-import { reviewerFor } from "./board-model";
+import type { Board, Lane, ReadySpec, Route, Ticket } from "./board-model.js";
+import { reviewerFor } from "./board-model.js";
 
 const OPUS: Route = { family: "claude", model: "Opus 5.5", effort: "high" };
 const SOL: Route = { family: "gpt", model: "GPT-6.1 Sol", effort: "high" };

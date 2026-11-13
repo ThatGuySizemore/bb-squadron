@@ -53,6 +53,16 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
   const inFlight = new Map<string, { binding: string; task: Promise<MirrorSnapshot> }>();
   let wake = new AbortController();
   const polls = new Map<string, { at: number; quiet: number }>();
+  // Server-side listeners (the board watcher) hear the same changes as pages.
+  const listeners = new Set<(bbProjectId: string) => void>();
+  function changed(bbProjectId: string) {
+    bb.realtime.publish("linear-mirror-changed", { bbProjectId });
+    for (const listener of listeners) listener(bbProjectId);
+  }
+  function onChange(listener: (bbProjectId: string) => void): () => void {
+    listeners.add(listener);
+    return () => { listeners.delete(listener); };
+  }
   async function graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
     const result = await linear.graphql<T>(query, variables, lifetime.signal);
     if (lifetime.signal.aborted) throw new LinearRequestError("unavailable");
@@ -109,7 +119,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
     })();
     polls.delete(value.bbProjectId);
     wake.abort(); wake = new AbortController();
-    bb.realtime.publish("linear-mirror-changed", { bbProjectId: value.bbProjectId });
+    changed(value.bbProjectId);
     return getSnapshot(value.bbProjectId);
   }
   function sync(bbProjectId: string, signal?: AbortSignal): Promise<MirrorSnapshot> {
@@ -135,7 +145,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
       if (JSON.stringify(snapshot.binding) !== expected) return snapshot;
       if (snapshot.binding) db.prepare("INSERT INTO mirror_snapshots VALUES (?, ?) ON CONFLICT(bb_project_id) DO UPDATE SET snapshot = excluded.snapshot")
         .run(bbProjectId, JSON.stringify({ ...snapshot, error: safe.message }));
-      if (snapshot.error !== safe.message) bb.realtime.publish("linear-mirror-changed", { bbProjectId });
+      if (snapshot.error !== safe.message) changed(bbProjectId);
       throw safe;
     }
   }
@@ -262,7 +272,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
     db.prepare("INSERT INTO mirror_snapshots VALUES (?, ?) ON CONFLICT(bb_project_id) DO UPDATE SET snapshot = excluded.snapshot")
       .run(bbProjectId, JSON.stringify(snapshot));
     if (previous.error || JSON.stringify([previous.issues, previous.relations, previous.labels, previous.states]) !== JSON.stringify([snapshot.issues, snapshot.relations, snapshot.labels, snapshot.states])) {
-      bb.realtime.publish("linear-mirror-changed", { bbProjectId });
+      changed(bbProjectId);
     }
     return snapshot;
   }
@@ -300,5 +310,5 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
     "linear.bind": async (input) => { await bind(input); return sync(input.bbProjectId); },
     "linear.snapshot": ({ bbProjectId }) => getSnapshot(bbProjectId),
   });
-  return { bind, getSnapshot, sync, catalog };
+  return { bind, getSnapshot, sync, catalog, onChange };
 }

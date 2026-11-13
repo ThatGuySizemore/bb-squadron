@@ -65,6 +65,14 @@ export interface Lane {
   landedAt?: number;
 }
 
+export interface Blocker {
+  id: string;
+  title: string;
+  url: string;
+  /** In another Linear team or project than the bound one. */
+  outside: boolean;
+}
+
 export interface ReadySpec {
   id: string;
   title: string;
@@ -72,14 +80,45 @@ export interface ReadySpec {
   routes: Route[];
   blockedBy: string[];
   acceptOwner: boolean;
+  /** The Linear issue, when the spec is real. */
+  url?: string;
+  /** Open blockers with their context, when the spec is real. */
+  blockers?: Blocker[];
+  /** Why Start is disabled, or null when it can start. Set by the Helper core. */
+  startReason?: string | null;
 }
 
 export interface UnplannedIssue {
   id: string;
   title: string;
-  /** Linear priority: 1 urgent … 4 low, 0 none. */
-  priority: 0 | 1 | 2 | 3 | 4;
+  /** Linear priority: 1 urgent … 4 low, 0 none. Absent when the mirror doesn't hold it. */
+  priority?: 0 | 1 | 2 | 3 | 4;
   labels: string[];
+  /** The Linear issue, when the row is real. */
+  url?: string;
+  /** Parent context for a sub-issue whose parent isn't a Ready spec. */
+  under?: string;
+}
+
+export interface LinearStatus {
+  state: "disconnected" | "unbound" | "catching-up" | "current" | "failed";
+  message: string;
+  /** When the copy on the board was read from Linear (ms since epoch). */
+  syncedAt: number | null;
+  /** "Team · Project" of the bound Linear project. */
+  project: string | null;
+}
+
+/** A Linear write the outbox can't deliver until the owner acts. */
+export interface BlockedWrite {
+  /** The outbox receipt. */
+  id: string;
+  /** The thread that asked for the write, when one did. */
+  threadId: string | null;
+  /** Issue identifiers the write touches, when the mirror knows them. */
+  issues: string[];
+  /** Safe reason from the outbox. Never a body or a credential. */
+  reason: string;
 }
 
 export interface Board {
@@ -90,22 +129,43 @@ export interface Board {
   lanes: Lane[];
   ready: ReadySpec[];
   unplanned: UnplannedIssue[];
+  /** Where the board's data stands with Linear. Absent on the synthetic demo. */
+  linear?: LinearStatus;
+  /** Linear writes from the outbox. Absent on the synthetic demo. */
+  writes?: { pending: number; blocked: BlockedWrite[]; more: number };
 }
 
-export type NeedsYouKind = "question" | "stopped" | "merge";
+export type NeedsYouKind = "setup" | "question" | "stopped" | "write" | "merge";
 
 export interface NeedsYouItem {
   key: string;
   kind: NeedsYouKind;
+  /** The spec or issue the item is about, or "" when none. */
   specId: string;
   ticketId?: string;
   text: string;
-  threadId: string;
+  threadId: string | null;
+  /** The outbox receipt to retry, for a blocked write. */
+  writeId?: string;
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
 export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
+  if (board.linear?.state === "disconnected" || board.linear?.state === "unbound") {
+    items.push({ key: "setup", kind: "setup", specId: "", text: board.linear.message, threadId: null });
+  }
+  for (const write of board.writes?.blocked ?? []) {
+    items.push({
+      key: `write:${write.id}`, kind: "write", specId: write.issues[0] ?? "", writeId: write.id, threadId: write.threadId,
+      text: `A Linear write${write.issues.length ? ` for ${write.issues.join(", ")}` : ""} couldn't go through. ${write.reason}`,
+    });
+  }
+  if (board.writes && board.writes.more > 0) {
+    const more = board.writes.more;
+    items.push({ key: "write:more", kind: "write", specId: "", threadId: null,
+      text: `${more} more Linear ${more === 1 ? "write" : "writes"} couldn't go through. Retry the ones above first.` });
+  }
   for (const lane of board.lanes) {
     if (lane.state === "merge-waits") {
       items.push({
@@ -138,7 +198,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { stopped: 0, question: 1, merge: 2 };
+  const order: Record<NeedsYouKind, number> = { setup: 0, stopped: 1, question: 2, write: 3, merge: 4 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 

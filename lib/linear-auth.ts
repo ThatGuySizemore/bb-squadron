@@ -28,7 +28,7 @@ const tokenResponseSchema = z.object({ access_token: z.string().min(1), refresh_
 
 export interface LinearAuth {
   getConnection(): Promise<LinearConnectionState>;
-  graphql<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal): Promise<T>;
+  graphql<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal, expected?: { workspaceId: string; mode: "app" | "personal" }): Promise<T>;
 }
 
 export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fetch; now?: () => number } = {}): LinearAuth {
@@ -173,9 +173,17 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     }
   }, { auth: "none" });
   bb.onDispose(() => { generation++; pending.clear(); lifetime.abort(); });
-  async function graphql<T>(query: string, variables: Record<string, unknown> = {}, signal?: AbortSignal): Promise<T> {
+  async function graphql<T>(query: string, variables: Record<string, unknown> = {}, signal?: AbortSignal, expected?: { workspaceId: string; mode: "app" | "personal" }): Promise<T> {
+    if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());
+    const expectedGeneration = generation;
+    if (expected) {
+      const connection = await getConnection();
+      if (connection.status !== "connected" || connection.workspace?.id !== expected.workspaceId || connection.mode !== expected.mode) throw new LinearRequestError("not_connected");
+    }
     if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());
     const header = await authorization();
+    if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
+    signal?.throwIfAborted();
     let response: Response;
     try {
       response = await request("https://api.linear.app/graphql", {
@@ -214,6 +222,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     return body.data;
   }
   async function getConnection(): Promise<LinearConnectionState> {
+    const expectedGeneration = generation;
     const { linearApiKey, linearCredentials } = await settings.get();
     const mode = linearCredentials ? "app" : "personal";
     if (!linearApiKey && !linearCredentials) return { status: "disconnected", mode: null, actor: null, workspace: null, message: "Connect Linear in Squadron settings." };
@@ -222,6 +231,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
         "query SquadronIdentity { viewer { id name } organization { id name } }",
       ));
       if (!result.success) throw new LinearRequestError("invalid_response");
+      if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
       const data = result.data;
       return {
         status: "connected", mode,

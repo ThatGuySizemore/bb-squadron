@@ -7,6 +7,7 @@ import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board";
 import type { BoardAction } from "../lib/fake-board";
 import { DITHER_VARS, layoutPixels } from "../lib/pixels";
+import { DoctorPanel } from "./Doctor";
 
 // ---------- pixel primitives ----------
 
@@ -509,6 +510,7 @@ export function BoardPage() {
             <Btn tone="primary" onClick={() => toast("Prototype: opens a planning thread (grill-with-docs → to-spec → to-tickets).")}>
               Plan a spec
             </Btn>
+            <DoctorPanel />
           </div>
         </header>
 

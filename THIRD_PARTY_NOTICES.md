@@ -3,7 +3,8 @@
 ## bb-plugin-linear
 
 The server adapter's credential getter, single GraphQL transport, response
-budget handling and injected transport test seam are adapted from
+budget handling and injected transport test seam, plus the mirror's
+complete-walk pagination, directed relations and tiered polling, are adapted from
 [bb-plugin-linear](https://github.com/vburojevic/bb-plugin-linear), inspected at
 commit `62d2401baf920301c37bc60744d60dc092eb8500`.
 

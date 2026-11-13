@@ -103,7 +103,7 @@ export function initialBoard(): Board {
         state: "landed",
         minutes: 188,
         acceptOwner: false,
-        landedAtTick: -40,
+        landedAt: Date.now() - 2 * 60 * 60 * 1000,
         pr: { number: 3, checks: "passing", url: "https://github.com/example/bb-squadron/pull/3" },
         tickets: [
           ticket("SQD-2", "Install from a local path", SOL, [], "done", 31),
@@ -212,7 +212,7 @@ export function step(prev: Board): Board {
 
 function land(board: Board, lane: Lane) {
   lane.state = "landed";
-  lane.landedAtTick = board.tick;
+  lane.landedAt = Date.now();
   for (const t of lane.tickets) t.state = "done";
 }
 

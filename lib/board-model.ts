@@ -61,7 +61,8 @@ export interface Lane {
   tickets: Ticket[];
   pr?: PullRequest;
   stopReason?: string;
-  landedAtTick?: number;
+  /** When the PR merged (ms since epoch). */
+  landedAt?: number;
 }
 
 export interface ReadySpec {

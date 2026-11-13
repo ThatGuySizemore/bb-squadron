@@ -9,10 +9,13 @@
   --sq-on-amber: #1d1600;
   /* Ink for marks and text: the state ink pulled toward the theme's foreground,
      so it stays readable on light and dark themes alike. */
-  --sq-amber-ink: color-mix(in oklab, var(--sq-amber) 62%, var(--foreground));
-  --sq-sky-ink: color-mix(in oklab, var(--sq-sky) 70%, var(--foreground));
-  --sq-red-ink: color-mix(in oklab, var(--sq-red) 78%, var(--foreground));
-  --sq-green-ink: color-mix(in oklab, var(--sq-green) 72%, var(--foreground));
+  --sq-amber-ink: color-mix(in oklab, var(--sq-amber) 46%, var(--foreground));
+  --sq-sky-ink: color-mix(in oklab, var(--sq-sky) 50%, var(--foreground));
+  --sq-red-ink: color-mix(in oklab, var(--sq-red) 62%, var(--foreground));
+  --sq-green-ink: color-mix(in oklab, var(--sq-green) 52%, var(--foreground));
+  --sq-rule-ink: color-mix(in oklab, var(--foreground) 30%, transparent);
+  /* A pixel rule: 2px on, 2px off. */
+  --sq-pixel-rule: repeating-linear-gradient(90deg, var(--sq-rule-ink) 0 2px, transparent 2px 4px);
   --sq-band: color-mix(in oklab, var(--foreground) 4.5%, var(--background));
   --sq-rule: var(--border);
   --sq-muted: var(--muted-foreground);
@@ -118,13 +121,22 @@
   align-items: center;
   gap: 8px;
   margin: 0 0 4px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--sq-rule);
+  position: relative;
+  padding-bottom: 9px;
   font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--sq-muted);
+}
+.sq-section h2::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--sq-pixel-rule);
 }
 .sq-count {
   padding: 0 6px;
@@ -173,7 +185,7 @@
   border-color: var(--sq-amber);
 }
 .sq-btn[data-tone="amber"]:hover {
-  background: color-mix(in oklab, var(--sq-amber) 86%, white);
+  background: color-mix(in oklab, var(--sq-amber) 88%, var(--foreground));
 }
 .sq-btn[data-tone="danger"] {
   color: var(--sq-red-ink);
@@ -204,7 +216,7 @@
   width: 30px;
   height: 16px;
   border: 1px solid color-mix(in oklab, var(--foreground) 35%, transparent);
-  border-radius: 1px;
+  border-radius: 0;
 }
 .sq-switch-knob {
   position: absolute;
@@ -371,7 +383,7 @@
 .sq-line {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(180px, 214px) minmax(0, 1fr) minmax(150px, 184px);
+  grid-template-columns: minmax(200px, 236px) minmax(0, 1fr);
   gap: 20px;
   padding: 16px 0;
   border-bottom: 1px solid var(--sq-rule);
@@ -381,8 +393,8 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 7px;
-  padding: 12px 12px 11px;
+  gap: 5px;
+  padding: 11px 12px 10px;
   background: var(--sq-band);
   border-top: 2px solid var(--sq-rule);
 }
@@ -452,24 +464,34 @@
   gap: 2px;
   height: 14px;
 }
+/* Each segment carries state twice: ink, and form (solid, dithered, tall, hollow). */
 .sq-progress > span[data-state] {
   flex: 1;
   max-width: 40px;
   height: 6px;
-  background: var(--sq-rule);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--sq-rule-ink);
 }
 .sq-progress > span[data-state="working"],
 .sq-progress > span[data-state="review"] {
+  box-shadow: none;
   background: var(--sq-sky);
+  -webkit-mask: var(--sq-d8) 0 0 / 8px 8px;
+  mask: var(--sq-d8) 0 0 / 8px 8px;
 }
 .sq-progress > span[data-state="question"] {
+  height: 12px;
+  box-shadow: none;
   background: var(--sq-amber);
 }
 .sq-progress > span[data-state="branch"],
 .sq-progress > span[data-state="done"] {
+  box-shadow: none;
   background: var(--sq-green);
 }
 .sq-progress > span[data-state="failed"] {
+  height: 12px;
+  box-shadow: none;
   background: var(--sq-red);
 }
 .sq-progress-count {
@@ -477,12 +499,43 @@
   font-size: 11px;
   color: var(--sq-muted);
 }
+.sq-rail {
+  position: relative;
+  min-width: 0;
+}
+/* Overflow cue: the rail dithers out to the page in three pixel steps. */
+.sq-fade {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  pointer-events: none;
+}
+.sq-fade > i {
+  width: 16px;
+  background: var(--background);
+}
+.sq-fade > i:nth-child(1) {
+  -webkit-mask: var(--sq-d5) 0 0 / 8px 8px;
+  mask: var(--sq-d5) 0 0 / 8px 8px;
+}
+.sq-fade > i:nth-child(2) {
+  -webkit-mask: var(--sq-d10) 0 0 / 8px 8px;
+  mask: var(--sq-d10) 0 0 / 8px 8px;
+}
+.sq-fade > i:nth-child(3) {
+  width: 24px;
+}
+/* The ruled sortie line the pegs sit on; it scrolls with them. */
 .sq-columns {
   display: flex;
   align-items: center;
   overflow-x: auto;
-  padding: 10px 2px 6px;
+  padding: 12px 2px 8px;
   scrollbar-width: thin;
+  background: var(--sq-pixel-rule) 0 50% / 100% 2px no-repeat local;
 }
 .sq-column {
   display: flex;
@@ -576,8 +629,14 @@ button.sq-peg:hover {
 .sq-peg[data-state="blocked"] {
   border-style: dashed;
 }
+.sq-peg-after {
+  font-family: var(--sq-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--foreground);
+}
 .sq-peg[data-size="slim"] {
-  width: 160px;
+  width: 168px;
   min-height: 0;
 }
 .sq-peg[data-size="slim"] .sq-peg-title {
@@ -698,14 +757,13 @@ button.sq-peg:hover {
   }
 }
 
-/* ---------- lane side ---------- */
+/* ---------- lane status (inside the tail card) ---------- */
 
-.sq-side {
+.sq-tail-status {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
-  padding-top: 2px;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 2px;
 }
 .sq-lane-state {
   display: inline-flex;
@@ -791,8 +849,8 @@ button.sq-peg:hover {
 
 .sq-burst {
   position: absolute;
-  left: 44px;
-  top: 26px;
+  left: 236px;
+  top: 50%;
   z-index: 3;
   pointer-events: none;
 }
@@ -825,12 +883,27 @@ button.sq-peg:hover {
   list-style: none;
 }
 .sq-ready {
+  position: relative;
   display: grid;
   grid-template-columns: auto minmax(160px, 1fr) auto auto auto minmax(0, auto) auto;
   align-items: center;
   gap: 16px;
   padding: 11px 4px;
   border-bottom: 1px solid var(--sq-rule);
+}
+.sq-ready::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: var(--foreground);
+  opacity: 0;
+  -webkit-mask: var(--sq-d2) 0 0 / 8px 8px;
+  mask: var(--sq-d2) 0 0 / 8px 8px;
+  transition: opacity 140ms steps(2, end);
+}
+.sq-ready:hover::before {
+  opacity: 0.14;
 }
 .sq-ready-title {
   font-size: 13.5px;
@@ -868,29 +941,33 @@ button.sq-peg:hover {
 }
 .sq-priority {
   justify-self: center;
-  display: block;
-  width: 4px;
-  height: 4px;
-  background: var(--sq-muted);
-}
-.sq-priority[data-priority="0"] {
-  background: none;
-  outline: 1px dashed var(--sq-muted);
-}
-.sq-priority[data-priority="1"] {
-  width: 10px;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
   height: 10px;
-  background: var(--sq-red);
 }
-.sq-priority[data-priority="2"] {
-  width: 8px;
-  height: 8px;
+.sq-priority > span[data-on] {
+  width: 3px;
+  background: var(--sq-rule-ink);
+}
+.sq-priority > span[data-on]:nth-child(1) {
+  height: 4px;
+}
+.sq-priority > span[data-on]:nth-child(2) {
+  height: 7px;
+}
+.sq-priority > span[data-on]:nth-child(3) {
+  height: 10px;
+}
+.sq-priority > span[data-on="true"] {
   background: var(--foreground);
 }
-.sq-priority[data-priority="3"] {
-  width: 6px;
-  height: 6px;
-  background: color-mix(in oklab, var(--foreground) 70%, transparent);
+.sq-priority-urgent {
+  width: 11px;
+  height: 10px;
+  background: var(--sq-red);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='10'%3E%3Cpath d='M0 0h11v10H0z M4 2v4h3V2z M4 7v2h3V7z' fill-rule='evenodd'/%3E%3C/svg%3E");
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='11' height='10'%3E%3Cpath d='M0 0h11v10H0z M4 2v4h3V2z M4 7v2h3V7z' fill-rule='evenodd'/%3E%3C/svg%3E");
 }
 .sq-landed li {
   display: grid;
@@ -904,6 +981,26 @@ button.sq-peg:hover {
 }
 .sq-landed-id {
   color: var(--sq-green-ink);
+}
+/* Spec numbers in lists sit on the same band as the lane tail cards. */
+.sq-ready-id,
+.sq-landed-id,
+.sq-need-id {
+  position: relative;
+  padding: 6px 8px;
+  background: var(--sq-band);
+}
+.sq-landed-id::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--sq-green);
+  opacity: 0.35;
+  -webkit-mask: var(--sq-d3) 0 0 / 8px 8px;
+  mask: var(--sq-d3) 0 0 / 8px 8px;
+}
+.sq-landed-id > svg {
+  position: relative;
 }
 
 /* ---------- simulation footer ---------- */
@@ -938,12 +1035,6 @@ button.sq-peg:hover {
   }
   .sq-line {
     grid-template-columns: minmax(0, 1fr);
-    gap: 12px;
-  }
-  .sq-side {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
     gap: 12px;
   }
   .sq-tail {
@@ -1003,6 +1094,9 @@ button.sq-peg:hover {
     opacity: 0.4 !important;
   }
   .sq-burst {
+    display: none;
+  }
+  .sq-ready::before {
     display: none;
   }
 }

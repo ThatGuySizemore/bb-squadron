@@ -1,0 +1,372 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-13T19:25:19.995Z",
+  "title": "Design System: BB Squadron",
+  "extensions": {
+    "colorMeta": {
+      "needs-you-amber": {
+        "role": "primary",
+        "displayName": "Needs-You Amber",
+        "canonical": "#f2a900",
+        "tonalRamp": [
+          "oklch(15% 0.165 79)",
+          "oklch(26% 0.165 79)",
+          "oklch(38% 0.165 79)",
+          "oklch(50% 0.165 79)",
+          "oklch(62% 0.165 79)",
+          "oklch(74% 0.165 79)",
+          "oklch(85% 0.165 79)",
+          "oklch(95% 0.165 79)"
+        ]
+      },
+      "working-sky": {
+        "role": "secondary",
+        "displayName": "Working Sky",
+        "canonical": "#3fa7d6",
+        "tonalRamp": [
+          "oklch(15% 0.12 232)",
+          "oklch(26% 0.12 232)",
+          "oklch(38% 0.12 232)",
+          "oklch(50% 0.12 232)",
+          "oklch(62% 0.12 232)",
+          "oklch(74% 0.12 232)",
+          "oklch(85% 0.12 232)",
+          "oklch(95% 0.12 232)"
+        ]
+      },
+      "stopped-red": {
+        "role": "tertiary",
+        "displayName": "Stopped Red",
+        "canonical": "#d7263d",
+        "tonalRamp": [
+          "oklch(15% 0.2 20)",
+          "oklch(26% 0.2 20)",
+          "oklch(38% 0.2 20)",
+          "oklch(50% 0.2 20)",
+          "oklch(62% 0.2 20)",
+          "oklch(74% 0.2 20)",
+          "oklch(85% 0.2 20)",
+          "oklch(95% 0.2 20)"
+        ]
+      },
+      "landed-green": {
+        "role": "tertiary",
+        "displayName": "Landed Green",
+        "canonical": "#2fa36b",
+        "tonalRamp": [
+          "oklch(15% 0.13 157)",
+          "oklch(26% 0.13 157)",
+          "oklch(38% 0.13 157)",
+          "oklch(50% 0.13 157)",
+          "oklch(62% 0.13 157)",
+          "oklch(74% 0.13 157)",
+          "oklch(85% 0.13 157)",
+          "oklch(95% 0.13 157)"
+        ]
+      },
+      "on-amber": {
+        "role": "primary",
+        "displayName": "On-Amber",
+        "canonical": "#1d1600"
+      },
+      "amber-ink": {
+        "role": "primary",
+        "displayName": "Amber Ink",
+        "canonical": "color-mix(in oklab, #f2a900 46%, var(--foreground))"
+      },
+      "sky-ink": {
+        "role": "secondary",
+        "displayName": "Sky Ink",
+        "canonical": "color-mix(in oklab, #3fa7d6 50%, var(--foreground))"
+      },
+      "red-ink": {
+        "role": "tertiary",
+        "displayName": "Red Ink",
+        "canonical": "color-mix(in oklab, #d7263d 62%, var(--foreground))"
+      },
+      "green-ink": {
+        "role": "tertiary",
+        "displayName": "Green Ink",
+        "canonical": "color-mix(in oklab, #2fa36b 52%, var(--foreground))"
+      },
+      "board-ground": {
+        "role": "neutral",
+        "displayName": "Board Ground (BB theme)",
+        "canonical": "var(--background)"
+      },
+      "board-ink": {
+        "role": "neutral",
+        "displayName": "Board Ink (BB theme)",
+        "canonical": "var(--foreground)"
+      },
+      "muted-ink": {
+        "role": "neutral",
+        "displayName": "Muted Ink (BB theme)",
+        "canonical": "var(--muted-foreground)"
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline (BB theme)",
+        "canonical": "var(--border)"
+      },
+      "band": {
+        "role": "neutral",
+        "displayName": "Band",
+        "canonical": "color-mix(in oklab, var(--foreground) 4.5%, var(--background))"
+      },
+      "rule-ink": {
+        "role": "neutral",
+        "displayName": "Rule Ink",
+        "canonical": "color-mix(in oklab, var(--foreground) 30%, transparent)"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Tail number",
+        "purpose": "5x7 pixel cell font for spec numbers only: cell 4 in lane tails, cell 2 in lists, with a screen-reader copy."
+      },
+      "headline": {
+        "displayName": "Page title",
+        "purpose": "\"Squadron\", once."
+      },
+      "title": {
+        "displayName": "Spec title",
+        "purpose": "Spec title in each tail card."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Needs-you text, empty states, Unplanned rows, header counts."
+      },
+      "body-small": {
+        "displayName": "Peg title",
+        "purpose": "Ticket titles on pegs, clamped to two lines."
+      },
+      "label": {
+        "displayName": "Section label",
+        "purpose": "Uppercase section headings on a pixel rule."
+      },
+      "meta": {
+        "displayName": "Meta",
+        "purpose": "Buttons, peg state, tags, AI chips, counts."
+      },
+      "mono": {
+        "displayName": "Mono id",
+        "purpose": "Ticket ids, branch names, issue ids; tabular figures."
+      }
+    },
+    "textures": [
+      {
+        "name": "--sq-d0 … --sq-d16",
+        "value": "Bayer 4x4 ordered-dither masks: 8px SVG tiles of 2px cells, level n of 16 inked",
+        "purpose": "The only texture. Used as mask-image under a state ink."
+      },
+      {
+        "name": "pixel-rule",
+        "value": "repeating-linear-gradient(90deg, rule-ink 0 2px, transparent 2px 4px), 2px tall",
+        "purpose": "Section rules and the sortie line through each rail."
+      }
+    ],
+    "shadows": [],
+    "motion": [
+      {
+        "name": "march",
+        "value": "600ms steps(3, end) infinite",
+        "purpose": "Working peg's 2px sky dashed border steps around its edge."
+      },
+      {
+        "name": "dither-cycle",
+        "value": "2.4s steps(1, end) infinite",
+        "purpose": "Stacked dither layers in working, needs-you and review pegs take turns."
+      },
+      {
+        "name": "needs-you-pulse",
+        "value": "3.6s steps(1, end) infinite",
+        "purpose": "Slow amber dither pulse in Needs-you rows."
+      },
+      {
+        "name": "checks-blink",
+        "value": "1s steps(1, end) infinite",
+        "purpose": "PR checks-pending dot."
+      },
+      {
+        "name": "glitch",
+        "value": "460ms steps(1, end) once",
+        "purpose": "A peg that fails shifts and slices once."
+      },
+      {
+        "name": "stamp",
+        "value": "420ms steps(3, end) once, scale 1.3 to 1",
+        "purpose": "A landed lane's tail number stamps green."
+      },
+      {
+        "name": "burst",
+        "value": "950ms cubic-bezier(0.16, 1, 0.3, 1), 35ms stagger",
+        "purpose": "28 green pixels sweep along the sortie line when a spec lands."
+      },
+      {
+        "name": "switch",
+        "value": "160ms steps(3, end)",
+        "purpose": "Auto-start switch knob."
+      },
+      {
+        "name": "hover",
+        "value": "120-140ms ease-out",
+        "purpose": "Button fill and peg border on hover."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "prefers-reduced-motion: reduce",
+        "purpose": "All animation and transition removed; first dither layer only at 40%; burst and row hover dither hidden."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "narrow (container)",
+        "value": "900px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Plain Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default lane and list action: Stop, Plan, Re-plan, simulation controls.",
+      "html": "<button class=\"ds-btn\">Stop</button>",
+      "css": ".ds-btn{display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid var(--border, #dcdcd6);border-radius:2px;background:var(--background, #f7f7f4);color:var(--foreground, #1c1c1c);font:600 12px/1 inherit;cursor:pointer;transition:background-color 120ms ease-out,border-color 120ms ease-out}.ds-btn:hover{background:color-mix(in oklab,var(--foreground, #1c1c1c) 6%,var(--background, #f7f7f4))}.ds-btn:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}.ds-btn:disabled{opacity:.42;cursor:not-allowed}"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Plan a spec, Start, Resume in a tail card.",
+      "html": "<button class=\"ds-btn-primary\">Plan a spec</button>",
+      "css": ".ds-btn-primary{display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid var(--foreground, #1c1c1c);border-radius:2px;background:var(--foreground, #1c1c1c);color:var(--background, #f7f7f4);font:600 12px/1 inherit;cursor:pointer;transition:background-color 120ms ease-out}.ds-btn-primary:hover{background:color-mix(in oklab,var(--foreground, #1c1c1c) 86%,var(--background, #f7f7f4))}.ds-btn-primary:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}"
+    },
+    {
+      "name": "Amber Button",
+      "kind": "button",
+      "refersTo": "button-amber",
+      "description": "Actions only the owner can take: Merge, Answer in thread, Resume in Needs you.",
+      "html": "<button class=\"ds-btn-amber\">Merge</button>",
+      "css": ".ds-btn-amber{display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid #f2a900;border-radius:2px;background:#f2a900;color:#1d1600;font:600 12px/1 inherit;cursor:pointer;transition:background-color 120ms ease-out}.ds-btn-amber:hover{background:color-mix(in oklab,#f2a900 86%,white)}.ds-btn-amber:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Cancel a lane; set apart from the other actions.",
+      "html": "<button class=\"ds-btn-danger\">Cancel</button>",
+      "css": ".ds-btn-danger{display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid color-mix(in oklab,#d7263d 45%,var(--border, #dcdcd6));border-radius:2px;background:transparent;color:color-mix(in oklab,#d7263d 62%,var(--foreground, #1c1c1c));font:600 12px/1 inherit;cursor:pointer}.ds-btn-danger:hover{background:color-mix(in oklab,#d7263d 9%,transparent)}.ds-btn-danger:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}"
+    },
+    {
+      "name": "Tag",
+      "kind": "chip",
+      "refersTo": "tag",
+      "description": "Issue labels and accept:owner; the amber variant marks synthetic data.",
+      "html": "<span class=\"ds-tag\">accept:owner</span> <span class=\"ds-tag ds-tag-amber\">Synthetic data</span>",
+      "css": ".ds-tag{display:inline-block;padding:1px 6px;border:1px solid var(--border, #dcdcd6);border-radius:2px;font:600 11px/1.4 inherit;color:var(--foreground, #1c1c1c);white-space:nowrap}.ds-tag-amber{color:#1d1600;background:#f2a900;border-color:#f2a900}"
+    },
+    {
+      "name": "Working Peg",
+      "kind": "custom",
+      "refersTo": "peg",
+      "description": "A ticket an agent is building: marching sky border, sky dither fill.",
+      "html": "<button class=\"ds-peg ds-peg-working\"><span class=\"ds-peg-fill\"></span><span class=\"ds-peg-top\"><span class=\"ds-peg-id\">SQD-14</span><span class=\"ds-peg-state\">Working</span></span><span class=\"ds-peg-title\">Sortie line with dependency columns</span><span class=\"ds-peg-foot\"><span>Opus 5.5 high</span><span>26m</span></span></button>",
+      "css": ".ds-peg{position:relative;isolation:isolate;display:flex;flex-direction:column;gap:5px;width:190px;min-height:80px;padding:8px 9px 7px;border:1px solid var(--border, #dcdcd6);border-radius:0;background:var(--background, #f7f7f4);color:var(--foreground, #1c1c1c);text-align:left;font:inherit;cursor:pointer;transition:border-color 140ms ease-out}.ds-peg>*{position:relative;z-index:1}.ds-peg:hover{border-color:color-mix(in oklab,var(--foreground, #1c1c1c) 45%,transparent)}.ds-peg:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}.ds-peg-top{display:flex;justify-content:space-between;gap:8px;font-size:11px}.ds-peg-id{font:650 11px ui-monospace,\"SF Mono\",Menlo,monospace;font-variant-numeric:tabular-nums}.ds-peg-state{font-weight:600;color:color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c))}.ds-peg-title{font-size:12.5px;line-height:1.3}.ds-peg-foot{display:flex;justify-content:space-between;margin-top:auto;font-size:11px;color:var(--muted-foreground, #6b6b66)}.ds-peg-working{border-color:transparent}.ds-peg-fill{position:absolute!important;inset:0;z-index:0!important;background:#3fa7d6;opacity:.5;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px}.ds-peg-working::before{content:\"\";position:absolute;inset:-1px;z-index:2;pointer-events:none;background:linear-gradient(90deg,#3fa7d6 50%,transparent 0) 0 0/6px 2px repeat-x,linear-gradient(90deg,#3fa7d6 50%,transparent 0) 0 100%/6px 2px repeat-x,linear-gradient(0deg,#3fa7d6 50%,transparent 0) 0 0/2px 6px repeat-y,linear-gradient(0deg,#3fa7d6 50%,transparent 0) 100% 0/2px 6px repeat-y;animation:ds-march 600ms steps(3,end) infinite}@keyframes ds-march{to{background-position:6px 0,-6px 100%,0 -6px,100% 6px}}@media (prefers-reduced-motion:reduce){.ds-peg-working::before{animation:none}}"
+    },
+    {
+      "name": "Needs-You Row",
+      "kind": "custom",
+      "refersTo": "needs-you-row",
+      "description": "What waits on the owner: doubled amber edge, amber dither, kind tag, pixel spec number, one action.",
+      "html": "<div class=\"ds-need\"><span class=\"ds-need-fill\"></span><span class=\"ds-need-kind\">Merge</span><span class=\"ds-need-text\">PR #47 passed checks and both reviews. accept:owner holds it for your merge.</span><button class=\"ds-need-btn\">Merge</button></div>",
+      "css": ".ds-need{position:relative;isolation:isolate;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:10px 12px;margin:3px;border:1px solid #f2a900;outline:1px solid #f2a900;outline-offset:2px;background:var(--background, #f7f7f4);color:var(--foreground, #1c1c1c)}.ds-need>*{position:relative;z-index:1}.ds-need-fill{position:absolute!important;inset:0;z-index:0!important;background:#f2a900;opacity:.2;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;animation:ds-pulse 3.6s steps(1,end) infinite}@keyframes ds-pulse{33.33%,100%{opacity:0}}.ds-need-kind{padding:2px 7px;font:700 11px inherit;letter-spacing:.04em;text-transform:uppercase;color:#1d1600;background:#f2a900}.ds-need-text{font-size:13px;line-height:1.45}.ds-need-btn{height:28px;padding:0 11px;border:1px solid #f2a900;border-radius:2px;background:#f2a900;color:#1d1600;font:600 12px inherit;cursor:pointer}.ds-need-btn:hover{background:color-mix(in oklab,#f2a900 86%,white)}.ds-need-btn:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}@media (prefers-reduced-motion:reduce){.ds-need-fill{animation:none;opacity:.4}}"
+    },
+    {
+      "name": "Progress Strip",
+      "kind": "custom",
+      "refersTo": "progress",
+      "description": "One segment per ticket: hollow waiting, dithered sky working, solid green in branch, tall amber or red when stuck.",
+      "html": "<div class=\"ds-progress\"><span data-s=\"done\"></span><span data-s=\"done\"></span><span data-s=\"working\"></span><span data-s=\"question\"></span><span data-s=\"ready\"></span><span data-s=\"ready\"></span><span class=\"ds-progress-count\">2/6 in branch</span></div>",
+      "css": ".ds-progress{display:flex;align-items:center;gap:2px;height:14px;width:320px}.ds-progress>span[data-s]{flex:1;max-width:40px;height:6px;box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--foreground, #1c1c1c) 30%,transparent)}.ds-progress>span[data-s=\"working\"]{box-shadow:none;background:#3fa7d6;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'0'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'0'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px}.ds-progress>span[data-s=\"done\"]{box-shadow:none;background:#2fa36b}.ds-progress>span[data-s=\"question\"]{height:12px;box-shadow:none;background:#f2a900}.ds-progress-count{margin-left:8px;font-size:11px;color:var(--muted-foreground, #6b6b66);font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Section Label",
+      "kind": "custom",
+      "refersTo": "label",
+      "description": "Uppercase section heading on a 2px-on, 2px-off pixel rule, with the amber count when something needs the owner.",
+      "html": "<h2 class=\"ds-section\">Needs you <span class=\"ds-count\">1</span></h2>",
+      "css": ".ds-section{position:relative;display:flex;align-items:center;gap:8px;margin:0;padding-bottom:9px;font:650 12px inherit;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-foreground, #6b6b66)}.ds-section::after{content:\"\";position:absolute;left:0;right:0;bottom:0;height:2px;background:repeating-linear-gradient(90deg,color-mix(in oklab,var(--foreground, #1c1c1c) 30%,transparent) 0 2px,transparent 2px 4px)}.ds-count{padding:0 6px;font-size:11px;line-height:18px;letter-spacing:0;color:#1d1600;background:#f2a900;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Ready Row Hover",
+      "kind": "custom",
+      "refersTo": "ready-row",
+      "description": "List row on a hairline; hover lays a sparse foreground dither (level 2) instead of a tint.",
+      "html": "<div class=\"ds-row\"><span class=\"ds-row-title\">Linear sync with blocking links</span><span class=\"ds-row-meta\">6 tickets</span></div>",
+      "css": ".ds-row{position:relative;display:flex;gap:16px;align-items:center;padding:11px 4px;border-bottom:1px solid var(--border, #dcdcd6);color:var(--foreground, #1c1c1c)}.ds-row::before{content:\"\";position:absolute;inset:0;pointer-events:none;background:var(--foreground, #1c1c1c);opacity:0;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;transition:opacity 140ms steps(2,end)}.ds-row:hover::before{opacity:.14}.ds-row-title{font-size:13.5px;font-weight:600}.ds-row-meta{font-size:12px;color:var(--muted-foreground, #6b6b66)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Ready-Room Sortie Board",
+    "overview": "The board is a squadron ready room's sortie board drawn inside BB. Each lane is one ruled line; its tickets sit on that line as pegs in dependency order, left to right, with small pixel chevrons between columns. Status has to read from across the room: what waits on the owner sits pinned at the top in amber, and what is flying shows how far along it is by how many pegs have gone green.\n\nThe material is BB's own theme. The ground, ink, muted ink and hairlines are BB's theme tokens, so the board works on any BB theme, light or dark. The only texture is ordered dither: Bayer 4x4 halftone masks cut from 2px cells. The only display type is a 5x7 pixel cell font for spec numbers, used like tail numbers on an airframe. Four state inks sit on top of the theme, and each state is also carried by form (a marching border, a doubled edge, a tall segment, a hollow outline), never by colour alone.\n\nMotion is stepped, never eased, except for one moment: the landing burst. Working pegs march their border and cycle their dither, the Needs-you strip pulses slowly, a stopped peg glitches once, and a landed tail number stamps green while pixels sweep down its line. Under reduced motion all of it becomes one still dither layer.",
+    "keyCharacteristics": [
+      "BB theme tokens for every neutral; four fixed state inks layered on top.",
+      "Bayer 4x4 ordered dither (`--sq-d0` … `--sq-d16`, 8px tiles of 2px cells) is the only texture.",
+      "A 5x7 pixel cell font for spec numbers only; BB's UI font for everything else.",
+      "Square board marks, 1px hairlines, 2px pixel rules (2px on, 2px off); no shadows.",
+      "Every state is ink plus form; every animation has a still pixel fallback."
+    ],
+    "rules": [
+      {
+        "name": "The Theme-Owns-Neutrals Rule",
+        "body": "No neutral is ever a literal value. Ground, ink, muted ink and hairline are BB's tokens; the band and rule ink are mixes of them. The board must look right on any BB theme without a single override.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ink-Toward-Foreground Rule",
+        "body": "State colours as fills stay fixed; state colours as text or marks use their `-ink` variant, mixed in OKLab toward the theme foreground (amber 46%, sky 50%, red 62%, green 52%), so labels stay legible on light and dark grounds.",
+        "section": "colors"
+      },
+      {
+        "name": "The Four-Inks Rule",
+        "body": "Amber means the owner, sky means an agent is working, red means stopped, green means in the branch or landed. No fifth hue, and no ink used for decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tail-Number Rule",
+        "body": "The pixel font is for spec numbers and nothing else. Prose, buttons and ticket ids stay in BB's UI font or mono; a second display face is never added.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Rule",
+        "body": "Every count, duration and id that can change while the owner watches uses tabular figures, so the line does not jitter as numbers tick.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat-Board Rule",
+        "body": "Nothing floats. Emphasis comes from a doubled edge, a heavier border or a denser dither, never from a shadow or a lift on hover.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** take every neutral from BB's theme tokens (`--background`, `--foreground`, `--muted-foreground`, `--border`) and derive the band (4.5%) and rule ink (30%) by mixing them.",
+      "**Do** use the `-ink` variant of a state colour for any text or small mark, and the fixed state colour for fills, edges and dither.",
+      "**Do** carry every state twice: ink plus form (march, doubled edge, tall segment, hollow outline, dashed border, size).",
+      "**Do** cut every texture from the Bayer 4x4 masks `--sq-d0` … `--sq-d16` on an 8px tile of 2px cells.",
+      "**Do** set spec numbers in the 5x7 pixel cell font (cell 4 in lane tails, cell 2 in lists), always with a screen-reader copy.",
+      "**Do** use 2px-on, 2px-off pixel rules for section rules and sortie lines, and 1px hairlines for rows and cards.",
+      "**Do** step animations (`steps()`), and give each one a still dither fallback under reduced motion.",
+      "**Do** keep amber for what waits on the owner and the actions only he can take."
+    ],
+    "donts": [
+      "**Don't** add a shadow or lift to any surface; the board is flat.",
+      "**Don't** round board marks; pegs, cards, rows and segments stay at 0px, controls at 2px.",
+      "**Don't** show a state by colour alone, or by motion alone.",
+      "**Don't** introduce a neutral as a literal hex or a fifth state hue.",
+      "**Don't** use the pixel font for prose, buttons or ticket ids, and don't load a web font.",
+      "**Don't** put white text on amber; use on-amber."
+    ]
+  }
+}

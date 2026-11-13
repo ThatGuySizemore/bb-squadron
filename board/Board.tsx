@@ -10,7 +10,8 @@ import { DITHER_VARS, layoutPixels } from "../lib/pixels";
 
 // ---------- pixel primitives ----------
 
-function PixelText({ text, cell = 3, gap = 1, className }: { text: string; cell?: number; gap?: number; className?: string }) {
+function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: number; gap?: number; className?: string }) {
+  gap ??= cell >= 3 ? 1 : 0;
   const run = useMemo(() => layoutPixels(text), [text]);
   const pitch = cell + gap;
   return (
@@ -44,8 +45,8 @@ function FormationMark({ flying, capacity }: { flying: number; capacity: number 
     <svg
       role="img"
       aria-label={`${flying} of ${capacity} lanes flying`}
-      width={21 * 3}
-      height={9 * 3}
+      width={21 * 4}
+      height={9 * 4}
       viewBox="0 0 21 9"
       shapeRendering="crispEdges"
       className="sq-formation"
@@ -73,15 +74,16 @@ function Dither({ levels }: { levels: number[] }) {
   );
 }
 
-/** A short spray of pixels when a spec lands. */
+/** Pixels sweep along the sortie line when a spec lands. */
 function Burst() {
   const bits = useMemo(
     () =>
-      Array.from({ length: 22 }, (_, i) => {
-        const angle = (i / 22) * Math.PI * 2 + (i % 3) * 0.2;
-        const dist = 28 + ((i * 37) % 46);
-        return { dx: Math.cos(angle) * dist * 1.8, dy: Math.sin(angle) * dist * 0.7, size: i % 4 === 0 ? 4 : 2, delay: (i % 5) * 30 };
-      }),
+      Array.from({ length: 28 }, (_, i) => ({
+        dx: 120 + ((i * 53) % 760),
+        dy: ((i * 29) % 37) - 18,
+        size: i % 4 === 0 ? 4 : 2,
+        delay: (i % 7) * 35,
+      })),
     [],
   );
   return (
@@ -122,8 +124,14 @@ function Btn({ children, onClick, tone = "plain", disabled, title }: { children:
 const PRIORITY_LABEL = ["No priority", "Urgent", "High", "Medium", "Low"] as const;
 
 function PriorityDot({ priority }: { priority: UnplannedIssue["priority"] }) {
+  const filled = priority === 1 ? 3 : priority === 0 ? 0 : 5 - priority;
   return (
     <span className="sq-priority" data-priority={priority} title={PRIORITY_LABEL[priority]}>
+      {priority === 1 ? (
+        <span className="sq-priority-urgent" aria-hidden="true" />
+      ) : (
+        [0, 1, 2].map((i) => <span key={i} aria-hidden="true" data-on={i < filled} />)
+      )}
       <span className="sq-sr">{PRIORITY_LABEL[priority]}</span>
     </span>
   );
@@ -173,9 +181,13 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const state = ticket.state;
   const levels =
     state === "working" ? [2, 3, 5] : state === "question" ? [2, 4, 6, 4] : state === "review" ? [2] : state === "branch" ? [3] : state === "failed" || state === "done" ? [4] : [];
+  const waitsOn = ticket.blockedBy.filter((b) => {
+    const blocker = lane.tickets.find((t) => t.id === b);
+    return !blocker || (blocker.state !== "branch" && blocker.state !== "done");
+  });
   const sub =
     state === "blocked"
-      ? `Waits on ${ticket.blockedBy.filter((b) => lane.tickets.find((t) => t.id === b)?.state !== "branch").join(", ") || "blockers"}`
+      ? "Waiting"
       : state === "review"
         ? `Review · ${reviewer.model}`
         : TICKET_LABEL[state];
@@ -207,6 +219,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
         <span className="sq-peg-id">{ticket.id}</span>
         <span className="sq-peg-state">{sub}</span>
       </span>
+      {state === "blocked" ? <span className="sq-peg-after sq-num">after {waitsOn.join(", ") || "blockers"}</span> : null}
       <span className="sq-peg-title">{ticket.title}</span>
       <span className="sq-peg-foot">
         <AiChip route={state === "review" ? reviewer : ticket.route} />
@@ -226,53 +239,51 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       {body}
     </button>
   ) : (
-    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${sub}`}>
+    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${state === "blocked" ? `waits on ${waitsOn.join(", ")}` : sub}`}>
       {body}
     </div>
   );
 }
 
-function SortieLine({ lane, dispatch, justLanded }: { lane: Lane; dispatch: (a: BoardAction) => void; justLanded: boolean }) {
+function useOverflow<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setOverflow(el.scrollWidth - el.clientWidth - el.scrollLeft > 4);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    el.addEventListener("scroll", check, { passive: true });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("scroll", check);
+    };
+  });
+  return [ref, overflow] as const;
+}
+
+function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean }) {
   const open = useOpen();
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
+  const [railRef, overflow] = useOverflow<HTMLDivElement>();
   return (
     <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
+      {landing ? <Burst /> : null}
       <div className="sq-tail">
-        {justLanded ? <Burst /> : null}
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
         <h3 className="sq-line-title">{lane.title}</h3>
         <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, `the Lead thread for ${lane.specId}`)}>
           <AiChip route={lane.lead} prefix="Lead" />
         </button>
-        <span className="sq-branch">{lane.branch}</span>
-      </div>
-      <div className="sq-track">
-        <div className="sq-progress" role="img" aria-label={`${done} of ${lane.tickets.length} tickets in the branch`}>
-          {lane.tickets.map((t) => (
-            <span key={t.id} data-state={t.state} />
-          ))}
-          <span className="sq-progress-count sq-num">
-            {done}/{lane.tickets.length}
+        <div className="sq-tail-status">
+          <span className="sq-lane-state" data-lane={lane.state}>
+            {LANE_LABEL[lane.state]}
           </span>
+          <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
-        <div className="sq-columns">
-          {columns.map((col, i) => (
-            <div key={i} className="sq-column">
-              {i > 0 ? <span className="sq-chevron" aria-hidden="true" /> : null}
-              <div className="sq-column-stack">
-                {col.map((t) => (
-                  <Peg key={t.id} ticket={t} lane={lane} />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="sq-side">
-        <span className="sq-lane-state" data-lane={lane.state}>
-          {LANE_LABEL[lane.state]}
-        </span>
         {lane.state === "spec-review" ? <AiChip route={reviewerFor(lane.lead)} prefix="Reviewer" /> : null}
         {lane.pr ? (
           <button type="button" className="sq-pr" data-checks={lane.pr.checks} onClick={() => open.external(lane.pr!.url, `PR #${lane.pr!.number} on GitHub`)}>
@@ -281,26 +292,57 @@ function SortieLine({ lane, dispatch, justLanded }: { lane: Lane; dispatch: (a: 
             <span className="sq-pr-checks">{lane.pr.checks === "passing" ? "checks pass" : lane.pr.checks === "failing" ? "checks fail" : "checks running"}</span>
           </button>
         ) : null}
-        <span className="sq-time sq-num">{formatMinutes(lane.minutes)} in lane</span>
-        <div className="sq-actions">
-          {lane.state === "merge-waits" ? (
-            <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: lane.specId })}>
-              Merge
-            </Btn>
-          ) : null}
-          {lane.state === "stopped" ? (
-            <Btn tone="primary" onClick={() => dispatch({ type: "resume", specId: lane.specId })}>
-              Resume
-            </Btn>
-          ) : null}
-          {lane.state === "flying" ? <Btn onClick={() => dispatch({ type: "stop", specId: lane.specId })}>Stop</Btn> : null}
-          {lane.state !== "landed" ? (
+        <span className="sq-branch">{lane.branch}</span>
+        {lane.state !== "landed" ? (
+          <div className="sq-actions">
+            {lane.state === "merge-waits" ? (
+              <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: lane.specId })}>
+                Merge
+              </Btn>
+            ) : null}
+            {lane.state === "stopped" ? (
+              <Btn tone="primary" onClick={() => dispatch({ type: "resume", specId: lane.specId })}>
+                Resume
+              </Btn>
+            ) : null}
+            {lane.state === "flying" ? <Btn onClick={() => dispatch({ type: "stop", specId: lane.specId })}>Stop</Btn> : null}
             <span className="sq-isolated">
               <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
                 Cancel
               </Btn>
             </span>
+          </div>
+        ) : null}
+      </div>
+      <div className="sq-track">
+        <div className="sq-progress" role="img" aria-label={`${done} of ${lane.tickets.length} tickets in the branch`}>
+          {lane.tickets.map((t) => (
+            <span key={t.id} data-state={t.state} title={`${t.id}: ${TICKET_LABEL[t.state]}`} />
+          ))}
+          <span className="sq-progress-count sq-num">
+            {done}/{lane.tickets.length} in branch
+          </span>
+        </div>
+        <div className="sq-rail" data-overflow={overflow}>
+          {overflow ? (
+            <span className="sq-fade" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
           ) : null}
+          <div className="sq-columns" ref={railRef}>
+            {columns.map((col, i) => (
+              <div key={i} className="sq-column">
+                {i > 0 ? <span className="sq-chevron" aria-hidden="true" /> : null}
+                <div className="sq-column-stack">
+                  {col.map((t) => (
+                    <Peg key={t.id} ticket={t} lane={lane} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </article>
@@ -407,24 +449,19 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
-/** Spec ids that landed since the last render, for the burst. */
-function useJustLanded(lanes: Lane[]): Set<string> {
-  const prev = useRef(new Map<string, LaneState>());
-  const [fresh, setFresh] = useState<Set<string>>(new Set());
+const LANDING_MS = 1600;
+
+/** Re-renders once a landing's burst window has passed. */
+function useLandingClock(lanes: Lane[]): number {
+  const [now, setNow] = useState(() => Date.now());
+  const pending = lanes.filter((l) => l.landedAt !== undefined && now - l.landedAt < LANDING_MS);
   useEffect(() => {
-    const landed = new Set<string>();
-    for (const lane of lanes) {
-      const before = prev.current.get(lane.specId);
-      if (lane.state === "landed" && before && before !== "landed") landed.add(lane.specId);
-    }
-    prev.current = new Map(lanes.map((l) => [l.specId, l.state]));
-    if (landed.size > 0) {
-      setFresh(landed);
-      const t = window.setTimeout(() => setFresh(new Set()), 1400);
-      return () => window.clearTimeout(t);
-    }
-  }, [lanes]);
-  return fresh;
+    if (pending.length === 0) return;
+    const until = Math.min(...pending.map((l) => l.landedAt! + LANDING_MS));
+    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, until - Date.now()) + 20);
+    return () => window.clearTimeout(t);
+  });
+  return Math.max(now, ...lanes.map((l) => l.landedAt ?? 0));
 }
 
 export function BoardPage() {
@@ -438,9 +475,11 @@ export function BoardPage() {
   const board = sim.board;
   const dispatch = (action: BoardAction) => send({ type: "board", action });
   const items = needsYou(board);
+  const now = useLandingClock(board.lanes);
+  const isLanding = (l: Lane) => l.state === "landed" && l.landedAt !== undefined && now - l.landedAt < LANDING_MS;
   const flying = board.lanes.filter((l) => l.state !== "landed");
-  const landed = board.lanes.filter((l) => l.state === "landed");
-  const justLanded = useJustLanded(board.lanes);
+  const onLine = board.lanes.filter((l) => l.state !== "landed" || isLanding(l));
+  const landed = board.lanes.filter((l) => l.state === "landed" && !isLanding(l));
   const openTickets = flying.reduce((n, l) => n + l.tickets.filter((t) => t.state !== "branch" && t.state !== "done").length, 0);
 
   return (
@@ -482,16 +521,11 @@ export function BoardPage() {
 
         <section className="sq-section" aria-labelledby="sq-flying-h">
           <h2 id="sq-flying-h">Flying</h2>
-          {flying.length === 0 ? (
+          {onLine.length === 0 ? (
             <p className="sq-clear">No lanes flying. Start a ready spec below.</p>
           ) : (
-            flying.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} justLanded={false} />)
+            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} />)
           )}
-          {landed
-            .filter((l) => justLanded.has(l.specId))
-            .map((lane) => (
-              <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} justLanded />
-            ))}
         </section>
 
         <section className="sq-section" aria-labelledby="sq-ready-h">

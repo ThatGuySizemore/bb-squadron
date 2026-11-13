@@ -6,12 +6,18 @@ import { readFileSync } from "node:fs";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
 import type { Board } from "../lib/board-model.js";
+import { needsYou } from "../lib/board-model.js";
+import { registerLinearAuth } from "../lib/linear-auth.js";
+import { registerLinearOutbox } from "../lib/linear-outbox.js";
+import { registerLinearMirror } from "../lib/linear-mirror.js";
+import { registerBoard } from "../lib/board-service.js";
 import { binding, workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 
 function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e-key" }) {
   return createFakePluginHost({
+    pluginId: "squadron",
     settings,
     sdk: {
       projects: { get: async () => ({
@@ -181,4 +187,55 @@ test("empty, disconnected, unbound and failed boards each say what to do", async
   assert.equal(liveNotice({ projectId: "p", board: status("unbound"), failed: false }), "Choose this project's Linear team and project above.");
   assert.equal(liveNotice({ projectId: "p", board: status("catching-up"), failed: false }), "Reading this project's issues from Linear.");
   assert.equal(liveNotice({ projectId: "p", board: status("failed", 1), failed: false }), null, "a failed read keeps the last copy");
+});
+
+test("a blocked Linear write waits in Needs you until the owner's Retry sends it back to the outbox", async (t) => {
+  const linear = workspace();
+  const sent: string[] = [];
+  const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
+    const { query } = JSON.parse(String(init?.body)) as { query: string };
+    if (!query.trimStart().startsWith("mutation")) return linear.fetch(url, init);
+    sent.push(query.trim().split(/[\s({]/)[1]);
+    return Response.json({ errors: [{ message: "fake-private-rejection-detail" }] });
+  });
+  const { bb, harness } = host();
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  // The same wiring as server.ts, keeping the outbox handle so the test can queue a write.
+  const auth = registerLinearAuth(bb);
+  const outbox = registerLinearOutbox(bb, auth);
+  const mirror = registerLinearMirror(bb, auth);
+  registerBoard(bb, { connection: () => auth.getConnection(), mirror, writes: (id) => outbox.getHealth(id) });
+  await harness.behavior.callRpc("linear.bind", binding);
+  const write = await outbox.enqueue({ bbProjectId: "proj-one", dedupeKey: "status-fix-9",
+    operation: { type: "status", issueId: "fix-9", stateId: "state-started" } });
+  await outbox.flush();
+
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(needsYou(board).map(({ kind, specId, writeId, text }) => ({ kind, specId, writeId, text })), [{
+    kind: "write", specId: "FIX-9", writeId: write.id,
+    text: "A Linear write for FIX-9 couldn't go through. Linear refused the write. Check the issue in Linear, then retry.",
+  }]);
+  assert.ok(!JSON.stringify(board).includes("fake-private-rejection-detail"));
+
+  const receipt = await harness.behavior.callRpc("linear.outboxResume", { bbProjectId: "proj-one", id: write.id }) as { status: string };
+  assert.equal(receipt.status, "pending");
+  const retried = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual([retried.writes?.blocked, retried.writes?.pending], [[], 1]);
+  assert.ok(sent.length >= 1, "the write went to Linear only through the outbox");
+});
+
+test("repeated signals with no change in the board model publish nothing", async (t) => {
+  const linear = workspace();
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const { bb, harness } = host();
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  const auth = registerLinearAuth(bb);
+  const mirror = registerLinearMirror(bb, auth);
+  const board = registerBoard(bb, { connection: () => auth.getConnection(), mirror });
+  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  const before = harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length;
+  await Promise.all([board.refresh("proj-one"), board.refresh("proj-one"), board.refresh("proj-one")]);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  assert.equal(harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length, before);
 });

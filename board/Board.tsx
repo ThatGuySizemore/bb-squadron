@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
 import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
 import { BOARD_CHANGED, type BoardChanged, type boardContract } from "../lib/board-contract.js";
+import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, layoutPixels } from "../lib/pixels.js";
@@ -737,29 +738,55 @@ export function liveNotice(state: { projectId: string | null; board: Board | nul
 /** The real board for the BB project in view, read from the Helper. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract>();
+  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract>();
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
+  const shown = useRef("");
   const load = useCallback(async () => {
     if (!projectId) return;
     const current = ++request.current;
     try {
       const next = await rpc.call("board", { projectId });
-      if (current === request.current) { setBoard(next); setFailed(false); }
+      if (current !== request.current) return;
+      setFailed(false);
+      // Duplicate signals often return the same board; keep the view as it is.
+      const json = JSON.stringify(next);
+      if (json !== shown.current) { shown.current = json; setBoard(next); }
     } catch {
       if (current === request.current) setFailed(true);
     }
   }, [rpc, projectId]);
   useEffect(() => {
-    setBoard(null); setFailed(false);
+    shown.current = ""; setBoard(null); setFailed(false);
     void load();
     return () => { request.current++; };
+  }, [load]);
+  // The outbox can announce the same parked write several times; read once per burst.
+  const pending = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(pending.current), []);
+  const loadSoon = useCallback(() => {
+    window.clearTimeout(pending.current);
+    pending.current = window.setTimeout(() => { void load(); }, 400);
   }, [load]);
   useRealtime(BOARD_CHANGED, (payload) => {
     if ((payload as BoardChanged | null)?.projectId === projectId) void load();
   });
-  useRealtime("linear-connection-changed", () => { void load(); });
+  useRealtime("linear-outbox-changed", (payload) => {
+    if ((payload as { bbProjectId?: string } | null)?.bbProjectId === projectId) loadSoon();
+  });
+  useRealtime("linear-connection-changed", () => { loadSoon(); });
+  const retry = useCallback(async (id: string) => {
+    if (!projectId) return;
+    try {
+      const receipt = await rpc.call("linear.outboxResume", { bbProjectId: projectId, id });
+      if (receipt.status === "blocked") toast("The write still couldn't go through. Its reason is on the board.");
+    } catch (error) {
+      // The server's refusals are written for the owner, such as reconnecting the original workspace.
+      toast(error instanceof Error && error.message ? error.message : "Couldn't retry the write. Try again.");
+    }
+    await load();
+  }, [rpc, projectId, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
@@ -775,6 +802,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         </>
       ) : undefined}
       setup={board?.linear?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
+      onRetry={retry}
     />
   );
 }

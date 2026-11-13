@@ -6,9 +6,10 @@ import { experimental_joinHostPath as joinHostPath } from "@get-bb/plugin-sdk";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
 import { BOARD_CHANGED, boardContract, type BoardChanged } from "./board-contract.js";
-import { helperCore, type HelperInput, type WriteHealth } from "./helper-core.js";
+import { helperCore, type HelperInput } from "./helper-core.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
+import type { OutboxHealth } from "./linear-outbox-contract.js";
 import { parseSquadronSettings, type SettingsResult } from "./squadron-settings.js";
 
 export interface BoardSources {
@@ -19,7 +20,7 @@ export interface BoardSources {
     onChange(listener: (bbProjectId: string) => void): () => void;
   };
   /** The outbox's safe health read for one BB project. */
-  writes?(bbProjectId: string): WriteHealth | null;
+  writes?(bbProjectId: string): Promise<OutboxHealth>;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -41,6 +42,9 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     connection?: { at: number; value: HelperInput["connection"] };
     settings?: { at: number; value: SettingsResult | null };
     catchingUp?: Promise<unknown>;
+    /** The refresh in progress, and whether another signal arrived during it. */
+    refreshing?: Promise<void>;
+    again?: boolean;
   }>();
   const project = (id: string) => {
     let entry = projects.get(id);
@@ -72,8 +76,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const at = now();
     if (fresh || !entry.connection || at - entry.connection.at > REUSE_MS) entry.connection = { at, value: await connection() };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
-    let writes: WriteHealth | null = null;
-    try { writes = sources.writes?.(projectId) ?? null; } catch { writes = null; }
+    let writes: OutboxHealth | null = null;
+    try { writes = await sources.writes?.(projectId) ?? null; } catch { writes = null; }
     const { board, commands } = helperCore({
       snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
       settings: entry.settings.value, writes, now: now(), startedAt,
@@ -97,10 +101,20 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (!first) bb.realtime.publish(BOARD_CHANGED, { projectId } satisfies BoardChanged);
   }
 
-  async function refresh(projectId: string) {
-    if (lifetime.signal.aborted) return;
-    try { publishIfChanged(projectId, await compute(projectId, false)); }
-    catch (error) { bb.log.warn(`board refresh failed: ${error instanceof Error ? error.name : "unknown"}`); }
+  /** Signals that arrive during a refresh coalesce into one more pass. */
+  function refresh(projectId: string): Promise<void> {
+    const entry = project(projectId);
+    if (entry.refreshing) { entry.again = true; return entry.refreshing; }
+    const run = async () => {
+      do {
+        entry.again = false;
+        if (lifetime.signal.aborted) return;
+        try { publishIfChanged(projectId, await compute(projectId, false)); }
+        catch (error) { bb.log.warn(`board refresh failed: ${error instanceof Error ? error.name : "unknown"}`); }
+      } while (entry.again);
+    };
+    const running = entry.refreshing = run().finally(() => { if (entry.refreshing === running) entry.refreshing = undefined; });
+    return running;
   }
 
   sources.mirror.onChange((projectId) => { void refresh(projectId); });

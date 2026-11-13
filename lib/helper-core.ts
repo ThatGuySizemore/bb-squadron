@@ -3,6 +3,7 @@
 // should run. Spec B extends this function with lanes; Spec A only reads.
 import type { Blocker, Board, LinearStatus, ReadySpec, Route, UnplannedIssue } from "./board-model.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
+import type { OutboxBlockedReason, OutboxHealth } from "./linear-outbox-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 
 export interface HelperInput {
@@ -10,21 +11,24 @@ export interface HelperInput {
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
   /** The outbox's health for this BB project, or null when it couldn't be read. */
-  writes: WriteHealth | null;
+  writes: OutboxHealth | null;
   /** Spec B reads the clock for lane time limits. */
   now: number;
   /** When this run of the plugin started; older snapshots predate it. */
   startedAt: number;
 }
 
-/** The outbox health read, as linear.outboxHealth returns it. */
-export interface WriteHealth {
-  bbProjectId: string;
-  pendingCount: number;
-  blockedCount: number;
-  blocked: { id: string; threadId: string | null; issueIds: string[]; reason: string }[];
-  hasMore: boolean;
-}
+/** What the owner reads for each reason the outbox parks a write. */
+const BLOCKED_WRITE_TEXT: Record<OutboxBlockedReason, string> = {
+  workspace_changed: "Linear is now connected to another workspace. Reconnect the original workspace, then retry.",
+  auth_mode_changed: "The Linear connection changed between app and personal. Retry to send it with the current connection.",
+  authentication: "Linear rejected the credential. Reconnect Linear in Squadron settings, then retry.",
+  configuration: "The Squadron app setup is incomplete. Finish it in Squadron settings, then retry.",
+  invalid_operation: "The queued write is invalid, so Linear can't take it. Open its thread to ask for it again.",
+  graphql: "Linear refused the write. Check the issue in Linear, then retry.",
+  conflict: "The issue changed in Linear since the write was queued. Check it, then retry. Squadron won't overwrite it.",
+  dependency_blocked: "It waits on an earlier write that couldn't go through. Retry that one first.",
+};
 
 export type HelperCommand = { type: "sync"; reason: "catch-up" };
 
@@ -141,7 +145,7 @@ export function helperCore(input: HelperInput): HelperOutput {
       ...(input.writes ? { writes: {
         pending: input.writes.pendingCount,
         blocked: input.writes.blocked.map((write) => ({
-          id: write.id, threadId: write.threadId, reason: write.reason,
+          id: write.id, threadId: write.threadId, reason: BLOCKED_WRITE_TEXT[write.reason],
           issues: write.issueIds.flatMap((id) => byId.get(id)?.identifier ?? []),
         })),
         more: Math.max(0, input.writes.blockedCount - input.writes.blocked.length),

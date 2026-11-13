@@ -32,7 +32,7 @@ export const workspaceIssues = { data: { issues: { nodes: [
 export const binding = { bbProjectId: "proj-one", teamId: "team-one", projectId: "linear-one" };
 
 /** Answers Squadron's read-only queries. Every mutation fails the test. */
-export function workspace(options: { issues?: () => Response } = {}) {
+export function workspace(options: { issues?: () => Response; vocabulary?: () => Response } = {}) {
   const operations: string[] = [];
   const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
     const { query } = JSON.parse(String(init?.body)) as { query: string };
@@ -48,7 +48,7 @@ export function workspace(options: { issues?: () => Response } = {}) {
         project: { id: "linear-one", name: "Fixture project", teams: { nodes: [{ id: "team-one" }], pageInfo: end } },
       } });
       case "SquadronIssues": return options.issues ? options.issues() : Response.json(workspaceIssues);
-      case "SquadronVocabulary": return Response.json(vocabularyResponse);
+      case "SquadronVocabulary": return options.vocabulary ? options.vocabulary() : Response.json(vocabularyResponse);
       default: throw new Error(`Unexpected Linear query ${name}`);
     }
   };

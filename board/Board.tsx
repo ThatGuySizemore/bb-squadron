@@ -6,9 +6,10 @@ import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, Ti
 import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
 import { BOARD_CHANGED, type BoardChanged, type boardContract } from "../lib/board-contract.js";
 import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
+import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { DITHER_VARS, layoutPixels } from "../lib/pixels.js";
+import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
 import { BindProject } from "./BindProject.js";
 import { DoctorPanel } from "./Doctor.js";
 
@@ -39,12 +40,6 @@ function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: nu
 
 /** Three slots in a V: the lanes the board can fly at once. */
 function FormationMark({ flying, capacity }: { flying: number; capacity: number }) {
-  const chevron = ["  #  ", " # # ", "#   #"];
-  const slots: Array<[number, number]> = [
-    [7, 0],
-    [0, 5],
-    [14, 5],
-  ];
   return (
     <svg
       role="img"
@@ -55,15 +50,9 @@ function FormationMark({ flying, capacity }: { flying: number; capacity: number 
       shapeRendering="crispEdges"
       className="sq-formation"
     >
-      {slots.slice(0, capacity).map(([ox, oy], i) =>
-        chevron.flatMap((row, y) =>
-          [...row].map((c, x) =>
-            c === "#" ? (
-              <rect key={`${i}.${x}.${y}`} x={ox + x + 1} y={oy + y + 1} width={1} height={1} className={i < flying ? "sq-formation-on" : "sq-formation-off"} />
-            ) : null,
-          ),
-        ),
-      )}
+      {formationCells(capacity).map(([i, x, y]) => (
+        <rect key={`${i}.${x}.${y}`} x={x} y={y} width={1} height={1} className={i < flying ? "sq-formation-on" : "sq-formation-off"} />
+      ))}
     </svg>
   );
 }
@@ -468,7 +457,7 @@ function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; di
   );
 }
 
-function UnplannedRow({ issue, onPlan }: { issue: UnplannedIssue; onPlan: (issueId: string) => void }) {
+function UnplannedRow({ issue, onPlan, opening }: { issue: UnplannedIssue; onPlan: (issueId: string) => void; opening: boolean }) {
   return (
     <li>
       {issue.priority !== undefined ? <PriorityDot priority={issue.priority} /> : <span />}
@@ -484,7 +473,9 @@ function UnplannedRow({ issue, onPlan }: { issue: UnplannedIssue; onPlan: (issue
           </span>
         ))}
       </span>
-      <Btn onClick={() => onPlan(issue.id)}>Plan</Btn>
+      <Btn disabled={opening} title={opening ? `Opening the planning thread for ${issue.id}` : undefined} onClick={() => onPlan(issue.id)}>
+        {opening ? "Opening…" : "Plan"}
+      </Btn>
     </li>
   );
 }
@@ -560,6 +551,8 @@ interface BoardViewProps {
   demo: boolean;
   modeSwitch: ReactNode;
   onPlan: (issueId?: string) => void;
+  /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
+  planning?: string | null;
   setup?: ReactNode;
   onRetry?: (writeId: string) => Promise<void>;
   /** Replaces Ready and Unplanned while the board can't show them. */
@@ -568,7 +561,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live Helper or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, setup, onRetry, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, setup, onRetry, notice, footer }: BoardViewProps) {
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
   const now = useLandingClock(board.lanes);
@@ -610,8 +603,8 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, setup, on
               </button>
             ) : null}
             {modeSwitch}
-            <Btn tone="primary" onClick={() => onPlan()}>
-              Plan a spec
+            <Btn tone="primary" disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : undefined} onClick={() => onPlan()}>
+              {planning === "" ? "Opening…" : "Plan a spec"}
             </Btn>
             <DoctorPanel />
           </div>
@@ -656,7 +649,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, setup, on
           ) : (
             <ul className="sq-unplanned">
               {board.unplanned.map((issue) => (
-                <UnplannedRow key={issue.id} issue={issue} onPlan={onPlan} />
+                <UnplannedRow key={issue.id} issue={issue} onPlan={onPlan} opening={planning === issue.id} />
               ))}
             </ul>
           )}
@@ -741,10 +734,28 @@ export function liveNotice(state: { projectId: string | null; board: Board | nul
   return null;
 }
 
+/** Start or reopen a planning thread, open it beside the board, and say when it can't write to Linear. */
+export async function planFromBoard(deps: {
+  start: (input: { projectId: string; issueId?: string }) => Promise<PlanningStarted>;
+  openThread: (threadId: string) => void;
+  notify: (text: string) => void;
+}, projectId: string, issueId?: string): Promise<void> {
+  try {
+    const started = await deps.start(issueId ? { projectId, issueId } : { projectId });
+    deps.openThread(started.threadId);
+    if (!started.writes) deps.notify(`This planning thread can't publish to Linear: ${started.message ?? "Squadron's Linear writes are unavailable."}`);
+  } catch (error) {
+    // The server's refusals are written for the owner.
+    deps.notify(error instanceof Error && error.message ? error.message : "Couldn't start planning. Try again.");
+  }
+}
+
 /** The real board for the BB project in view, read from the Helper. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract>();
+  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract>();
+  const open = useOpen();
+  const [planning, setPlanning] = useState<string | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -793,6 +804,17 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     }
     await load();
   }, [rpc, projectId, load]);
+  const plan = useCallback(async (issueId?: string) => {
+    if (!projectId || planning !== null) return;
+    setPlanning(issueId ?? "");
+    try {
+      await planFromBoard({
+        start: (input) => rpc.call("planning.start", input),
+        openThread: (threadId) => open.thread(threadId, "the planning thread"),
+        notify: (text) => { toast(text); },
+      }, projectId, issueId);
+    } finally { setPlanning(null); }
+  }, [rpc, projectId, planning, open]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
@@ -800,7 +822,8 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       demo={false}
       modeSwitch={modeSwitch}
       dispatch={() => undefined}
-      onPlan={() => toast("Planning threads aren't connected yet.")}
+      onPlan={(issueId) => void plan(issueId)}
+      planning={planning}
       notice={notice ? (
         <>
           {notice}

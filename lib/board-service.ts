@@ -2,7 +2,6 @@
 // runs the Helper core, carries out its commands, and publishes
 // `board-changed` whenever a project's board model changes.
 import { setTimeout as delay } from "node:timers/promises";
-import { experimental_joinHostPath as joinHostPath } from "@get-bb/plugin-sdk";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
 import { BOARD_CHANGED, boardContract, type BoardChanged } from "./board-contract.js";
@@ -10,7 +9,8 @@ import { helperCore, type HelperInput } from "./helper-core.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { OutboxHealth } from "./linear-outbox-contract.js";
-import { parseSquadronSettings, type SettingsResult } from "./squadron-settings.js";
+import { readProjectCheckout } from "./project-checkout.js";
+import type { SettingsResult } from "./squadron-settings.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
@@ -53,14 +53,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   };
 
   async function readSettings(projectId: string, signal: AbortSignal): Promise<SettingsResult | null> {
-    try {
-      const found = await bb.sdk.projects.get({ projectId, signal });
-      const source = found.sources.find((item) => item.isDefault);
-      const path = source && joinHostPath({ rootPath: source.path, relativePath: "docs/agents/squadron.md" });
-      if (!source || !path) return null;
-      const file = await bb.sdk.files.read({ hostId: source.hostId, path, rootPath: source.path, signal });
-      return file.contentEncoding === "utf8" ? parseSquadronSettings(file.content) : null;
-    } catch { return null; }
+    try { return (await readProjectCheckout(bb, projectId, signal))?.settings ?? null; }
+    catch { return null; }
   }
 
   async function connection(): Promise<HelperInput["connection"]> {

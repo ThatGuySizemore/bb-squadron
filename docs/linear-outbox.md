@@ -43,6 +43,7 @@ await outbox.bindThread({
   issueIds: seedIssueId ? [seedIssueId] : [],
   labelIds: safeRouteAndReadyLabelIds,
   allowCreateIssues: true,
+  blockerIssueIds: openIssuesInBoundProject,
 });
 ```
 
@@ -63,7 +64,10 @@ unavailable. A repeated key with identical logical content returns the original
 receipt and signature even after the thread's model or avatar changes. It never
 rewrites the queued author. Changed logical content still rejects.
 
-Each target issue, parent and blocker must be in that grant. Every label added
+Each target issue and parent must be in that grant's `issueIds`. A `blocks`
+write's blocked issue must be in `issueIds`; its blocker may be in `issueIds` or
+in the optional `blockerIssueIds`. A blocker reference permits no other
+operation on that issue, and an issue in neither list is refused. Every label added
 or removed must be allowed by it. Creating an issue extends the same grant with
 its UUID in the same database transaction that enqueues the write. Tool dedupe
 keys are scoped to the actual originating thread. Use one stable key for one

@@ -46,14 +46,17 @@ function host(options: HostOptions = {}) {
 }
 
 /** Mutations are recorded and confirmed; every read is the recorded workspace. */
-async function setup(t: import("node:test").TestContext, options: HostOptions = {}) {
-  const linear = workspace({ vocabulary });
+async function setup(t: import("node:test").TestContext, options: HostOptions & { vocabulary?: () => Response } = {}) {
+  const linear = workspace({ vocabulary: options.vocabulary ?? vocabulary });
   const mutations: Array<{ input: Record<string, unknown> }> = [];
   const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const { query, variables } = JSON.parse(String(init?.body)) as { query: string; variables: { input: Record<string, unknown> } };
     if (!query.trimStart().startsWith("mutation")) return linear.fetch(url, init);
     mutations.push(variables);
-    return Response.json({ data: { commentCreate: { success: true, comment: { id: variables.input.id } } } });
+    const id = variables.input.id;
+    return Response.json({ data: query.includes("issueCreate") ? { issueCreate: { success: true, issue: { id } } }
+      : query.includes("issueRelationCreate") ? { issueRelationCreate: { success: true, issueRelation: { id } } }
+      : { commentCreate: { success: true, comment: { id } } } });
   });
   const { bb, harness } = host(options);
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
@@ -199,6 +202,7 @@ test("the bundled squadron-planner skill points at Matt's skills and publishes o
     assert.ok(!skill.includes(copied), `the skill does not copy ${copied}`);
   }
   assert.ok(!/save_issue|save_comment/.test(skill), "the skill sends no one to direct Linear MCP writes");
+  assert.ok(skill.includes("Other open issues in the Linear project can only be named as blockers"), "the skill states the blocker-reference scope");
 });
 
 test("the board's Plan opens the planning thread beside the board and says when it can't write to Linear", async () => {
@@ -262,4 +266,54 @@ test("a read-only planning thread isn't reopened once Squadron can write, so its
   assert.deepEqual([writable.threadId, writable.writes], ["thr_plan_2", true]);
   const again = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string };
   assert.equal(again.threadId, "thr_plan_2");
+});
+
+test("an open issue elsewhere in the bound Linear project can natively block the planned tickets, and nothing outside it can", async (t) => {
+  const { harness, mutations } = await setup(t);
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" });
+  const context = { threadId: "thr_plan_1", projectId: "proj-one" };
+  const write = async (dedupeKey: string, operation: Record<string, unknown>) =>
+    JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", { dedupeKey, operation }, context))) as { id: string; entityId?: string };
+  const spec = await write("spec", { type: "issue", title: "Webhooks spec", description: "", labelIds: ["label-ready"] });
+  const ticket = await write("ticket-1", { type: "issue", title: "Receive webhooks", description: "", parentId: spec.entityId, labelIds: ["label-ready"] });
+  // FIX-6 is a ticket of another spec (FIX-5) in the same Linear project.
+  const relation = await write("fix-6-blocks-ticket", { type: "blocks", issueId: "fix-6", blockedIssueId: ticket.entityId });
+  await assert.rejects(write("outside-blocks-ticket", { type: "blocks", issueId: "outside-two", blockedIssueId: ticket.entityId }), /not authorized/);
+  await assert.rejects(write("ticket-blocks-fix-6", { type: "blocks", issueId: ticket.entityId, blockedIssueId: "fix-6" }), /not authorized/);
+  await assert.rejects(write("label-fix-6", { type: "labels", issueId: "fix-6", add: ["label-ready"], remove: [] }), /not authorized/);
+  await assert.rejects(write("parent-fix-6", { type: "parent", issueId: "fix-6", parentId: spec.entityId }), /not authorized/);
+  const delivery = harness.behavior.runService("linear-outbox");
+  t.after(() => delivery.controller.abort());
+  for (let i = 0; i < 200 && mutations.length < 3; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.deepEqual(mutations.at(-1), { input: { id: relation.entityId, issueId: "fix-6", relatedIssueId: ticket.entityId, type: "blocks" } });
+});
+
+test("Plan reopens a thread only while its seed still matches: changed label IDs or routes start a fresh thread and leave the old one", async (t) => {
+  let current = labels;
+  const { harness } = await setup(t, { vocabulary: () => Response.json({ data: {
+    workflowStates: { nodes: [ready], pageInfo: end }, issueLabels: { nodes: current, pageInfo: end },
+  } }) });
+  const plan = async () => {
+    const started = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string };
+    return started.threadId;
+  };
+  assert.equal(await plan(), "thr_plan_1");
+  assert.equal(await plan(), "thr_plan_1", "nothing changed, so Plan reopens");
+
+  current = labels.map((label) => label.name === "data" ? { ...label, id: "label-data-2" } : label);
+  await harness.behavior.callRpc("linear.bind", binding);
+  assert.equal(await plan(), "thr_plan_2", "a replaced route label starts a fresh thread");
+  const seeded = harness.inspection.sdk.callsTo("threads.spawn")[1][0] as { prompt: string };
+  assert.ok(seeded.prompt.includes("`data`: label-data-2") && !seeded.prompt.includes("label-data\n"));
+  assert.equal(await plan(), "thr_plan_2");
+
+  harness.sdk.stub("files.read", async ({ path }: { path: string }) => {
+    const content = settingsFile.replace("| `data` | GPT | gpt-6.1-sol | medium |", "| `data` | Claude | claude-opus-5-5 | medium |");
+    return { content, contentEncoding: "utf8", path, sha256: "fixture-2", sizeBytes: content.length };
+  });
+  assert.equal(await plan(), "thr_plan_3", "a changed route starts a fresh thread");
+  assert.ok((harness.inspection.sdk.callsTo("threads.spawn")[2][0] as { prompt: string }).prompt.includes("`data` → Claude claude-opus-5-5 medium"));
+  assert.equal(await plan(), "thr_plan_3");
+  assert.deepEqual(harness.inspection.sdk.calls.map((call) => call.path).filter((path) => /^threads\.(archive|stop|delete|send|update)$/.test(path)), [],
+    "older planning threads and their work are left as they are");
 });

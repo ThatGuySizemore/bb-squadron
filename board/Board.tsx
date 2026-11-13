@@ -472,6 +472,7 @@ function UnplannedRow({ issue, onPlan, opening }: { issue: UnplannedIssue; onPla
             {l}
           </span>
         ))}
+        {opening ? <span className="sq-plan-why" role="status">Starting its planning thread</span> : null}
       </span>
       <Btn disabled={opening} title={opening ? `Opening the planning thread for ${issue.id}` : undefined} onClick={() => onPlan(issue.id)}>
         {opening ? "Opening…" : "Plan"}
@@ -603,6 +604,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
               </button>
             ) : null}
             {modeSwitch}
+            {planning === "" ? <span className="sq-plan-why" role="status">Starting a planning thread</span> : null}
             <Btn tone="primary" disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : undefined} onClick={() => onPlan()}>
               {planning === "" ? "Opening…" : "Plan a spec"}
             </Btn>

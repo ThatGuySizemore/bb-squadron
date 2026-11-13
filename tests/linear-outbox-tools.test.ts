@@ -179,3 +179,46 @@ test("planning writes stay in the granted project and can link only seed and new
   assert.deepEqual(writes[4], { id: ticket.entityId, input: { addedLabelIds: ["route-1"], removedLabelIds: ["ready-1"] } });
   assert.equal((await outbox.get(ticket.id))?.status, "delivered");
 });
+
+test("a granted blocker reference may only block issues the thread owns, as a literal native blocks relation", async (t) => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-key" }, sdk: { threads: {
+    get: async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "bb-project-1" }),
+    defaultExecutionOptions: async () => ({ model: "actual-model", permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/start" }),
+  } } });
+  t.after(() => harness.lifecycle.dispose());
+  const sent: Array<{ query: string; variables: unknown }> = [];
+  const ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222", "33333333-3333-4333-8333-333333333333"];
+  const outbox = registerLinearOutbox(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    if (body.query.startsWith("query SquadronIdentity")) return Response.json(personalIdentity);
+    sent.push({ query: body.query.split("(")[0], variables: body.variables });
+    const id = body.variables.input.id;
+    return Response.json({ data: body.query.includes("issueCreate") ? { issueCreate: { success: true, issue: { id } } }
+      : { issueRelationCreate: { success: true, issueRelation: { id } } } });
+  } }), { uuid: () => ids.shift()! });
+  await outbox.bindThread({ threadId: "planner-thread", bbProjectId: "bb-project-1", workspaceId: "workspace-1", teamId: "team-1", projectId: "project-1",
+    role: "Planning thread", avatarUrl: "https://example.test/planner.png", issueIds: ["seed-1"], labelIds: ["ready-1"], allowCreateIssues: true,
+    blockerIssueIds: ["existing-1"] });
+  const context = { threadId: "planner-thread", projectId: "bb-project-1" };
+  const call = async (dedupeKey: string, operation: unknown) =>
+    JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write", { dedupeKey, operation }, context))) as { id: string; entityId?: string };
+
+  const ticket = await call("ticket", { type: "issue", title: "A ticket", description: "", labelIds: ["ready-1"] });
+  await call("existing-blocks-ticket", { type: "blocks", issueId: "existing-1", blockedIssueId: ticket.entityId });
+  await call("existing-blocks-seed", { type: "blocks", issueId: "existing-1", blockedIssueId: "seed-1" });
+  for (const [key, operation] of [
+    ["ticket-blocks-existing", { type: "blocks", issueId: ticket.entityId, blockedIssueId: "existing-1" }],
+    ["unknown-blocks-ticket", { type: "blocks", issueId: "unknown-1", blockedIssueId: ticket.entityId }],
+    ["existing-blocks-existing", { type: "blocks", issueId: "existing-1", blockedIssueId: "existing-1" }],
+    ["comment-existing", { type: "comment", issueId: "existing-1", body: "Not owned." }],
+    ["label-existing", { type: "labels", issueId: "existing-1", add: ["ready-1"], remove: [] }],
+    ["parent-existing", { type: "parent", issueId: "existing-1", parentId: ticket.entityId }],
+    ["parent-under-existing", { type: "parent", issueId: ticket.entityId!, parentId: "existing-1" }],
+    ["issue-under-existing", { type: "issue", title: "Child", description: "", parentId: "existing-1", labelIds: [] }],
+  ] as const) await assert.rejects(call(key, operation), /not authorized/, key);
+  await outbox.flush();
+  assert.deepEqual(sent.filter((write) => write.query.includes("Relation")), [
+    { query: "mutation SquadronIssueRelationCreate", variables: { input: { id: "22222222-2222-4222-8222-222222222222", issueId: "existing-1", relatedIssueId: "11111111-1111-4111-8111-111111111111", type: "blocks" } } },
+    { query: "mutation SquadronIssueRelationCreate", variables: { input: { id: "33333333-3333-4333-8333-333333333333", issueId: "existing-1", relatedIssueId: "seed-1", type: "blocks" } } },
+  ]);
+});

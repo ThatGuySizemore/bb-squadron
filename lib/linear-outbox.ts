@@ -31,6 +31,9 @@ const grantSchema = z.object({
   threadId: text, bbProjectId: text, workspaceId: text, teamId: text, projectId: text,
   role: authorSchema.shape.role, avatarUrl: authorSchema.shape.avatarUrl,
   issueIds: z.array(text).max(10_000), labelIds: z.array(text).max(100), allowCreateIssues: z.boolean(),
+  // Existing issues that may block issues this thread owns. A reference grants
+  // no other write on that issue.
+  blockerIssueIds: z.array(text).max(10_000).optional(),
 }).strict();
 export type LinearWriteGrant = z.infer<typeof grantSchema>;
 type Operation = z.infer<typeof operationSchema>;
@@ -313,10 +316,13 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
           if (operation.parentId) permitsIssue(operation.parentId);
           permitsLabels(operation.labelIds);
           write = { ...operation, teamId: grant.teamId, projectId: grant.projectId };
+        } else if (operation.type === "blocks") {
+          permitsIssue(operation.blockedIssueId);
+          if (!grant.blockerIssueIds?.includes(operation.issueId)) permitsIssue(operation.issueId);
+          write = operation;
         } else {
           permitsIssue(operation.issueId);
           if (operation.type === "parent") permitsIssue(operation.parentId);
-          if (operation.type === "blocks") permitsIssue(operation.blockedIssueId);
           if (operation.type === "labels") permitsLabels([...operation.add, ...operation.remove]);
           write = operation.type === "comment" ? { ...operation, author: { role: grant.role, model: displayName, avatarUrl: grant.avatarUrl } } : operation;
         }

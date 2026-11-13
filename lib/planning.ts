@@ -1,6 +1,7 @@
 // The board's Plan buttons. Each starts an interactive planning thread in the
 // selected project's checkout, seeded with the issue and the bundled
 // squadron-planner skill.
+import { createHash } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
@@ -24,6 +25,8 @@ const OWNER_LABELS = new Set(["accept:owner"]);
 
 /** Labels the planner may apply: ready-for-agent and the repo's route labels that exist in Linear. */
 type PlanningLabel = { id: string; name: string };
+
+const isOpen = (issue: MirrorIssue) => issue.state.type !== "completed" && issue.state.type !== "canceled";
 
 /** Linear text is data for the planner, never instructions. */
 const quote = (value: string) => JSON.stringify(value);
@@ -96,18 +99,24 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
       bbProjectId: projectId, workspaceId: connection.workspace.id, teamId: binding.team.id, projectId: binding.project.id,
       role: "Planning thread", avatarUrl: avatar, issueIds: issue ? [issue.id] : [], labelIds: labels.map((label) => label.id),
       allowCreateIssues: true,
+      // Open issues elsewhere in the bound project, including other specs'
+      // tickets, may block what this thread plans. They grant no other write.
+      blockerIssueIds: snapshot.issues.filter((item) => item.inProject && isOpen(item) && item.id !== issue?.id &&
+        item.teamId === binding.team.id && item.projectId === binding.project.id).map((item) => item.id),
     } };
   }
 
-  // One planning thread per seed issue, so a second Plan reopens it. `writes`
-  // records what its first message told it about Linear writes.
+  // One planning thread per seed issue, so a second Plan reopens it.
+  // `seed_sha256` fingerprints its first message: the issue, project, checkout,
+  // routes, label IDs and whether it may write.
   const db = bb.storage.database();
   db.exec(`CREATE TABLE IF NOT EXISTS planning_threads (
-    bb_project_id TEXT NOT NULL, issue_id TEXT NOT NULL, thread_id TEXT NOT NULL, writes INTEGER NOT NULL,
+    bb_project_id TEXT NOT NULL, issue_id TEXT NOT NULL, thread_id TEXT NOT NULL, seed_sha256 TEXT NOT NULL,
     PRIMARY KEY (bb_project_id, issue_id))`);
   const starting = new Map<string, Promise<PlanningStarted>>();
 
-  async function open(projectId: string, threadId: string): Promise<boolean> {
+  /** True while the saved thread still belongs to the project and isn't archived or deleted. */
+  async function canReopenPlanningThread(projectId: string, threadId: string): Promise<boolean> {
     try {
       const thread = await bb.sdk.threads.get({ threadId });
       return thread.id === threadId && thread.projectId === projectId && thread.deletedAt === null && thread.archivedAt === null;
@@ -118,35 +127,36 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     const snapshot = sources.mirror.getSnapshot(projectId);
     let issue: MirrorIssue | null = null;
     if (issueId) {
-      issue = snapshot.issues.find((item) => item.identifier === issueId && item.inProject &&
-        item.state.type !== "completed" && item.state.type !== "canceled") ?? null;
+      issue = snapshot.issues.find((item) => item.identifier === issueId && item.inProject && isOpen(item)) ?? null;
       if (!issue) throw new Error(`${issueId} isn't an open issue in this project's Linear project. The board may be out of date.`);
     }
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to plan in.");
     const writes = await scope(projectId, snapshot, checkout, issue);
-    const granted = !("reason" in writes);
-    const saved = issue ? db.prepare(`SELECT thread_id, writes FROM planning_threads WHERE bb_project_id=? AND issue_id=?`)
-      .get(projectId, issue.id) as { thread_id: string; writes: number } | undefined : undefined;
-    // A thread told it can't write (or can) is replaced when that changes.
-    let threadId = saved && Boolean(saved.writes) === granted && await open(projectId, saved.thread_id) ? saved.thread_id : null;
+    const environment = { type: "host" as const, hostId: checkout.hostId, workspace: { type: "unmanaged" as const, path: checkout.path } };
+    const prompt = seedPrompt({
+      issue, project: snapshot.binding ? `${snapshot.binding.team.name} · ${snapshot.binding.project.name}` : null,
+      routes: checkout.settings?.ok ? checkout.settings.settings.routes : [],
+      labels: "reason" in writes ? [] : writes.labels, readOnly: "reason" in writes ? writes.reason : null,
+    });
+    const seedSha = createHash("sha256").update(JSON.stringify([environment, prompt])).digest("hex");
+    const saved = issue ? db.prepare(`SELECT thread_id, seed_sha256 FROM planning_threads WHERE bb_project_id=? AND issue_id=?`)
+      .get(projectId, issue.id) as { thread_id: string; seed_sha256: string } | undefined : undefined;
+    // A thread whose first message no longer matches its checkout, routes, label
+    // IDs or write access is left as it is, and Plan starts a fresh one.
+    let threadId = saved && saved.seed_sha256 === seedSha && await canReopenPlanningThread(projectId, saved.thread_id) ? saved.thread_id : null;
     if (!threadId) {
       const thread = await bb.sdk.threads.spawn({
-        projectId,
-        environment: { type: "host", hostId: checkout.hostId, workspace: { type: "unmanaged", path: checkout.path } },
+        projectId, environment, prompt,
         title: issue ? `Plan ${issue.identifier}: ${issue.title}`.slice(0, 120) : "Plan a spec",
-        prompt: seedPrompt({
-          issue, project: snapshot.binding ? `${snapshot.binding.team.name} · ${snapshot.binding.project.name}` : null,
-          routes: checkout.settings?.ok ? checkout.settings.settings.routes : [],
-          labels: "reason" in writes ? [] : writes.labels, readOnly: "reason" in writes ? writes.reason : null,
-        }),
       });
       threadId = thread.id;
-      if (issue) db.prepare(`INSERT INTO planning_threads (bb_project_id, issue_id, thread_id, writes) VALUES (?, ?, ?, ?)
-        ON CONFLICT (bb_project_id, issue_id) DO UPDATE SET thread_id=excluded.thread_id, writes=excluded.writes`).run(projectId, issue.id, threadId, granted ? 1 : 0);
+      if (issue) db.prepare(`INSERT INTO planning_threads (bb_project_id, issue_id, thread_id, seed_sha256) VALUES (?, ?, ?, ?)
+        ON CONFLICT (bb_project_id, issue_id) DO UPDATE SET thread_id=excluded.thread_id, seed_sha256=excluded.seed_sha256`).run(projectId, issue.id, threadId, seedSha);
     }
     if ("reason" in writes) return { threadId, writes: false, message: writes.reason };
-    // A reopened thread gets the current scope: same-scope rebinds keep the issues it created.
+    // A reopened thread's seed matches this scope; same-scope rebinds keep the
+    // issues it created and refresh its blocker references.
     await sources.outbox.bindThread({ threadId, ...writes.grant });
     return { threadId, writes: true, message: null };
   }

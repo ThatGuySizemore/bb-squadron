@@ -7,6 +7,7 @@ import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board";
 import type { BoardAction } from "../lib/fake-board";
 import { DITHER_VARS, layoutPixels } from "../lib/pixels";
+import { DoctorPanel } from "./Doctor";
 
 // ---------- pixel primitives ----------
 
@@ -511,6 +512,8 @@ export function BoardPage() {
             </Btn>
           </div>
         </header>
+
+        <DoctorPanel />
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <h2 id="sq-needs-h">

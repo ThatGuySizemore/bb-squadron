@@ -17,7 +17,7 @@ _Avoid_: dependency (in UI copy), prerequisite
 
 **Follow-up**: An issue filed during a lane for something worth doing that should not hold the merge, labelled `follow-up` and linked to its spec.
 
-**Unplanned**: An open issue with no parent spec. It waits in the board's Unplanned row until a planning thread turns it into a spec.
+**Unplanned**: An open issue that is neither a ready spec nor one of its tickets, including a sub-issue whose parent is closed, outside the project, missing or not ready. It waits in the board's Unplanned row, which names any parent without changing it in Linear, until a planning thread turns it into a spec.
 
 ## Roles
 

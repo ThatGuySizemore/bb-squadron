@@ -211,8 +211,8 @@ test("a blocked Linear write waits in Needs you until the owner's Retry sends it
   await outbox.flush();
 
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(needsYou(board).map(({ kind, specId, writeId, text }) => ({ kind, specId, writeId, text })), [{
-    kind: "write", specId: "FIX-9", writeId: write.id,
+  assert.deepEqual(needsYou(board).map(({ kind, specId, issueId, writeId, text }) => ({ kind, specId, issueId, writeId, text })), [{
+    kind: "write", specId: "", issueId: "FIX-9", writeId: write.id,
     text: "A Linear write for FIX-9 couldn't go through. Linear refused the write. Check the issue in Linear, then retry.",
   }]);
   assert.ok(!JSON.stringify(board).includes("fake-private-rejection-detail"));

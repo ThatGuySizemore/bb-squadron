@@ -143,12 +143,12 @@ test("a blocked Linear write needs the owner; queued writes that retry on their 
     ],
   } }));
   assert.equal(board.writes?.pending, 3);
-  assert.deepEqual(needsYou(board).map(({ key, kind, specId, text, threadId, writeId }) => ({ key, kind, specId, text, threadId, writeId })), [
-    { key: "write:receipt-1", kind: "write", specId: "FIX-4", writeId: "receipt-1", threadId: "thr_lead",
+  assert.deepEqual(needsYou(board).map(({ key, kind, specId, issueId, text, threadId, writeId }) => ({ key, kind, specId, issueId, text, threadId, writeId })), [
+    { key: "write:receipt-1", kind: "write", specId: "", issueId: "FIX-4", writeId: "receipt-1", threadId: "thr_lead",
       text: "A Linear write for FIX-4 couldn't go through. The issue changed in Linear since the write was queued. Check it, then retry. Squadron won't overwrite it." },
-    { key: "write:receipt-2", kind: "write", specId: "", writeId: "receipt-2", threadId: null,
+    { key: "write:receipt-2", kind: "write", specId: "", issueId: undefined, writeId: "receipt-2", threadId: null,
       text: "A Linear write couldn't go through. Linear is now connected to another workspace. Reconnect the original workspace, then retry." },
-    { key: "write:more", kind: "write", specId: "", writeId: undefined, threadId: null,
+    { key: "write:more", kind: "write", specId: "", issueId: undefined, writeId: undefined, threadId: null,
       text: "1 more Linear write couldn't go through. Retry the ones above first." },
   ]);
 });

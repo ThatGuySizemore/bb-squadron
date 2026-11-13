@@ -373,7 +373,13 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
         <li key={item.key} className="sq-need" data-kind={item.kind}>
           <Dither levels={[3, 6, 3]} />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
-          {item.ticketId ?? item.specId ? <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" /> : <span />}
+          {item.issueId ? (
+            <span className="sq-need-issue sq-num">{item.issueId}</span>
+          ) : item.ticketId ?? item.specId ? (
+            <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" />
+          ) : (
+            <span />
+          )}
           <span className="sq-need-text">
             {item.text}
             {item.writeId ? <span className="sq-need-receipt"> Receipt <span className="sq-mono">{item.writeId}</span></span> : null}

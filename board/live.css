@@ -54,6 +54,17 @@
   color: var(--sq-muted);
 }
 
+/* A write's issue may be a ticket: mono, like ticket ids on pegs, never pixel type. */
+.sq-need-issue {
+  font-family: var(--sq-mono);
+  font-size: 11px;
+  font-weight: 650;
+}
+@container (max-width: 900px) {
+  .sq-need-issue {
+    display: none;
+  }
+}
 .sq-need-receipt {
   font-size: 12px;
   color: var(--sq-muted);

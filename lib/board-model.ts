@@ -147,6 +147,8 @@ export interface NeedsYouItem {
   threadId: string | null;
   /** The outbox receipt to retry, for a blocked write. */
   writeId?: string;
+  /** The issue a blocked write touches. It may be a ticket, so it isn't set in pixel type. */
+  issueId?: string;
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
@@ -157,7 +159,8 @@ export function needsYou(board: Board): NeedsYouItem[] {
   }
   for (const write of board.writes?.blocked ?? []) {
     items.push({
-      key: `write:${write.id}`, kind: "write", specId: write.issues[0] ?? "", writeId: write.id, threadId: write.threadId,
+      key: `write:${write.id}`, kind: "write", specId: "", writeId: write.id, threadId: write.threadId,
+      ...(write.issues[0] ? { issueId: write.issues[0] } : {}),
       text: `A Linear write${write.issues.length ? ` for ${write.issues.join(", ")}` : ""} couldn't go through. ${write.reason}`,
     });
   }

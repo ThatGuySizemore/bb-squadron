@@ -16,7 +16,6 @@
     "app": "./app.tsx"
   },
   "dependencies": {
-    "@radix-ui/react-checkbox": "^1.4.1",
     "@radix-ui/react-slot": "^1.5.0",
     "zod": "^4.6.5"
   },

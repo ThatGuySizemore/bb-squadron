@@ -1,2 +1,5 @@
 dist/
 node_modules/
+.impeccable/review/
+.impeccable/decision/
+.impeccable/config.local.json

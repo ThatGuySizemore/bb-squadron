@@ -239,3 +239,223 @@ test("unloading the plugin cancels an in-flight adapter request", async () => {
   assert.ok(signal && (signal as AbortSignal).aborted);
   await rejected;
 });
+
+test("an internal token renewal preserves a pending Connect callback", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+    linearCredentials: JSON.stringify({ accessToken: "fake-expired", refreshToken: "fake-refresh", expiresAt: 0 }),
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  const linear = registerLinearAuth(bb, { fetch: async (url) =>
+    Response.json(String(url).endsWith("/oauth/token") ? oauthToken : appIdentity),
+  });
+  const result = await harness.behavior.callRpc("linear.connect", null) as { url: string };
+  const state = new URL(result.url).searchParams.get("state");
+  await linear.graphql("query { viewer { id } }");
+  assert.equal((await harness.behavior.fetchHttp("GET", `/linear/callback?code=fake-code&state=${state}`)).status, 200);
+});
+
+test("an internal OAuth credential write preserves an exhausted GraphQL budget", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearApiKey: "fake-key", linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  let graphRequests = 0;
+  const linear = registerLinearAuth(bb, { now: () => 1_000_000, fetch: async (url) => {
+    if (String(url).endsWith("/oauth/token")) return Response.json(oauthToken);
+    graphRequests++;
+    return Response.json(personalIdentity, { headers: {
+      "x-ratelimit-requests-remaining": "0", "x-ratelimit-requests-reset": "1060000",
+    } });
+  } });
+  await linear.graphql("query { viewer { id } }");
+  const result = await harness.behavior.callRpc("linear.connect", null) as { url: string };
+  const state = new URL(result.url).searchParams.get("state");
+  assert.equal((await harness.behavior.fetchHttp("GET", `/linear/callback?code=fake-code&state=${state}`)).status, 200);
+  await assert.rejects(linear.graphql("query { viewer { id } }"), {
+    name: "LinearRequestError", code: "rate_limited", retryAfterMs: 60_000,
+    message: "Linear's request budget is exhausted. Try again after the reset.",
+  });
+  assert.equal(graphRequests, 1);
+});
+
+test("renewal during an OAuth code exchange preserves the in-progress Connect", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+    linearCredentials: JSON.stringify({ accessToken: "fake-expired", refreshToken: "fake-refresh", expiresAt: 0 }),
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  let release!: (response: Response) => void;
+  let started!: () => void;
+  const start = new Promise<void>((resolve) => { started = resolve; });
+  const linear = registerLinearAuth(bb, { fetch: async (url, init) => {
+    if (String(url).endsWith("/oauth/token")) {
+      if (new URLSearchParams(String(init?.body)).get("grant_type") === "authorization_code") {
+        started();
+        return new Promise<Response>((resolve) => { release = resolve; });
+      }
+      return Response.json(oauthToken);
+    }
+    return Response.json(appIdentity);
+  } });
+  const result = await harness.behavior.callRpc("linear.connect", null) as { url: string };
+  const state = new URL(result.url).searchParams.get("state");
+  const callback = harness.behavior.fetchHttp("GET", `/linear/callback?code=fake-code&state=${state}`);
+  await start;
+  await linear.graphql("query { viewer { id } }");
+  release(Response.json({ ...oauthToken, access_token: "fake-new-install-access" }));
+  assert.equal((await callback).status, 200);
+});
+
+test("external credential changes still invalidate pending Connect and in-flight renewal", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+    linearCredentials: JSON.stringify({ accessToken: "fake-expired", refreshToken: "fake-refresh", expiresAt: 0 }),
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  let release!: (response: Response) => void;
+  let started!: () => void;
+  const start = new Promise<void>((resolve) => { started = resolve; });
+  const linear = registerLinearAuth(bb, { fetch: async (url, init) => {
+    if (String(url).endsWith("/oauth/token")) {
+      started();
+      return new Promise<Response>((resolve) => { release = resolve; });
+    }
+    assert.equal(new Headers(init?.headers).get("Authorization"), "Bearer fake-external-access");
+    return Response.json(appIdentity);
+  } });
+  const result = await harness.behavior.callRpc("linear.connect", null) as { url: string };
+  const state = new URL(result.url).searchParams.get("state");
+  const renewing = linear.getConnection();
+  await start;
+  await harness.behavior.setSettings({ linearCredentials: JSON.stringify({
+    accessToken: "fake-external-access", refreshToken: "fake-external-refresh", expiresAt: Date.now() + 500_000,
+  }) });
+  assert.equal((await harness.behavior.fetchHttp("GET", `/linear/callback?code=fake-code&state=${state}`)).status, 400);
+  release(Response.json(oauthToken));
+  assert.equal((await renewing).status, "failed");
+  assert.equal((await linear.getConnection()).status, "connected");
+});
+
+test("a transient token refresh failure keeps a safe retryable adapter error", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+    linearCredentials: JSON.stringify({ accessToken: "fake-expired", refreshToken: "fake-private-refresh", expiresAt: 0 }),
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  const linear = registerLinearAuth(bb, { fetch: async () => { throw new Error("Network failed for fake-private-refresh"); } });
+  await assert.rejects(linear.graphql("query { viewer { id } }"), {
+    name: "LinearRequestError", code: "unavailable", retryAfterMs: null,
+    message: "Linear is unavailable. Try again shortly.",
+  });
+});
+
+test("token refresh distinguishes rate limits, service failures and rejected credentials", async (t) => {
+  const cases = [
+    { name: "rate limit", status: 429, code: "rate_limited", retryAfterMs: 2_000,
+      message: "Linear's request budget is exhausted. Try again after the reset." },
+    { name: "service outage", status: 503, code: "unavailable", retryAfterMs: null,
+      message: "Linear is unavailable. Try again shortly." },
+    { name: "invalid grant", status: 400, code: "authentication", retryAfterMs: null,
+      message: "Linear rejected the credential. Reconnect in Squadron settings." },
+    { name: "revoked credential", status: 401, code: "authentication", retryAfterMs: null,
+      message: "Linear rejected the credential. Reconnect in Squadron settings." },
+  ];
+  for (const fixture of cases) await t.test(fixture.name, async (t) => {
+    const { bb, harness } = createFakePluginHost({ settings: {
+      linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+      linearCredentials: JSON.stringify({ accessToken: "fake-expired", refreshToken: "fake-private-refresh", expiresAt: 0 }),
+    } });
+    t.after(() => harness.lifecycle.dispose());
+    const linear = registerLinearAuth(bb, { now: () => 1_000_000, fetch: async () =>
+      new Response("fake-private-refresh provider detail", { status: fixture.status, headers: { "Retry-After": "2" } }),
+    });
+    await assert.rejects(linear.graphql("query { viewer { id } }"), {
+      name: "LinearRequestError", code: fixture.code, message: fixture.message, retryAfterMs: fixture.retryAfterMs,
+    });
+  });
+});
+
+test("a token refresh timeout remains unavailable and missing OAuth configuration keeps its code", async (t) => {
+  for (const fixture of [
+    { name: "timeout", secret: "fake-client-secret", code: "unavailable", message: "Linear is unavailable. Try again shortly." },
+    { name: "configuration", secret: undefined, code: "configuration", message: "Configure the Squadron OAuth app in settings first." },
+  ]) await t.test(fixture.name, async (t) => {
+    const { bb, harness } = createFakePluginHost({ settings: {
+      linearOAuthClientId: "fake-client-id", ...(fixture.secret ? { linearOAuthClientSecret: fixture.secret } : {}),
+      linearCredentials: JSON.stringify({ accessToken: "fake-expired", refreshToken: "fake-private-refresh", expiresAt: 0 }),
+    } });
+    t.after(() => harness.lifecycle.dispose());
+    const linear = registerLinearAuth(bb, { fetch: async () => { throw new DOMException("fake-private-refresh timed out", "TimeoutError"); } });
+    await assert.rejects(linear.graphql("query { viewer { id } }"), {
+      name: "LinearRequestError", code: fixture.code, message: fixture.message,
+    });
+  });
+});
+
+test("a renewal completed after Disconnect preserves the not_connected adapter error", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+    linearCredentials: JSON.stringify({ accessToken: "fake-expired", refreshToken: "fake-refresh", expiresAt: 0 }),
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  let release!: (response: Response) => void;
+  let started!: () => void;
+  const start = new Promise<void>((resolve) => { started = resolve; });
+  const linear = registerLinearAuth(bb, { fetch: async () => {
+    started();
+    return new Promise<Response>((resolve) => { release = resolve; });
+  } });
+  const renewing = linear.graphql("query { viewer { id } }");
+  const rejected = assert.rejects(renewing, {
+    name: "LinearRequestError", code: "not_connected", message: "Connect Linear in Squadron settings.",
+  });
+  await start;
+  await harness.behavior.callRpc("linear.disconnect", null);
+  release(Response.json(oauthToken));
+  await rejected;
+});
+
+test("a renewal finishing after an in-flight query exhausts the budget preserves the reset", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearOAuthClientId: "fake-client-id", linearOAuthClientSecret: "fake-client-secret",
+    linearCredentials: JSON.stringify({ accessToken: "fake-current", refreshToken: "fake-refresh", expiresAt: 1_120_000 }),
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  let now = 1_000_000;
+  let releaseGraph!: (response: Response) => void;
+  let releaseRefresh!: (response: Response) => void;
+  let graphStarted!: () => void;
+  let refreshStarted!: () => void;
+  const graphStart = new Promise<void>((resolve) => { graphStarted = resolve; });
+  const refreshStart = new Promise<void>((resolve) => { refreshStarted = resolve; });
+  let graphRequests = 0;
+  const linear = registerLinearAuth(bb, { now: () => now, fetch: async (url) => {
+    if (String(url).endsWith("/oauth/token")) {
+      refreshStarted();
+      return new Promise<Response>((resolve) => { releaseRefresh = resolve; });
+    }
+    graphRequests++;
+    if (graphRequests === 1) {
+      graphStarted();
+      return new Promise<Response>((resolve) => { releaseGraph = resolve; });
+    }
+    return Response.json(appIdentity);
+  } });
+  const first = linear.graphql("query { viewer { id } }");
+  await graphStart;
+  now = 1_061_000;
+  const renewing = linear.graphql("query { viewer { id } }");
+  await refreshStart;
+  releaseGraph(Response.json(appIdentity, { headers: {
+    "x-ratelimit-requests-remaining": "0", "x-ratelimit-requests-reset": "1120000",
+  } }));
+  await first;
+  releaseRefresh(Response.json(oauthToken));
+  await renewing;
+  await assert.rejects(linear.graphql("query { viewer { id } }"), {
+    name: "LinearRequestError", code: "rate_limited", retryAfterMs: 59_000,
+    message: "Linear's request budget is exhausted. Try again after the reset.",
+  });
+  assert.equal(graphRequests, 2);
+});

@@ -48,14 +48,26 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
   let refreshing: Promise<string> | null = null;
   let generation = 0;
   let budgetResetAt = 0;
+  let expectedTokenWrite: string | null = null;
   let credentialWrites: Promise<unknown> = Promise.resolve();
   function writeCredential<T>(write: () => Promise<T>): Promise<T> {
     const result = credentialWrites.then(write);
     credentialWrites = result.catch(() => undefined);
     return result;
   }
-  settings.onChange(() => {
-    generation++; pending.clear(); budgetResetAt = 0;
+  async function setInternalCredentials(value: string) {
+    expectedTokenWrite = value;
+    try { await settings.experimental_set({ linearCredentials: value }); }
+    finally { expectedTokenWrite = null; }
+  }
+  settings.onChange((next, previous) => {
+    // Match only our exact token update. An external change during that write
+    // must still invalidate stale work, even while experimental_set is pending.
+    const internal = expectedTokenWrite !== null && next.linearCredentials === expectedTokenWrite &&
+      next.linearApiKey === previous.linearApiKey &&
+      next.linearOAuthClientId === previous.linearOAuthClientId &&
+      next.linearOAuthClientSecret === previous.linearOAuthClientSecret;
+    if (!internal) { generation++; pending.clear(); budgetResetAt = 0; }
     bb.realtime.publish("linear-connection-changed", null);
   });
   function parseCredentials(value: string) {
@@ -80,16 +92,27 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
             body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: credential.refreshToken,
               client_id: config.linearOAuthClientId, client_secret: config.linearOAuthClientSecret }).toString(),
           });
-          if (!response.ok) throw new LinearRequestError("authentication");
+          if (response.status === 429) {
+            const retry = Number(response.headers.get("retry-after"));
+            const delay = retry > 0 && Number.isFinite(retry) ? retry * 1000 : 60_000;
+            budgetResetAt = Math.max(budgetResetAt, now() + delay);
+            throw new LinearRequestError("rate_limited", budgetResetAt - now());
+          }
+          if ([400, 401, 403].includes(response.status)) throw new LinearRequestError("authentication");
+          if (!response.ok) throw new LinearRequestError("unavailable");
           const token = tokenResponseSchema.parse(await response.json());
           await writeCredential(async () => {
-            if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
-            await settings.experimental_set({ linearCredentials: JSON.stringify({
+            const current = await settings.get();
+            if (generation !== expectedGeneration || current.linearCredentials !== config.linearCredentials) throw new LinearRequestError("not_connected");
+            await setInternalCredentials(JSON.stringify({
               accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: now() + token.expires_in * 1000,
-            }) });
+            }));
           });
           return `Bearer ${token.access_token}`;
-        } catch { throw new LinearRequestError("authentication"); }
+        } catch (error) {
+          if (error instanceof LinearRequestError) throw error;
+          throw new LinearRequestError("unavailable");
+        }
         finally { refreshing = null; }
       })();
     }
@@ -140,9 +163,9 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
       const token = tokenResponseSchema.parse(await response.json());
       await writeCredential(async () => {
         if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
-        await settings.experimental_set({ linearCredentials: JSON.stringify({
+        await setInternalCredentials(JSON.stringify({
           accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: now() + token.expires_in * 1000,
-        }) });
+        }));
       });
       return context.text("Linear connected. Return to Squadron settings.");
     } catch {

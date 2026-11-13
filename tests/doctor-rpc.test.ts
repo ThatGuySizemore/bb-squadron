@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import { test, mock } from "node:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { registerDoctor } from "../lib/doctor-service.js";
+import plugin from "../server.js";
 
 test("Doctor reads the selected repo on its own machine and exposes pass/fix through RPC", async () => {
   const fixture = readFileSync("tests/fixtures/squadron.md", "utf8");
   const { bb, harness } = createFakePluginHost({
     experimental_hostEntry: true,
+    settings: { linearApiKey: "fake-doctor-fixture-key" },
     sdk: {
       projects: { get: async () => ({
         id: "project", name: "Demo", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
@@ -28,8 +30,11 @@ test("Doctor reads the selected repo on its own machine and exposes pass/fix thr
       return { authenticated: false };
     },
   });
+  const fetchFixture = mock.method(globalThis, "fetch", async () => new Response(JSON.stringify({ data: {
+    viewer: { id: "fixture-user", name: "Fixture user" }, organization: { id: "fixture-workspace", name: "Fixture workspace" },
+  } })));
   try {
-    registerDoctor(bb, async () => ({ status: "connected" }));
+    await plugin(bb);
     const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as { ready: boolean; checks: {id: string; status: string; message: string}[] };
     assert.equal(report.ready, false);
     assert.deepEqual(report.checks.map(({ id, status }) => ({ id, status })), [
@@ -37,7 +42,7 @@ test("Doctor reads the selected repo on its own machine and exposes pass/fix thr
       { id: "linear", status: "pass" }, { id: "github", status: "fix" },
     ]);
     assert.equal(report.checks[3].message, "Install GitHub CLI if needed, then run gh auth login on this repo's machine.");
-  } finally { await harness.lifecycle.dispose(); }
+  } finally { fetchFixture.mock.restore(); await harness.lifecycle.dispose(); }
 });
 
 test("an unavailable source cannot produce a pass or leak its diagnostic", async () => {

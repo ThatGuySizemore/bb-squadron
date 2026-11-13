@@ -29,7 +29,7 @@ export function DoctorPanel() {
     : query.data ? (query.data.ready ? "All checks passed" : "Setup needs attention") : "Check repo setup";
   return (
     <details className="sq-doctor" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary>Doctor <span>{summary}</span></summary>
+      <summary className="sq-btn">Doctor<span className="sq-sr">: {summary}</span></summary>
       <div className="sq-doctor-body" aria-busy={query.isFetching}>
         {!projectId ? <p className="sq-clear">Choose a BB project to check its repo setup.</p> : (
           <>

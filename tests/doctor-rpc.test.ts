@@ -21,8 +21,9 @@ test("Doctor reads the selected repo on its own machine and exposes pass/fix thr
         return { content: fixture, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: fixture.length };
       } },
       skills: { list: async () => ({ skills: ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"].map((name) => ({
-        id: name, name, description: null, filePath: `/skills/${name}/SKILL.md`, manageable: false,
-        pluginId: null, provider: null, registrySkillId: null, scope: "shared-user" as const,
+        id: name, name: `mattpocock-skills:${name}`, description: null,
+        filePath: `/plugins/mattpocock-skills/skills/engineering/${name}/SKILL.md`, manageable: false,
+        pluginId: "mattpocock-skills", provider: null, registrySkillId: null, scope: "plugin" as const,
       })) }) },
     },
     experimental_callHostRpc: async ({ hostId }) => {
@@ -98,4 +99,39 @@ test("an unavailable selected environment does not borrow the project's default 
     });
     assert.equal(report.checks[2].status, "pass");
   } finally { await harness.lifecycle.dispose(); }
+});
+
+test("Matt's setup rejects unrelated skill names and accepts supported Matt installations", async () => {
+  const names = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
+  const fixture = readFileSync("tests/fixtures/squadron.md", "utf8");
+  const cases = [
+    { prefix: "unrelated:", pluginId: "unrelated", scope: "plugin" as const, root: "/plugins/unrelated", expected: "fix" },
+    { prefix: "", pluginId: null, scope: "provider-user" as const, root: "/home/owner/.claude/skills", expected: "fix" },
+    { prefix: "mattpocock-skills:", pluginId: "unrelated", scope: "plugin" as const, root: "/plugins/unrelated", expected: "fix" },
+    { prefix: "mattpocock-skills:", pluginId: "mattpocock-skills", scope: "plugin" as const, root: "/plugins/mattpocock-skills/skills/engineering", expected: "pass" },
+    { prefix: "", pluginId: null, scope: "provider-user" as const, root: "/home/owner/.agents/skills", expected: "pass" },
+  ];
+  for (const sample of cases) {
+    const { bb, harness } = createFakePluginHost({
+      experimental_hostEntry: true,
+      sdk: {
+        projects: { get: async () => ({
+          id: "project", name: "Demo", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
+          sources: [{ id: "source", projectId: "project", hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
+        }) },
+        files: { read: async () => ({ content: fixture, contentEncoding: "utf8", path: "/repo/docs/agents/squadron.md", sha256: "fixture", sizeBytes: fixture.length }) },
+        skills: { list: async () => ({ skills: names.map((name) => ({
+          id: `fixture-${name}`, name: `${sample.prefix}${name}`, description: null,
+          filePath: `${sample.root}/${name}/SKILL.md`, manageable: false,
+          pluginId: sample.pluginId, provider: null, registrySkillId: null, scope: sample.scope,
+        })) }) },
+      },
+      experimental_callHostRpc: async () => ({ authenticated: true }),
+    });
+    try {
+      registerDoctor(bb, async () => ({ status: "connected" }));
+      const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as { checks: {id: string; status: string}[] };
+      assert.equal(report.checks.find((check) => check.id === "skills")?.status, sample.expected, `${sample.root} ${sample.prefix}`);
+    } finally { await harness.lifecycle.dispose(); }
+  }
 });

@@ -85,9 +85,10 @@ export function parseSquadronSettings(markdown: string): SettingsResult {
   return issues.length ? { ok: false, issues } : { ok: true, settings };
 }
 
-/** The first matching row wins, including a default row at its written position. */
+/** Matching labels keep file order; the default is used only when none match. */
 export function resolveRoute(settings: SquadronSettings, labels: readonly string[]): Route {
-  const row = settings.routes.find((route) => route.label === null || labels.includes(route.label));
+  const row = settings.routes.find((route) => route.label !== null && labels.includes(route.label))
+    ?? settings.routes.find((route) => route.label === null);
   if (!row) throw new Error("Add a default route to docs/agents/squadron.md.");
   return { family: row.family, model: row.model, effort: row.effort };
 }

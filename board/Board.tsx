@@ -510,10 +510,9 @@ export function BoardPage() {
             <Btn tone="primary" onClick={() => toast("Prototype: opens a planning thread (grill-with-docs → to-spec → to-tickets).")}>
               Plan a spec
             </Btn>
+            <DoctorPanel />
           </div>
         </header>
-
-        <DoctorPanel />
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <h2 id="sq-needs-h">

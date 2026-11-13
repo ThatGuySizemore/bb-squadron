@@ -60,3 +60,18 @@ test("present but unusable sections fail closed instead of supplying unsafe sett
     if (!result.ok) assert.equal(result.issues[0].section, section);
   }
 });
+
+test("an early default stays a fallback while matching labels keep file order", () => {
+  const result = parseSquadronSettings(readFileSync("tests/fixtures/squadron-default-first.md", "utf8"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(resolveRoute(result.settings, ["data", "ui"]), {
+    family: "claude", model: "claude-opus-5-5", effort: "high",
+  });
+  assert.deepEqual(resolveRoute(result.settings, ["data"]), {
+    family: "gpt", model: "gpt-6.1-sol", effort: "medium",
+  });
+  assert.deepEqual(resolveRoute(result.settings, ["unknown"]), {
+    family: "gpt", model: "gpt-6.1-sol", effort: "high",
+  });
+});

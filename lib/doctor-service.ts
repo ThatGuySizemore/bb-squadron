@@ -3,6 +3,18 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { doctor } from "./doctor.js";
 import { doctorContract, doctorHostContract } from "./doctor-contract.js";
 
+function mattSkillName(skill: { name: string; pluginId: string | null; scope: string; filePath: string }): string | null {
+  const prefix = "mattpocock-skills:";
+  if (skill.scope === "plugin" && skill.pluginId === "mattpocock-skills" && skill.name.startsWith(prefix)) {
+    return skill.name.slice(prefix.length);
+  }
+  // This repo also supports Matt's local .agents/skills installation aliases.
+  const path = skill.filePath.replace(/\\/g, "/");
+  if (skill.pluginId === null && /^(provider|shared)-(user|project)$/.test(skill.scope)
+    && path.endsWith(`/.agents/skills/${skill.name}/SKILL.md`)) return skill.name;
+  return null;
+}
+
 export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ status: string }>) {
   const host = bb.hosts.experimental_client({ contract: doctorHostContract });
   bb.rpc.register(doctorContract, {
@@ -31,7 +43,10 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
         host.call("githubLogin", {}, { hostId, signal, timeoutMs: 15_000 }),
       ]);
       const report = doctor({
-        skills: skills.status === "fulfilled" ? skills.value.skills.map((skill) => skill.name.split(":").at(-1)!) : [],
+        skills: skills.status === "fulfilled" ? skills.value.skills.flatMap((skill) => {
+          const name = mattSkillName(skill);
+          return name === null ? [] : [name];
+        }) : [],
         settingsMarkdown: settings.status === "fulfilled" && settings.value.contentEncoding === "utf8" ? settings.value.content : null,
         linearConnected: linear.status === "fulfilled" && linear.value.status === "connected",
         ghAuthenticated: github.status === "fulfilled" && github.value.authenticated,

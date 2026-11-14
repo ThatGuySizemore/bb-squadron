@@ -26,8 +26,10 @@ export default async function plugin(bb: BbPluginApi) {
   const tracker = registerTracker(bb, mirror);
   const outside = createOutsideLaneReader(bb);
   const helper = registerHelper(bb);
-  const notifier = registerHelperNotifier(bb, helper);
-  const summary = registerHelperSummary(bb, helper);
+  // SQD-232 replaces this temporary compatibility adapter with project delivery.
+  const legacyHelper = { read: helper.readLegacy };
+  const notifier = registerHelperNotifier(bb, legacyHelper);
+  const summary = registerHelperSummary(bb, legacyHelper);
   const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
   const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection: () => linear.getConnection(),
     observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); },

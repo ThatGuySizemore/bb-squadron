@@ -97,7 +97,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
   bb.cli.register(defineCli({
     name: "squadron", summary: "See your projects and act on their specs.",
     commands: {
-      ...helperCommands(helper),
+      ...helperCommands(helper, (selected) => actionProject(selected, undefined)),
       "autopilot on": autopilotCommand("on"),
       "autopilot off": autopilotCommand("off"),
       "autopilot lanes": autopilotCommand("lanes"),

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { helperCore } from "../lib/helper-core.js";
 import { input, snapshot, issue, blocks } from "./fixtures/board-snapshots.js";
+import type { ReviewRun } from "../lib/worker-contract.js";
 import type { LaneRun } from "../lib/lane-contract.js";
 
 const route = { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const };
@@ -28,7 +29,10 @@ test("verified integration unblocks only successors in the same lane while Linea
   const dispatch = (lanes: LaneRun[], laneId = "lane", ticketId = "FIX-3") => helperCore({ ...input(snap), lanes,
     action: { type: "spawn-worker", laneId, ticketId } });
   assert.deepEqual(dispatch([run, other]).worker, { allowed: false, reason: "Waits on FIX-2" });
-  const integrated: LaneRun = { ...run, workers: [{ ...work, state: "integrated", integration: { commit: "a".repeat(40), head: "b".repeat(40), verifiedAt: 1 } }] };
+  const review: ReviewRun = { id: "review", route: { family: "claude", model: "claude-opus-5-5", effort: "high" }, threadId: "reviewer-thread", environmentId: "review-env",
+    commit: "a".repeat(40), originalCommit: "a".repeat(40), state: "approved", round: 0,
+    verdict: { commit: "a".repeat(40), outcome: "approve", findings: [], resolvedFindingIds: [], at: 1 } };
+  const integrated: LaneRun = { ...run, workers: [{ ...work, state: "integrated", review, integration: { commit: "a".repeat(40), head: "b".repeat(40), verifiedAt: 1 } }] };
   assert.deepEqual(dispatch([integrated, other]).worker, { allowed: true });
   assert.equal(dispatch([integrated, other]).board.lanes[0].tickets.find((ticket) => ticket.id === "FIX-2")?.state, "branch");
   assert.deepEqual(dispatch([integrated, other], "other", "FIX-11").worker, { allowed: false, reason: "Waits on FIX-2" });
@@ -45,6 +49,26 @@ test("worker cap and duplicate guards apply before a spawn command, including re
   assert.deepEqual(dispatch("FIX-5").worker, { allowed: false, reason: "All worker slots are full." });
   assert.deepEqual(dispatch("FIX-2").worker, { allowed: false, reason: "Work has already started on this ticket." });
   assert.deepEqual(dispatch("FIX-5").commands, []);
+});
+
+test("ancestry alone and approval for a stale commit never release a successor", () => {
+  const work = { id: "worker", ticketIssueId: "fix-2", ticketId: "FIX-2", route, startedAt: 0,
+    threadId: "worker-thread", environmentId: "env-worker", branch: "bb/worker", commit: "a".repeat(40),
+    state: "integrated" as const, integration: { commit: "a".repeat(40), head: "b".repeat(40), verifiedAt: 1 } };
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-3", { parent: "FIX-1" })], [blocks("FIX-2", "FIX-3")]);
+  const result = helperCore({ ...input(snap), lanes: [{ ...lane, workers: [work] }],
+    action: { type: "spawn-worker", laneId: "lane", ticketId: "FIX-3" } });
+  assert.deepEqual(result.worker, { allowed: false, reason: "Waits on FIX-2" });
+  assert.equal(result.board.lanes[0].tickets[0].state, "review");
+  const stale: ReviewRun = { id: "review", route: { family: "claude", model: "claude-opus-5-5", effort: "high" }, threadId: "reviewer-thread", environmentId: "review-env",
+    commit: "c".repeat(40), originalCommit: "c".repeat(40), state: "approved", round: 0,
+    verdict: { commit: "c".repeat(40), outcome: "approve", findings: [], resolvedFindingIds: [], at: 1 } };
+  const dispatch = (review: ReviewRun) => helperCore({ ...input(snap), lanes: [{ ...lane, workers: [{ ...work, review }] }],
+    action: { type: "spawn-worker", laneId: "lane", ticketId: "FIX-3" } });
+  assert.deepEqual(dispatch(stale).worker, { allowed: false, reason: "Waits on FIX-2" });
+  assert.deepEqual(dispatch({ ...stale, route, commit: work.commit, verdict: { ...stale.verdict!, commit: work.commit } }).worker,
+    { allowed: false, reason: "Waits on FIX-2" });
 });
 
 test("SIZE-932: Ready separates internal ordering from external blockers with a partly available frontier", () => {
@@ -118,4 +142,22 @@ test("spec-level unknown and cancelled blockers use the same rule on Ready, disp
   assert.deepEqual(ready().start, { allowed: true });
   assert.deepEqual(dispatch().worker, { allowed: true });
   assert.deepEqual(dispatch().board.lanes[0].tickets.map((ticket) => [ticket.state, ticket.blockedBy]), [["ready", []]]);
+});
+
+test("fix-round resume rechecks the worker cap and reserves only the original worker", () => {
+  const review: ReviewRun = { id: "review", route: { family: "claude", model: "claude-opus-5-5", effort: "high" }, threadId: "reviewer", environmentId: "env",
+    originalCommit: "a".repeat(40), commit: "a".repeat(40), state: "changes", round: 0,
+    firstFindings: [{ id: "S1", kind: "in-spec", text: "Fix required behavior." }],
+    verdict: { commit: "a".repeat(40), outcome: "changes", findings: [{ id: "S1", kind: "in-spec", text: "Fix required behavior." }], resolvedFindingIds: [], at: 0 } };
+  const work = { id: "worker", ticketIssueId: "fix-2", ticketId: "FIX-2", route, startedAt: 0,
+    threadId: "worker-thread", environmentId: "env-worker", branch: "bb/worker", commit: "a".repeat(40), state: "reported" as const, review };
+  const other = [3, 4, 5].map((i) => ({ ...work, id: `worker-${i}`, ticketIssueId: `fix-${i}`, ticketId: `FIX-${i}`, state: "working" as const, review: undefined }));
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), ...[2, 3, 4, 5].map((i) => issue(`FIX-${i}`, { parent: "FIX-1" }))]);
+  const resume = (workers: LaneRun["workers"]) => helperCore({ ...input(snap), lanes: [{ ...lane, workers }],
+    action: { type: "resume-worker", laneId: "lane", ticketId: "FIX-2" } });
+  assert.deepEqual(resume([work, ...other]).worker, { allowed: false, reason: "All worker slots are full." });
+  const allowed = resume([work, ...other.slice(0, 1)]);
+  assert.deepEqual(allowed.worker, { allowed: true });
+  assert.deepEqual(allowed.commands, [{ type: "resume-worker", laneId: "lane", workerId: "worker" }]);
+  assert.equal(resume([{ ...work, review: { ...review, round: 1 } }]).worker?.allowed, false);
 });

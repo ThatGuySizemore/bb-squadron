@@ -13,9 +13,11 @@ The trusted Helper interface is `enqueue({ bbProjectId, dedupeKey, operation })`
 `get(id)`, `getHealth(bbProjectId)`, `resume(id)` and `flush()`. Enqueue validates
 the operation, resolves the connected workspace and stores it before returning
 `{ id, entityId?, signature? }`. A comment receipt includes its original signature.
-Comments, new issues and blocking
-links get a UUID at enqueue time. `entityId` is that UUID and can be used by later
+Comments, new issues and blocking or related
+link writes get a UUID at enqueue time. `entityId` is that reserved UUID and can be used by later
 parent or blocking-link writes before the earlier write has been delivered.
+When a related-link write reuses an existing relation, Linear retains that
+relation's original UUID; the returned receipt still identifies the queued operation.
 
 Supported trusted operations:
 
@@ -27,6 +29,9 @@ Supported trusted operations:
 | `comment` | `issueId`, `body`, `author: {role, model, avatarUrl?}` | `commentCreate` |
 | `parent` | `issueId`, `parentId` | `issueUpdate` |
 | `blocks` | `issueId`, `blockedIssueId` | `issueRelationCreate` with type `blocks` |
+| `related` | `issueId`, `relatedIssueId` | `issueRelationCreate` with type `related`, or reuse an existing related link |
+
+`related` is Helper-only and is not part of the planning agent's write forms.
 
 The author name is `role · model`. App comments send that as `createAsUser` and
 send the HTTPS avatar as `displayIconUrl`. Linear renders the app attribution.
@@ -168,11 +173,17 @@ rows without project attribution remain available through trusted `get(id)` and
 `resume(id)`; they are not exposed under an arbitrary project's health read.
 
 Statuses, label sets and parent links can be replayed. New issues, comments and
-blocking links always reuse their stored UUID, using the create-input IDs in
+blocking or related link creates always reuse their stored UUID, using the create-input IDs in
 [Linear's published schema](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql).
 Before retrying a comment, the queue looks up that UUID and checks its issue and
 body. New issues reconcile by UUID, team and project. A blocking-link failure
 looks up the original relation UUID and checks both endpoints and type.
+Before a related-link create, the queue pages both relation directions, including
+archived entries. It reuses an existing related link and parks a conflicting
+blocker or duplicate link as `conflict` before mutation, since Linear can replace
+a conflicting relation on create. That preflight and the mutation are separate
+requests; concurrent external edits are not an atomic guarantee. A failed create
+checks its reserved relation UUID and both endpoints/type before reconciliation.
 
 These checks reduce duplicate creation after an ambiguous response. Linear does
 not document a general exactly-once idempotency contract for these mutations, so

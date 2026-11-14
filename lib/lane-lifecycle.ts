@@ -11,6 +11,7 @@ import { diagnostic } from "./diagnostic.js";
 export const OWNER_STOP = "You stopped this lane. Its threads, worktrees and branch are kept. Resume, re-plan or cancel it.";
 const RESUMED_LEAD = "Squadron: the owner resumed this lane. Check squadron_status and continue the spec where it stopped. Resuming grants no other approval.";
 const RESUMED_WORKER = "Squadron: the owner resumed this lane. Check squadron_status and continue your ticket where it stopped. Resuming grants no other approval.";
+const RESUMED_REVIEWER = "Squadron: the owner resumed this lane. Check squadron_status and continue your saved review at its bound commit and round. A second look stays limited to the first findings. Resuming grants no other approval.";
 
 type LifecycleFields = Partial<Pick<LaneRun, "state" | "stopReason" | "stoppedAt" | "canceledAt" | "writeError">>;
 
@@ -33,8 +34,8 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
   }
   /** Stops turns only. Threads, worktrees and branches stay for the owner. */
   async function stopThreads(run: LaneRun) {
-    const ids = [run.leadThreadId, ...(run.workers ?? []).filter((worker) => worker.state !== "integrated").map((worker) => worker.threadId)];
-    for (const threadId of ids) {
+    const ids = [run.leadThreadId, ...(run.workers ?? []).filter((worker) => worker.state !== "integrated").flatMap((worker) => [worker.threadId, worker.review?.threadId])];
+    for (const threadId of new Set(ids)) {
       if (!threadId) continue;
       try { await bb.sdk.threads.stop({ threadId }); }
       catch (error) { bb.log.warn(`Lane ${run.id} stop-thread: ${diagnostic(error)}`); }
@@ -81,6 +82,12 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
         if (!worker.threadId || worker.state !== "working") continue;
         try { await wake(worker.threadId, RESUMED_WORKER); }
         catch (error) { bb.log.warn(`Lane ${current.id} worker ${worker.id} resume: ${diagnostic(error)}`); }
+      }
+      for (const worker of resumed.workers ?? []) {
+        const review = worker.review;
+        if (!review?.threadId || !["reviewing", "second-look"].includes(review.state)) continue;
+        try { await wake(review.threadId, RESUMED_REVIEWER); }
+        catch (error) { bb.log.warn(`Lane ${current.id} review ${review.id} resume: ${diagnostic(error)}`); }
       }
       if (resumed.state === "starting") void lanes.reconcileStart(resumed.id).catch((error) => { bb.log.warn(`Lane ${resumed.id} resume-start: ${diagnostic(error)}`); });
       return resumed;

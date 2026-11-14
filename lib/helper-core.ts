@@ -6,7 +6,7 @@ import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { OutboxBlockedReason, OutboxHealth } from "./linear-outbox-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
-import type { SpawnWorkerCommand } from "./worker-contract.js";
+import { hasCurrentApproval, type SpawnWorkerCommand } from "./worker-contract.js";
 import type { LaneRun, StartDecision, StartLeadCommand } from "./lane-contract.js";
 
 export interface HelperInput {
@@ -21,7 +21,7 @@ export interface HelperInput {
   startedAt: number;
   lanes?: readonly LaneRun[];
   autoStart?: boolean;
-  action?: { type: "start"; specId: string } | { type: "reconcile" } | { type: "spawn-worker"; laneId: string; ticketId: string };
+  action?: { type: "start"; specId: string } | { type: "reconcile" } | { type: "spawn-worker" | "resume-worker"; laneId: string; ticketId: string };
 }
 
 /** What the owner reads for each reason the outbox parks a write. */
@@ -36,7 +36,8 @@ const BLOCKED_WRITE_TEXT: Record<OutboxBlockedReason, string> = {
   dependency_blocked: "It waits on an earlier write that couldn't go through. Retry that one first.",
 };
 
-export type HelperCommand = { type: "sync"; reason: "catch-up" } | StartLeadCommand | SpawnWorkerCommand;
+export type HelperCommand = { type: "sync"; reason: "catch-up" } | StartLeadCommand | SpawnWorkerCommand |
+  { type: "resume-worker"; laneId: string; workerId: string };
 
 export interface HelperOutput {
   board: Board;
@@ -79,7 +80,7 @@ export function helperCore(input: HelperInput): HelperOutput {
       const blocker = byId.get(relation.issueId);
       if (!blocker) return [{ id: "Unknown blocker", title: "This blocker isn't in the current Linear mirror. Refresh Linear before starting.", url: "", outside: false }];
       const integrated = run && blocker.parentId === run.specIssueId && blocker.teamId === binding?.team.id && blocker.projectId === binding?.project.id &&
-        run.workers?.some((worker) => worker.ticketIssueId === blocker.id && worker.state === "integrated" && worker.integration && worker.integration.commit === worker.commit);
+        run.workers?.some((worker) => worker.ticketIssueId === blocker.id && worker.state === "integrated" && worker.integration && worker.integration.commit === worker.commit && hasCurrentApproval(worker));
       return !isOpenIssue(blocker) || integrated ? [] : [{ id: blocker.identifier, title: blocker.title, url: blocker.url,
         outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id }];
     }).sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
@@ -168,25 +169,30 @@ export function helperCore(input: HelperInput): HelperOutput {
     }
   }
   let worker: StartDecision | undefined;
-  if (action?.type === "spawn-worker") {
+  if (action?.type === "spawn-worker" || action?.type === "resume-worker") {
     const run = runs.find((item) => item.id === action.laneId);
     const spec = run ? byId.get(run.specIssueId) : undefined;
     const ticket = snapshot.issues.find((item) => item.identifier === action.ticketId && item.parentId === run?.specIssueId && item.inProject);
     const specBlockers = run && spec ? unresolvedBlockers(spec, run) : [];
     const ticketBlockers = run && ticket ? unresolvedBlockers(ticket, run) : [];
+    const existing = run?.workers?.find((item) => item.ticketIssueId === ticket?.id);
     let reason: string | null = null;
-    if (!run || run.state !== "flying" || !run.branch || !run.leadThreadId) reason = "This lane isn't ready for workers.";
+    if (!run || run.recoveryOnly || run.state !== "flying" || !run.branch || !run.leadThreadId) reason = "This lane isn't ready for workers.";
     else if (linear !== "current") reason = message;
     else if (!settings) reason = "Fix Squadron settings before starting workers.";
     else if (!spec?.inProject || !isOpenIssue(spec)) reason = "This spec isn't active in this project's current board.";
     else if (specBlockers.length) reason = `Waits on ${list(specBlockers.map((blocker) => blocker.id))}`;
     else if (!ticket || !isOpenIssue(ticket)) reason = "This ticket isn't open in this lane.";
-    else if (run.workers?.some((item) => item.ticketIssueId === ticket.id)) reason = "Work has already started on this ticket.";
+    else if (action.type === "resume-worker" && (!existing?.threadId || existing.state !== "reported" || existing.review?.state !== "changes" || existing.review.round !== 0 || existing.review.verdict?.commit !== existing.commit)) reason = "Only one fix round may resume the reported worker after its matching review.";
+    else if (action.type === "spawn-worker" && existing) reason = "Work has already started on this ticket.";
     else if (ticketBlockers.length) reason = `Waits on ${list(ticketBlockers.map((blocker) => blocker.id))}`;
     else if ((run.workers ?? []).filter((item) => item.state !== "reported" && item.state !== "integrated").length >= settings.limits.workersPerLane) reason = "All worker slots are full.";
     worker = reason ? { allowed: false, reason } : { allowed: true };
-    if (worker.allowed && run && ticket && settings) commands.push({ type: "spawn-worker", laneId: run.id,
-      ticketIssueId: ticket.id, ticketId: ticket.identifier, route: run.routeOverrides?.[ticket.id] ?? resolveRoute(settings, labels(ticket)) });
+    if (worker.allowed && run && ticket && settings) {
+      if (action.type === "resume-worker" && existing) commands.push({ type: "resume-worker", laneId: run.id, workerId: existing.id });
+      else commands.push({ type: "spawn-worker", laneId: run.id,
+        ticketIssueId: ticket.id, ticketId: ticket.identifier, route: run.routeOverrides?.[ticket.id] ?? resolveRoute(settings, labels(ticket)) });
+    }
   }
   const lanes: Board["lanes"] = runs.filter((run) => run.state !== "canceled").flatMap((run) => {
     const spec = byId.get(run.specIssueId);
@@ -204,10 +210,12 @@ export function helperCore(input: HelperInput): HelperOutput {
         return { id: issue.identifier, title: issue.title, blockedBy: blockers.map((blocker) => blocker.id),
           route: work?.route ?? run.routeOverrides?.[issue.id] ?? (settings ? resolveRoute(settings, labels(issue)) : run.route),
           ...(!work && settings && run.state === "flying" ? { routeChoices: uniqueRoutes(settings.routes) } : {}),
-          state: issue.state.type === "completed" ? "done" as const : work?.question ? "question" as const : work?.state === "integrated" ? "branch" as const
-            : work?.state === "reported" ? "review" as const : work?.state === "failed" ? "failed" as const
+          state: issue.state.type === "completed" ? "done" as const : work?.question ? "question" as const : work?.state === "integrated" && hasCurrentApproval(work) ? "branch" as const
+            : work?.state === "reported" || work?.state === "integrated" ? "review" as const : work?.state === "failed" ? "failed" as const
             : work ? "working" as const : blockers.length ? "blocked" as const : "ready" as const,
-          ...(work?.state === "reported" ? { reportPending: true } : {}),
+          ...(work?.state === "reported" && !work.review ? { reportPending: true } : {}),
+          ...(work?.review ? { reviewer: { route: work.review.route, threadId: work.review.threadId, state: work.review.state,
+            commit: work.review.commit, round: work.review.round } } : {}),
           ...(work?.question ? { question: work.question.text, questionId: work.question.id } : {}),
           ...(work?.failure ? { failure: work.failure } : {}),
           ...(work?.writeError ? { writeError: work.writeError } : {}),

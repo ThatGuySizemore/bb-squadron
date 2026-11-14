@@ -134,3 +134,29 @@ test("quick-check repairs respect the same worker cap as initial and review star
   await host.call("squadron_report", { type: "done", commit, summary: "Done." }, { projectId: "proj-one", threadId: second.threadId });
   assert.equal((await host.call("squadron_report", { type: "fix-check", ticketId: "FIX-6" })).state, "working");
 });
+
+test("saved review failures require a Lead summary, preserve B3 one fix/second look, and stop on the second reviewed head", async (t) => {
+  const host = await laneHost(t); await host.rpc("lanes.start");
+  const worker = await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  const workerContext = { projectId: "proj-one", threadId: worker.threadId };
+  await host.call("squadron_report", { type: "done", commit, summary: "Done." }, workerContext);
+  const reviewer = await host.call("squadron_spawn_reviewer", { ticketId: "FIX-6" });
+  const reviewerContext = { projectId: "proj-one", threadId: reviewer.threadId };
+  const finding = { id: "F1", kind: "in-spec", text: "Required behavior is missing." };
+  await host.call("squadron_report", { type: "verdict", commit, outcome: "changes", findings: [finding], resolvedFindingIds: [] }, reviewerContext);
+  await assert.rejects(host.call("squadron_report", { type: "fix", ticketId: "FIX-6" }), /Lead summary/);
+  const record = async (sha: string, round: number) => host.call("squadron_report", { type: "failure", kind: "review", ticketId: "FIX-6", commit: sha,
+    eventId: `review:${reviewer.reviewId}:${round}:${sha}`, summary: `Lead: F1 is unresolved at review round ${round}.` });
+  assert.equal((await record(commit, 0)).count, 1);
+  await assert.rejects(host.call("squadron_report", { type: "failure", kind: "review", ticketId: "FIX-6", commit, eventId: "forged-round", summary: "Wrong round." }), /saved changes verdict/);
+  await assert.rejects(host.call("squadron_report", { type: "progress", summary: "Reviewer cannot impersonate worker progress." }, reviewerContext), /Only bound/);
+  await host.call("squadron_report", { type: "fix", ticketId: "FIX-6" });
+  await assert.rejects(host.call("squadron_report", { type: "fix", ticketId: "FIX-6" }), /one fix round/);
+  const corrected = "c".repeat(40);
+  await host.call("squadron_report", { type: "done", commit: corrected, summary: "Fixed." }, workerContext);
+  await host.call("squadron_spawn_reviewer", { ticketId: "FIX-6" });
+  await host.call("squadron_report", { type: "verdict", commit: corrected, outcome: "changes", findings: [finding], resolvedFindingIds: [] }, reviewerContext);
+  const result = await record(corrected, 1);
+  assert.equal(result.count, 2); assert.equal(result.stopped, true);
+  assert.match((await host.board()).lanes[0].stopReason!, /Lead: F1 is unresolved at review round 1/);
+});

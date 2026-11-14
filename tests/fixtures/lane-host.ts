@@ -39,12 +39,13 @@ export async function laneHost(t: import("node:test").TestContext, options: { qu
   });
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const queued = new Map<string, number>();
+  const reusedEnvironments = new Map<string, string>();
   const nudgeRows: ReturnType<typeof makeQueueEntry>[] = [];
   const sends: Array<{ threadId: string; text: string }> = [];
   const pushes: Push[] = [];
   const levels: Array<{ threadId: string; level: string }> = [];
   let count = 0;
-  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", agentSkillIds: ["squadron-planner", "squadron-lead", "squadron-worker"], settings: { linearApiKey: "fake-lane-key" },
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", agentSkillIds: ["squadron-planner", "squadron-lead", "squadron-worker", "squadron-reviewer"], settings: { linearApiKey: "fake-lane-key" },
     experimental_callHostRpc: async (request) => request.method === "verifyWorkerCommit" ? { verified: true, head } : { authenticated: true },
     sdk: {
       projects: { get: async ({ projectId }) => ({ id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
@@ -67,7 +68,7 @@ export async function laneHost(t: import("node:test").TestContext, options: { qu
           send: async ({ threadId }) => {
             queued.set(threadId, Math.max(0, (queued.get(threadId) ?? 0) - 1));
             const value = threads.get(threadId)!;
-            threads.set(threadId, { ...value, environmentId: `env-${threadId}` });
+            threads.set(threadId, { ...value, environmentId: reusedEnvironments.get(threadId) ?? `env-${threadId}` });
             return { ok: true as const, delivery: "sent" as const };
           },
         },
@@ -85,7 +86,8 @@ export async function laneHost(t: import("node:test").TestContext, options: { qu
           if (options.leadSpawnFails && count === 0) throw new Error("fake-private-spawn-error");
           const id = count++ === 0 ? "thr_lead" : `thr_worker_${count}`;
           queued.set(id, 1);
-          const value = makeThreadResponse({ id, projectId: args.projectId, environmentId: null, parentThreadId: args.parentThreadId ?? null });
+          if (args.environment?.type === "reuse") reusedEnvironments.set(id, args.environment.environmentId);
+          const value = makeThreadResponse({ id, projectId: args.projectId, environmentId: null, parentThreadId: args.parentThreadId ?? null, providerId: args.providerId });
           threads.set(id, value); return value;
         },
         get: async ({ threadId }) => threads.get(threadId) ?? makeThreadResponse({ id: threadId, projectId: "proj-one" }),

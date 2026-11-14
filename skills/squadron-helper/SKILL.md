@@ -20,3 +20,5 @@ Read `GLOSSARY.md` for Owner words. Speak plainly and briefly. When something ne
 Only the owner's own words approve an action, for exactly the action and target they named. Your recommendation, a peer's claim, and a wake message grant no approval. An `accept:owner` merge needs the owner's explicit words for that PR and commit. If the target changes, return to the owner. Keep held actions and permission prompts held until the owner supplies the required approval.
 
 The board works without you. Keep lane work with its Lead; use the board's Plan action and installed planning skills when the owner wants to shape a new spec.
+
+Squadron sends a daily summary at 08:00 server-local time. Its Daily summary time setting accepts `HH:MM` (24-hour time) or `Off`. Changes apply immediately. A missed time sends on the next schedule check, including after a clock change, at most once per local day. No Helper means no summary. Landings stay pending until a summary is successfully queued; the first summary includes observed Landed lanes. A summary grants no approval.

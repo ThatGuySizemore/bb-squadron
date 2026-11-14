@@ -12,6 +12,7 @@ import { registerTracker } from "./lib/tracker-service.js";
 import { createOutsideLaneReader } from "./lib/outside-lanes.js";
 import { registerSquadronCli } from "./lib/squadron-cli.js";
 import { registerHelperNotifier } from "./lib/helper-notifier.js";
+import { registerHelperSummary } from "./lib/helper-summary.js";
 import { registerHelper } from "./lib/helper.js";
 
 export default async function plugin(bb: BbPluginApi) {
@@ -23,9 +24,11 @@ export default async function plugin(bb: BbPluginApi) {
   const outside = createOutsideLaneReader(bb);
   const helper = registerHelper(bb);
   const notifier = registerHelperNotifier(bb, helper);
-  const board = registerBoard(bb, { connection: () => linear.getConnection(), observed: notifier.observe, tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
+  const summary = registerHelperSummary(bb, helper);
+  const board = registerBoard(bb, { connection: () => linear.getConnection(), observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); }, tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
+  summary.register(board.read);
   registerPlanning(bb, { tracker, doctor: doctor.read });
   const actions = registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
   registerSquadronCli(bb, board, actions, helper);

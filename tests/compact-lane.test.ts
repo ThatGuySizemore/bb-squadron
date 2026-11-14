@@ -1,6 +1,7 @@
 // SQD-216: in narrow layouts (the side panel, and boards 900px wide and under)
 // each Flying lane is one compact row, with a thin pace line along its bottom
 // edge, instead of the tall tail card and its separate airstream band.
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Board, Lane, Route, Ticket } from "../lib/board-model.js";
@@ -128,4 +129,22 @@ test("the full page takes the narrow layout at 900px wide and under; a side pane
   const page = await view([lane("FIX-1")], "page");
   assert.equal(byClass(page, "sq-lane-row").length, 0, "the wide page keeps its tail card");
   assert.equal(byClass(page, "sq-tail").length, 1);
+});
+
+
+test("compact Merge waits controls retain both actions and allow each flex group to wrap", async () => {
+  const root = await view([lane("FIX-1", { state: "merge-waits", stopped: true, acceptOwner: true,
+    pr: { number: 11, url: "https://github.com/o/r/pull/11", checks: "passing", state: "open" } })]);
+  const end = one(root, "sq-lane-row-end");
+  assert.equal(visibleText(one(end, "sq-lane-state")), "Merge waits on you");
+  assert.deepEqual(elements(one(end, "sq-actions")).filter((node) => node.tag === "button").map(visibleText), ["Merge", "Resume"]);
+  assert.equal(one(end, "sq-pr").attrs["aria-label"], "PR #11, checks pass. Open on GitHub.");
+  // Static style contract only. JSDOM cannot prove rendered widths or line wrapping.
+  const css = readFileSync("board/board.css", "utf8");
+  const rule = (selector: string) => css.slice(css.indexOf(`${selector} {`)).split("}")[0]!;
+  assert.match(rule(".sq-lane-row-end"), /flex-wrap:\s*wrap;/);
+  assert.match(rule(".sq-lane-row-end"), /flex:\s*0 1 auto;/, "controls can shrink when the group exceeds the panel");
+  assert.match(rule(".sq-lane-row-end"), /min-width:\s*0;/);
+  assert.match(rule(".sq-lane-row .sq-actions"), /flex-wrap:\s*wrap;/);
+  assert.match(rule(".sq-lane-row .sq-actions"), /min-width:\s*0;/);
 });

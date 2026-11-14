@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
+import { isActiveTicket } from "./ticket-activity.js";
 import type { Board, Lane } from "./board-model.js";
 
 type Timeline = Extract<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["timeline"]>>, { rows: unknown }>;
@@ -11,15 +12,6 @@ export const liveStepSchema = z.object({
 });
 export type LiveStep = z.infer<typeof liveStepSchema>;
 export const LIVE_STEP_MS = 15_000;
-const ACTIVE = new Set(["working", "review", "question", "failed"]);
-
-/** Only the first prose line is board copy. Never copy code blocks, outputs or tool arguments. */
-function prose(text: string): string {
-  const line = text.trim().split(/\r?\n/)[0].replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  if (!line || /```|[{};=]|\b(?:secret|password|token|api[_ -]?key|bearer|authorization|credential)\b|(?:sk-|gh[pousr]_|lin_api_)[\w-]+|https?:\/\/\S+|[A-Za-z0-9_+/-]{32,}/i.test(line)) return "Agent message";
-  const plain = line.replace(/[*_`#<>]/g, "").replace(/\s+/g, " ");
-  return plain.length > 60 ? `${plain.slice(0, 59).trimEnd()}…` : plain;
-}
 
 function latest(rows: TimelineRow[]): TimelineRow | undefined {
   return rows.flatMap((row): TimelineRow[] => row.kind === "turn" ? row.children ?? [] : [row])
@@ -28,7 +20,9 @@ function latest(rows: TimelineRow[]): TimelineRow | undefined {
 }
 
 function stepOf(row: TimelineRow): string {
-  if (row.kind === "conversation") return prose(row.text);
+  // Assistant prose can quote arbitrary file contents. Only typed work metadata
+  // supplies specific activity copy; a message contributes its kind and time.
+  if (row.kind === "conversation") return "Agent message";
   if (row.kind !== "work") return "No recent activity";
   if (row.workKind === "command") {
     const npm = /^npm (?:test|run [a-z][a-z0-9:-]{0,30})$/.exec(row.command.trim());
@@ -67,7 +61,7 @@ export function createLiveStepReader(bb: BbPluginApi, now: () => number) {
     const allowed = new Set(visibleLaneIds);
     const lanes = await Promise.all(board.lanes.map(async (lane): Promise<Lane> => {
       if (lane.state !== "flying" || visibleLaneIds && !allowed.has(lane.specId)) return lane;
-      const ids = [...new Set([lane.leadThreadId, ...lane.tickets.filter((ticket) => ACTIVE.has(ticket.state)).flatMap((ticket) => ticket.threadId ? [ticket.threadId] : [])])];
+      const ids = [...new Set([lane.leadThreadId, ...lane.tickets.filter((ticket) => isActiveTicket(ticket.state)).flatMap((ticket) => ticket.threadId ? [ticket.threadId] : [])])];
       const key = `${projectId}:${lane.specId}`;
       let entry = cache.get(key);
       if (!entry || force || now() - entry.at >= LIVE_STEP_MS) {
@@ -77,7 +71,7 @@ export function createLiveStepReader(bb: BbPluginApi, now: () => number) {
       }
       const steps = await entry.value;
       return { ...lane, ...(steps.has(lane.leadThreadId) ? { liveStep: steps.get(lane.leadThreadId)! } : {}), tickets: lane.tickets.map((ticket) => ({ ...ticket,
-        ...(ticket.threadId && ACTIVE.has(ticket.state) && steps.has(ticket.threadId) ? { liveStep: steps.get(ticket.threadId)! } : {}),
+        ...(ticket.threadId && isActiveTicket(ticket.state) && steps.has(ticket.threadId) ? { liveStep: steps.get(ticket.threadId)! } : {}),
       })) };
     }));
     const keys = new Set(board.lanes.filter((lane) => lane.state === "flying").map((lane) => `${projectId}:${lane.specId}`));

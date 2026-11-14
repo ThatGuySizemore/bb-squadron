@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createDitherRenderer, type RendererEnv } from "../lib/dither-renderer.js";
-import { airstream, createSurface, formation, FORMATION_SIZE, pixelsOf } from "../lib/dither.js";
+import { airstream, createSurface, formation, formationSize, FORMATION_SIZE, pixelsOf } from "../lib/dither.js";
 
 /** A browser stand-in: frames run only when the test says so. */
 function fakeEnv(options: { reduced?: boolean } = {}) {
@@ -146,7 +146,7 @@ test("SQD-214: a still frame draws one plane per slot, lit planes in sky and emp
     return s;
   };
   assert.deepEqual(FORMATION_SIZE, { width: 184, height: 80 }, "about twice the old 92x40 mark");
-  for (const [slots, lit] of [[1, 0], [1, 1], [3, 0], [3, 2], [3, 3], [5, 4], [10, 7]] as const) {
+  for (const [slots, lit] of [[1, 0], [1, 1], [3, 0], [3, 2], [3, 3], [5, 4], [10, 7], [11, 0], [12, 0], [12, 7], [12, 12], [18, 17]] as const) {
     const s = frame(slots, lit);
     assert.equal(pixelsOf(s, SKY), lit * PLANE_PIXELS, `${lit} of ${slots}: ${lit} lit planes`);
     assert.equal(pixelsOf(s, HAIRLINE), (slots - lit) * PLANE_PIXELS, `${lit} of ${slots}: ${slots - lit} empty slots`);
@@ -188,4 +188,20 @@ test("an airstream with no working threads is still; with work it flows", () => 
   const b = [...moving.buf];
   paintMoving(moving, 0.5);
   assert.notDeepEqual([...moving.buf], b, "working threads move the streaks");
+});
+
+
+test("large formations grow their canvas and retain every lit and empty sprite at both densities", () => {
+  assert.deepEqual(formationSize(12, 0), { width: 184, height: 80 });
+  assert.deepEqual(formationSize(24, 13), { width: 184, height: 88 });
+  assert.deepEqual(formationSize(1, 48), { width: 184, height: 172 }, "over-limit starts also reserve drawn space");
+  for (const dpr of [1, 2]) {
+    for (const [slots, lit, skyPixels, emptyPixels] of [[24, 13, 2106, 1782], [48, 30, 4860, 2916], [1, 48, 7776, 0]] as const) {
+      const size = formationSize(slots, lit);
+      const s = createSurface(size.width, size.height, dpr);
+      formation({ slots, lit, on: SKY, off: HAIRLINE, trail: TRAIL })(s, 0.8);
+      assert.equal(pixelsOf(s, SKY), skyPixels * dpr * dpr);
+      assert.equal(pixelsOf(s, HAIRLINE), emptyPixels * dpr * dpr);
+    }
+  }
 });

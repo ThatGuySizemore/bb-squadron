@@ -330,7 +330,11 @@ test("the path strip counts lanes on the board; SQD-214: the formation mark show
   assert.equal(said(mixed), "3 of 3 lanes flying", "with no lane limit, one slot per lane flying");
   assert.equal(said([]), "0 of 1 lane flying", "with no lane limit and nothing flying, one empty slot");
   assert.equal(said([mixed[3]!]), "0 of 1 lane flying", "a Landed lane isn't flying");
-  assert.equal(said(mixed, { limit: 2 }), "3 of 2 lanes flying", "a hand start over the limit still counts");
+  assert.equal(said(mixed, { limit: 2 }), "3 of 3 lanes flying (limit 2)", "label counts every drawn slot and retains the exceeded limit");
+  const many = Array.from({ length: 24 }, (_, i) => ({ ...board.lanes[0]!, specId: `FIX-${i + 100}` }));
+  assert.equal(said(many), "24 of 24 lanes flying");
+  assert.match(mark(header(many))!, /style="height:88px;margin:0"/, "the canvas grows to keep every sprite visible");
+  assert.equal(said(board.lanes, { limit: 24 }), "1 of 24 lanes flying");
   assert.doesNotMatch(header(mixed), /across your projects/, "the cross-project count leaves the mark");
   assert.equal(mark(header(mixed, { lanesKnown: false })), undefined, "absent until the live board's first read");
 });

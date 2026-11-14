@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { isActiveTicket } from "../lib/ticket-activity.js";
 import type { LiveStep } from "../lib/live-step.js";
 import { LIVE_STEP_MS } from "../lib/live-step.js";
 import type { ReactNode, Ref } from "react";
@@ -13,6 +14,7 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
+import { formationSize, FORMATION_SIZE } from "../lib/dither.js";
 import { layoutPixels } from "../lib/pixels.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
@@ -62,9 +64,11 @@ function Chevron({ className }: { className: string }) {
  * the lanes flying, with one slot shown when none are.
  */
 function FormationMark({ limit, flying }: { limit: number; flying: number }) {
-  const slots = limit > 0 ? limit : Math.max(1, flying);
-  const label = `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying`;
-  return <DitherCanvas fx={{ kind: "formation", slots, lit: flying }} className="sq-formation" label={label} title={label} />;
+  const slots = Math.max(1, limit, flying);
+  const label = `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying${limit > 0 && flying > limit ? ` (limit ${limit})` : ""}`;
+  const { height } = formationSize(slots, flying);
+  return <DitherCanvas fx={{ kind: "formation", slots, lit: flying }} className="sq-formation" label={label} title={label}
+    style={height > FORMATION_SIZE.height ? { height, margin: 0 } : undefined} />;
 }
 
 // ---------- small parts ----------
@@ -215,11 +219,19 @@ export function LiveStepLine({ activity }: { activity?: LiveStep }) {
   </span>;
 }
 
+/** Display BB's current owner interaction without changing the tracker's ticket state. */
+function ticketDisplayState(ticket: Ticket, lane: Lane): TicketState {
+  if (!isActiveTicket(ticket.state)) return ticket.state;
+  const need = lane.needs?.find((need) => need.threadId === ticket.threadId);
+  return need?.kind === "waiting" ? "question" : need?.kind === "failed" ? "failed" : ticket.state;
+}
+
 /** A narrow lane keeps each active ticket to a title line and a quiet activity line. */
 function SlimTicketRow({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
   const clickable = Boolean(ticket.threadId);
-  const state = TICKET_LABEL[ticket.state];
+  const displayState = ticketDisplayState(ticket, lane);
+  const state = TICKET_LABEL[displayState];
   const label = `${ticket.id}, ${ticket.title}: ${state}.`;
   const activity = lane.state === "flying"
     ? ticket.liveStep ? `${ticket.liveStep.status}. ${ticket.liveStep.step}. ` : "No recent activity. "
@@ -234,17 +246,17 @@ function SlimTicketRow({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
     <span className="sq-ticket-time sq-num" title="Ticket time">{formatMinutes(ticket.minutes)}</span>
   </>;
   return clickable ? (
-    <button type="button" className="sq-ticket-row" data-state={ticket.state} aria-label={`${label} ${activity}${formatMinutes(ticket.minutes)}. Open thread.`}
+    <button type="button" className="sq-ticket-row" data-state={displayState} aria-label={`${label} ${activity}${formatMinutes(ticket.minutes)}. Open thread.`}
       onClick={() => open.thread(ticket.threadId!, `the ${ticket.state === "review" ? "reviewer" : "worker"} thread for ${ticket.id}`)}>
       {body}
     </button>
-  ) : <div className="sq-ticket-row" data-state={ticket.state} aria-label={label}>{body}</div>;
+  ) : <div className="sq-ticket-row" data-state={displayState} aria-label={label}>{body}</div>;
 }
 
 function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
   const reviewer = laneReviewer(lane);
-  const state = ticket.state;
+  const state = ticketDisplayState(ticket, lane);
   const fill = state === "blocked" || state === "held" || state === "ready" ? null : <DitherCanvas fx={{ kind: "peg", state }} className="sq-fx" />;
   const waitsOn = ticket.blockedBy.filter((b) => {
     const blocker = lane.tickets.find((t) => t.id === b);
@@ -288,7 +300,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
           : <span className="sq-peg-state"><Term text={sub} nested={clickable} /></span>}
       </span>
       <span className="sq-peg-title">{ticket.title}</span>
-      {lane.state === "flying" && ["working", "review", "question", "failed"].includes(state) ? <LiveStepLine activity={ticket.liveStep} /> : null}
+      {lane.state === "flying" && isActiveTicket(state) ? <LiveStepLine activity={ticket.liveStep} /> : null}
       {size === "full" ? (
         <span className="sq-peg-foot">
           <AiChip route={state === "review" ? reviewer : ticket.route} />
@@ -490,7 +502,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
   ) : null;
   if (narrow) {
     // The tickets a narrow lane keeps in view: those an agent is on, or that wait on the owner.
-    const active = lane.tickets.filter((t) => t.state === "working" || t.state === "review" || t.state === "question" || t.state === "failed");
+    const active = lane.tickets.filter((t) => isActiveTicket(t.state));
     return (
       <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
         <LaneRow lane={lane} dispatch={dispatch} landing={landing} demo={demo} acting={acting} />

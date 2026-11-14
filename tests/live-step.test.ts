@@ -35,7 +35,7 @@ test("board RPC reads the Flying Lead and active worker's latest step, status an
   const { harness } = setup(t);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes[0].liveStep, { status: "waiting-for-host",
-    step: "Checking the confirmed testing decisions before running the…", since: 123 });
+    step: "Agent message", since: 123 });
   assert.deepEqual(board.lanes[0].tickets[0].liveStep, board.lanes[0].liveStep);
   assert.deepEqual(harness.inspection.sdk.callsTo("threads.timeline").map((call) => (call[0] as { threadId: string }).threadId).sort(), ["lead", "worker"]);
   assert.ok(!JSON.stringify(board).includes("private fixture body"));
@@ -76,10 +76,10 @@ test("only visible Flying lanes are read, and repeated/concurrent reads share a 
   assert.equal(harness.inspection.sdk.callsTo("threads.timeline").length, 6);
 });
 
-test("private bodies and credential-shaped prose never enter a live step, and failures discard stale activity", async (t) => {
+test("arbitrary assistant prose and quoted bodies never enter a live step, and failures discard stale activity", async (t) => {
   const { bb, harness } = setup(t);
   const { readLiveStep } = await import("../lib/live-step.js");
-  for (const text of ["```swift\nprivate fixture body", "token = fake-private-value", "Authorization: fake-private-value", "https://example.com/private?key=fixture"]) {
+  for (const text of ["> Internal customer list: Alice Example, Bob Example", "Internal customer list: Alice Example, Bob Example", "Checking the confirmed testing decisions before running the focused checks for this ticket.", "```swift\nprivate fixture body", "token = fake-private-value", "Authorization: fake-private-value", "https://example.com/private?key=fixture"]) {
     harness.sdk.stub("threads.timeline", async () => timeline(text));
     assert.equal((await readLiveStep(bb, "worker"))?.step, "Agent message");
   }
@@ -95,4 +95,20 @@ test("a worker change cannot spend a second lane read inside the 15-second budge
   setLeads([{ ...lead, workers: [{ ...lead.workers![0], id: "replacement" }] }]);
   await read();
   assert.equal(harness.inspection.sdk.callsTo("threads.timeline").length, 2);
+});
+
+
+test("live reads cover exactly the active ticket states used by both board layouts", async (t) => {
+  const { bb, harness } = setup(t);
+  const { createLiveStepReader } = await import("../lib/live-step.js");
+  const states = ["working", "review", "question", "failed", "blocked", "held", "ready", "branch", "done"] as const;
+  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 2, autoStart: false,
+    lanes: [{ specId: "FIX-1", title: "Fixture", state: "flying", lead: route, leadThreadId: "lead", branch: "spec/fix-1",
+      minutes: 0, acceptOwner: false, tickets: states.map((state) => ({ id: state, title: state, state,
+        threadId: state, route, blockedBy: [], minutes: 0 })) }], ready: [], shaping: [], openIssues: [] };
+  const result = await createLiveStepReader(bb, () => 0)(board, "proj-one");
+  assert.deepEqual(harness.inspection.sdk.callsTo("threads.timeline").map((call) => (call[0] as { threadId: string }).threadId).sort(),
+    ["failed", "lead", "question", "review", "working"]);
+  assert.deepEqual(result.lanes[0].tickets.filter((ticket) => ticket.liveStep).map((ticket) => ticket.id),
+    ["working", "review", "question", "failed"]);
 });

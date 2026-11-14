@@ -84,4 +84,3 @@ test("an invalid realtime signal's diagnostic is visible on the board", async ()
     onPlan: () => undefined, diagnostic: "Squadron ignored a board-changed update in an unexpected shape." }));
   assert.match(html, /role="status"[^>]*>[^<]*Squadron ignored a board-changed update/);
 });
-

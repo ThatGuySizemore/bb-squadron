@@ -9,6 +9,7 @@ import type { Board } from "../lib/board-model.js";
 import { registerLinearAuth } from "../lib/linear-auth.js";
 import { registerLinearReader } from "../lib/linear-reader.js";
 import { registerBoard } from "../lib/board-service.js";
+import { registerTracker } from "../lib/tracker-service.js";
 import { binding, workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
@@ -25,6 +26,10 @@ function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e
         sources: [{ id: "source", projectId: "proj-one", hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
       }) },
       files: { read: async ({ path }) => {
+        if (path === "/repo/docs/agents/issue-tracker.md") {
+          const content = readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8");
+          return { content, contentEncoding: "utf8", path, sha256: "tracker", sizeBytes: content.length };
+        }
         assert.equal(path, "/repo/docs/agents/squadron.md");
         return { content: settingsFile, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: settingsFile.length };
       } },
@@ -144,7 +149,7 @@ test("board RPC refreshes reuse identity for a minute and invalidate it when cre
   let now = Date.now();
   const auth = registerLinearAuth(bb, { fetch: linear.fetch, now: () => now });
   const mirror = registerLinearReader(bb, auth);
-  registerBoard(bb, { connection: auth.getConnection, mirror }, { now: () => now });
+  registerBoard(bb, { connection: auth.getConnection, tracker: registerTracker(bb, mirror) }, { now: () => now });
   const identities = () => linear.operations.filter((name) => name === "SquadronIdentity").length;
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   assert.equal(identities(), 1);
@@ -243,7 +248,7 @@ test("repeated signals with no change in the board model publish nothing", async
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   const auth = registerLinearAuth(bb);
   const mirror = registerLinearReader(bb, auth);
-  const board = registerBoard(bb, { connection: () => auth.getConnection(), mirror });
+  const board = registerBoard(bb, { connection: () => auth.getConnection(), tracker: registerTracker(bb, mirror) });
   await harness.behavior.callRpc("linear.bind", binding);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const before = harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length;

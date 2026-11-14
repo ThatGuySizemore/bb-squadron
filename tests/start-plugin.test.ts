@@ -23,6 +23,10 @@ function host(native = nativeThreads()) {
         sources: [{ id: "source", projectId, hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
       }) },
       files: { read: async ({ path }) => {
+        if (path === "/repo/docs/agents/issue-tracker.md") {
+          const content = readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8");
+          return { content, contentEncoding: "utf8", path, sha256: "tracker", sizeBytes: content.length };
+        }
         assert.equal(path, "/repo/docs/agents/squadron.md");
         return { content: settingsFile, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: settingsFile.length };
       } },

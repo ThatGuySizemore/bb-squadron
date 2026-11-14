@@ -6,6 +6,7 @@ import { doctor } from "../lib/doctor.js";
 const settingsMarkdown = readFileSync("tests/fixtures/squadron.md", "utf8");
 const names = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
 const readyInput = {
+  issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8"),
   skills: { claude: names, gpt: names }, settingsMarkdown,
   setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
   linearConnected: true, ghAuthenticated: true,
@@ -22,9 +23,26 @@ test("Doctor passes each required check and links all four configuration files",
   assert.equal(report.ready, true);
   assert.deepEqual(report.checks.map(({ id, status }) => [id, status]), [
     ["skills", "pass"], ["setup", "pass"], ["settings", "pass"], ["linear", "pass"], ["github", "pass"],
-    ["playbook", "pass"], ["machine-profile", "pass"],
+    ["playbook", "pass"], ["machine-profile", "pass"], ["tracker", "pass"],
   ]);
   assert.deepEqual(report.configurationFiles, readyInput.configurationFiles);
+});
+
+test("Doctor shows the tracker reason and doesn't ask non-Linear repos for a mapping or key", () => {
+  const noMapping = settingsMarkdown.replace(/## Status mapping[\s\S]*/, "");
+  for (const name of ["local", "github"]) {
+    const report = doctor({ ...readyInput, settingsMarkdown: noMapping, linearConnected: false,
+      issueTrackerMarkdown: readFileSync(`tests/fixtures/trackers/${name}.md`, "utf8") });
+    assert.equal(report.ready, true);
+    assert.equal(report.checks.some((check) => check.id === "linear"), false);
+    assert.match(report.checks.find((check) => check.id === "tracker")?.message ?? "", /issue-tracker\.md/);
+  }
+  const linear = doctor({ ...readyInput, settingsMarkdown: noMapping, linearConnected: false });
+  assert.equal(linear.ready, false);
+  assert.match(linear.checks.find((check) => check.id === "settings")!.message, /Status mapping/);
+  const override = doctor({ ...readyInput, settingsMarkdown: `${noMapping}\n## Tracker\nGitHub\n`, linearConnected: false });
+  assert.equal(override.ready, true);
+  assert.match(override.checks.find((check) => check.id === "tracker")!.message, /squadron\.md/);
 });
 
 test("each failing check names a fix, including a plugin missing in just one provider", () => {

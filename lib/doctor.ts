@@ -1,5 +1,6 @@
 import { parseSquadronSettings } from "./squadron-settings.js";
 import type { Family } from "./board-model.js";
+import { detectTracker, trackerName } from "./tracker-detection.js";
 
 export interface ConfigurationFile {
   id: "repo-rules" | "project-settings" | "playbook" | "machine-profile";
@@ -9,7 +10,7 @@ export interface ConfigurationFile {
   exists: boolean;
 }
 export interface DoctorCheck {
-  id: "skills" | "setup" | "settings" | "linear" | "github" | "playbook" | "machine-profile";
+  id: "skills" | "setup" | "settings" | "linear" | "github" | "playbook" | "machine-profile" | "tracker";
   name: string;
   status: "pass" | "fix" | "warning";
   message: string;
@@ -20,6 +21,7 @@ export interface DoctorInput {
   skills: Partial<Record<Family, readonly string[]>>;
   setupFiles: readonly string[];
   settingsMarkdown: string | null;
+  issueTrackerMarkdown: string | null;
   linearConnected: boolean;
   ghAuthenticated: boolean;
   configurationFiles: ConfigurationFile[];
@@ -30,7 +32,8 @@ export const setupFiles = ["docs/agents/issue-tracker.md", "docs/agents/triage-l
 
 /** Public, secret-free output shared by the board and preflight callers. */
 export function doctor(input: DoctorInput): DoctorReport {
-  const parsed = input.settingsMarkdown === null ? null : parseSquadronSettings(input.settingsMarkdown);
+  const tracker = detectTracker(input.issueTrackerMarkdown, input.settingsMarkdown);
+  const parsed = input.settingsMarkdown === null ? null : parseSquadronSettings(input.settingsMarkdown, tracker.kind ?? "linear");
   const families = new Set<Family>(parsed?.ok ? parsed.settings.routes.map((route) => route.family) : ["claude", "gpt"]);
   // An other-family final review also needs its provider's skills installed.
   if (parsed?.ok && parsed.settings.finalReviewFamily === "other") {
@@ -54,14 +57,14 @@ export function doctor(input: DoctorInput): DoctorReport {
     },
     {
       id: "settings", name: "Project settings", status: parsed?.ok ? "pass" : "fix",
-      message: parsed?.ok ? "Quick check, stop list, time limits, routes, final review and status mapping are ready."
+      message: parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? " and status mapping" : ""} are ready.`
         : parsed ? parsed.issues.map((issue) => issue.message).join(" ")
-        : "Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes, Final review and Status mapping sections.",
+        : `Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes, Final review${tracker.kind === "linear" ? " and Status mapping" : ""} sections.`,
     },
-    {
+    ...((tracker.kind === "linear" ? [{
       id: "linear", name: "Linear key", status: input.linearConnected ? "pass" : "fix",
       message: input.linearConnected ? "The Linear key works." : "Set a working Linear personal API key in BB's secret settings.",
-    },
+    }] : []) as DoctorCheck[]),
     {
       id: "github", name: "GitHub login", status: input.ghAuthenticated ? "pass" : "fix",
       message: input.ghAuthenticated ? "gh is signed in on this repo's machine."
@@ -73,6 +76,7 @@ export function doctor(input: DoctorInput): DoctorReport {
       return { id, name, status: file?.exists ? "pass" : "warning",
         message: file?.exists ? `${name} is present.` : `Optional: create ${file?.path ?? (id === "playbook" ? "~/.bb-squadron/playbook.md" : "~/.bb-squadron/machine.md")} from the bundled starter template. This file doesn't block Start.` };
     }),
+    { id: "tracker", name: tracker.kind ? `Tracker: ${trackerName(tracker.kind)}` : "Tracker", status: tracker.kind ? "pass" : "fix", message: tracker.reason },
   ];
   return { ready: checks.every((check) => check.status !== "fix"), checks, configurationFiles: input.configurationFiles };
 }

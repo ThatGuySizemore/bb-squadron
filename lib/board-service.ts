@@ -7,12 +7,12 @@ import { boardContract } from "./board-contract.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { deriveBoard, type BoardInput } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
-import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
+import type { TrackerReader } from "./tracker-contract.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
@@ -20,10 +20,7 @@ export interface BoardSources {
   leads?(projectId: string): Promise<LeadThread[]>;
   /** Rows from BB's pull-request plugin for the Leads' environments. */
   pullRequests?(environmentIds: string[], signal?: AbortSignal): Promise<Record<string, PullRequestRow>>;
-  mirror: {
-    getSnapshot(bbProjectId: string): MirrorSnapshot;
-    onChange(listener: (bbProjectId: string) => void): () => void;
-  };
+  tracker: TrackerReader;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -70,13 +67,14 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   async function compute(projectId: string, fresh: boolean): Promise<Board> {
     const entry = project(projectId);
     const at = now();
-    if (fresh || !entry.connection || at - entry.connection.at > REUSE_MS) entry.connection = { at, value: await connection() };
+    const snapshot = await sources.tracker.getSnapshot(projectId);
+    if (snapshot.kind === "linear" && (fresh || !entry.connection || at - entry.connection.at > REUSE_MS)) entry.connection = { at, value: await connection() };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
     const leads = await sources.leads?.(projectId);
     const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
     const { board } = deriveBoard({
-      snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
+      snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
       leads,
@@ -110,7 +108,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return running;
   }
 
-  sources.mirror.onChange((projectId) => { void refresh(projectId); });
+  sources.tracker.onChange((projectId) => { void refresh(projectId); });
 
   bb.background.service("board-watcher", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);

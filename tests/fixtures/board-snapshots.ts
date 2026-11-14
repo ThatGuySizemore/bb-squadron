@@ -2,6 +2,7 @@
 import type { MirrorIssue, MirrorSnapshot } from "../../lib/linear-mirror-contract.js";
 import { parseSquadronSettings } from "../../lib/squadron-settings.js";
 import { readFileSync } from "node:fs";
+import { linearTrackerSnapshot } from "../../lib/tracker-snapshot.js";
 
 const open = { id: "state-todo", name: "Todo", type: "unstarted" };
 const closed = { id: "state-done", name: "Done", type: "completed" };
@@ -47,6 +48,6 @@ export const connected = { status: "connected" as const, message: "Connected to 
 
 /** Board input after a sync during this run of the plugin. */
 export function input(snap: MirrorSnapshot, overrides: Record<string, unknown> = {}) {
-  return { snapshot: snap, connection: connected, settings,
-    now: SYNCED_AT + 5_000, ...overrides };
+  return { connection: connected, settings, now: SYNCED_AT + 5_000, ...overrides,
+    snapshot: linearTrackerSnapshot("proj-one", (overrides.snapshot as MirrorSnapshot | undefined) ?? snap) };
 }

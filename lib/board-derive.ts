@@ -1,15 +1,16 @@
-// Derives the board from the in-memory Linear snapshot and project settings.
+// Derives the board from a tracker snapshot and project settings.
 import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type UnplannedIssue } from "./board-model.js";
-import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
+import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread, WorkerThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
+import { trackerName } from "./tracker-detection.js";
 
 export interface BoardInput {
-  snapshot: MirrorSnapshot;
+  snapshot: TrackerSnapshot;
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
   doctor?: DoctorReport;
@@ -24,7 +25,7 @@ export interface DerivedBoard {
   board: Board;
 }
 
-function byIdentifier(a: MirrorIssue, b: MirrorIssue): number {
+function byIdentifier(a: TrackerIssue, b: TrackerIssue): number {
   return a.identifier.localeCompare(b.identifier, "en", { numeric: true });
 }
 
@@ -53,31 +54,33 @@ function uniqueRoutes(routes: Route[]): Route[] {
 
 export function deriveBoard(input: BoardInput): DerivedBoard {
   const { snapshot } = input;
+  const usesLinear = snapshot.kind === "linear";
+  const tracker = snapshot.kind ? trackerName(snapshot.kind) : "the tracker";
   const settings = input.settings?.ok ? input.settings.settings : null;
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
-  const labels = (issue: MirrorIssue) => issue.labels.map((label) => label.name);
+  const labels = (issue: TrackerIssue) => issue.labels.map((label) => label.name);
   const specs = open.filter((issue) => issue.parentId === null && labels(issue).includes(READY_FOR_AGENT));
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
-  const binding = snapshot.binding;
+  const project = snapshot.project;
   const leads = new Map((input.leads ?? []).filter(({ thread }) =>
-    binding && isActiveProjectThread(thread, thread.id, binding.bbProjectId)).map((lead) => [lead.specId, lead]));
+    project && isActiveProjectThread(thread, thread.id, snapshot.bbProjectId)).map((lead) => [lead.specId, lead]));
   // A spec its Lead closed after the merge keeps its lane, so the lane lands and stays Landed.
   const closedSpecs = snapshot.issues.filter((issue) => issue.parentId === null && issue.state.type === "completed" &&
-    issue.teamId === binding?.team.id && issue.projectId === binding?.project.id && labels(issue).includes(READY_FOR_AGENT));
+    issue.inProject && labels(issue).includes(READY_FOR_AGENT));
   const lanes: Lane[] = [...specs, ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
   /** Waiting, Working, In branch or Done, read from Linear through the status mapping. */
-  function ticketState(issue: MirrorIssue): Ticket["state"] {
+  function ticketState(issue: TrackerIssue): Ticket["state"] {
     const mapping = settings?.statusMapping.ticket;
     if (issue.state.type === "completed" || issue.state.name === mapping?.done) return "done";
     if (issue.state.name === mapping?.inBranch) return "branch";
     if (issue.state.name === mapping?.working) return "working";
     return "blocked";
   }
-  function lane(spec: MirrorIssue, lead: LeadThread): Lane {
+  function lane(spec: TrackerIssue, lead: LeadThread): Lane {
     const issues = snapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
     const ids = new Set(issues.map((issue) => issue.id));
     const workers = lead.workers ?? [];
@@ -128,7 +131,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     };
   }
   /** Open blockers of one issue, in identifier order. Unknown endpoints are skipped. */
-  const openBlockers = (issue: MirrorIssue): Blocker[] => snapshot.relations
+  const openBlockers = (issue: TrackerIssue): Blocker[] => snapshot.relations
     .filter((relation) => relation.relatedIssueId === issue.id)
     .flatMap((relation) => {
       const blocker = byId.get(relation.issueId);
@@ -137,7 +140,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     .sort(byIdentifier)
     .map((blocker) => ({
       id: blocker.identifier, title: blocker.title, url: blocker.url,
-      outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id,
+      outside: !blocker.inProject,
     }));
   const ready: ReadySpec[] = specs.filter((spec) => !leads.has(spec.id)).map((spec) => {
     const tickets = open.filter((issue) => issue.parentId === spec.id);
@@ -147,12 +150,12 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
     let startReason: string | null;
     const doctorFix = input.doctor?.checks.find((check) => check.status === "fix");
-    if (input.connection.status !== "connected") {
+    if (usesLinear && input.connection.status !== "connected") {
       startReason = input.connection.message;
-    } else if (!binding) {
+    } else if (usesLinear && !project) {
       startReason = "Choose this project's Linear team and project before Start.";
     } else if (snapshot.error || snapshot.syncedAt === null) {
-      startReason = snapshot.error ?? "Wait for Linear to finish reading this project's issues.";
+      startReason = snapshot.error ?? `Wait for ${tracker} to finish reading this project's issues.`;
     } else if (doctorFix) {
       startReason = doctorFix.message;
     } else if (specBlockers.length) {
@@ -178,11 +181,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   });
   // Anything open that isn't a Ready spec or one of its tickets waits here,
   // so no issue in the bound project drops off the board.
-  const under = (issue: MirrorIssue): string | undefined => {
+  const under = (issue: TrackerIssue): string | undefined => {
     if (issue.parentId === null) return undefined;
     const parent = byId.get(issue.parentId);
     if (!parent) return "Under an issue this board can't see";
-    if (parent.teamId !== binding?.team.id || parent.projectId !== binding?.project.id) return `Under ${parent.identifier}, outside this project`;
+    if (!parent.inProject) return `Under ${parent.identifier}, outside this project`;
     if (!isOpenIssue(parent)) return `Under ${parent.identifier}, which is closed`;
     return `Under ${parent.identifier}`;
   };
@@ -194,24 +197,24 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     });
   let linear: LinearStatus["state"];
   let message: string;
-  if (input.connection.status !== "connected") {
+  if (usesLinear && input.connection.status !== "connected") {
     linear = "disconnected"; message = input.connection.message;
-  } else if (!binding) {
+  } else if (usesLinear && !project) {
     linear = "unbound"; message = "Choose the Linear team and project for this BB project.";
   } else if (snapshot.error) {
     // The mirror's own poller retries; the last good copy stays on the board.
     linear = "failed"; message = snapshot.error;
   } else if (snapshot.syncedAt === null) {
     linear = "catching-up";
-    message = "Reading this project's issues from Linear.";
+    message = `Reading this project's issues from ${tracker}.`;
   } else {
-    linear = "current"; message = "Up to date with Linear.";
+    linear = "current"; message = `Up to date with ${tracker}.`;
   }
   return {
     board: {
       ...(input.doctor ? { doctor: input.doctor } : {}),
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
-        project: binding ? `${binding.team.name} · ${binding.project.name}` : null },
+        project: project?.name ?? null },
       tick: 0, laneCapacity: 0, workersPerLane: 0,
       autoStart: false, lanes, ready, unplanned,
     },

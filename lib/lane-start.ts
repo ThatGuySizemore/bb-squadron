@@ -10,6 +10,7 @@ import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { PULL_REQUEST_PLUGIN, readPullRequests } from "./pull-requests.js";
 import { canMerge } from "./board-model.js";
 import { z } from "zod";
+import { linearTrackerSnapshot } from "./tracker-snapshot.js";
 
 export function registerLaneStart(bb: BbPluginApi, sources: {
   mirror: { getSnapshot(projectId: string): MirrorSnapshot };
@@ -25,7 +26,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to start a lane in.");
     const doctor = await sources.doctor(projectId);
-    const { board } = deriveBoard({ snapshot, leads, settings: checkout.settings, doctor,
+    const { board } = deriveBoard({ snapshot: linearTrackerSnapshot(projectId, snapshot), leads, settings: checkout.settings, doctor,
       connection: { status: "connected", message: "" }, now: Date.now() });
     const ready = board.ready.find((row) => row.id === specId);
     if (!ready || !spec) throw new Error(`${specId} isn't a ready spec in this project's Linear project. Read the board again.`);

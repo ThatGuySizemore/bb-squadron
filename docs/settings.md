@@ -30,6 +30,12 @@ Every tracker needs these sections before Start:
 | Routes | A Label / Family / Model / Effort table with one `(default)` row. Families are Claude or GPT; effort is medium or high. |
 | Final review | `other` or `same`, relative to the Lead's model family. |
 
+## Lead and worker routes
+
+Routes may include one `Lead` row, such as `| Lead | GPT | gpt-6.1-sol | medium |`. It selects the Lead regardless of spec labels. The Lead coordinates and merges; workers build tickets, including UI. Without a Lead row, Start keeps the existing behaviour: the first matching spec label wins, then the default row.
+
+Ticket labels still select worker routes in table order, with `(default)` as fallback. `Lead` is reserved for the coordinator, not a ticket label. This repo uses GPT medium for Lead and default, Claude Opus high for `ui`, and an unchanged high-effort final review.
+
 ## Hold labels
 
 A held ticket is an open ticket that carries a hold label. The board shows it as Held, and the Lead starts no worker for it, picks it up if the label comes off while the lane runs, and lists it under "Held" in the PR body. A spec whose open tickets are all held stays Shaping. A lane that delivers the rest leaves its held tickets and the spec open.

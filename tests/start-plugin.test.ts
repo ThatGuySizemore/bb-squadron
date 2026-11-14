@@ -197,7 +197,7 @@ test("the bundled Lead skill points to installed Matt skills and adds BB lane ru
   const skill = readFileSync("skills/squadron-lead/SKILL.md", "utf8");
   assert.match(skill, /^---\nname: squadron-lead\ndescription: .+\n---\n/);
   for (const pointer of ["`implement-spec`", "`tdd`", "`code-review`", "AGENTS.md", "docs/agents/squadron.md",
-    "playbook", "machine profile", "parent-self", "accept:owner", "two strikes", "Stop", "Resume", "status mapping"]) {
+    "House rules", "This machine", "parent-self", "accept:owner", "two strikes", "Stop", "Resume", "status mapping"]) {
     assert.ok(skill.includes(pointer), `the Lead skill names ${pointer}`);
   }
   assert.ok(!/squadron_\w+/.test(skill), "the Lead names no Squadron agent tools");

@@ -113,9 +113,10 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   return issues.length ? { ok: false, issues } : { ok: true, settings };
 }
 
-/** Matching labels keep file order; the default is used only when none match. */
+/** Matching labels keep file order and ignore case; the default is used only when none match. */
 export function resolveRoute(settings: SquadronSettings, labels: readonly string[]): Route {
-  const row = settings.routes.find((route) => route.label !== null && labels.includes(route.label))
+  const names = new Set(labels.map((label) => label.toLowerCase()));
+  const row = settings.routes.find((route) => route.label !== null && names.has(route.label.toLowerCase()))
     ?? settings.routes.find((route) => route.label === null);
   if (!row) throw new Error("Add a default route to docs/agents/squadron.md.");
   return { family: row.family, model: row.model, effort: row.effort };

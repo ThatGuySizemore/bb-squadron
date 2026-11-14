@@ -1,5 +1,6 @@
 // Serves the board from the tracker reader, settings and clock; publishes
 // `board-changed` whenever a project's board model changes.
+import { createLiveStepReader } from "./live-step.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
@@ -42,6 +43,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
 } = {}) {
   const now = options.now ?? Date.now;
   const wait = options.wait ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
+  const liveSteps = createLiveStepReader(bb, now);
   const lifetime = new AbortController();
   bb.onDispose(() => { lifetime.abort(); });
   const projects = new Map<string, {
@@ -174,7 +176,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   }
 
   bb.rpc.register(boardContract, {
-    board: async ({ projectId }) => {
+    board: async ({ projectId, visibleLaneIds, refreshLive }) => {
       const entry = project(projectId);
       const wasShown = isShown(projectId);
       entry.shownAt = now();
@@ -182,7 +184,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       if (!wasShown) await sources.tracker.refresh?.(projectId);
       const board = await compute(projectId, true);
       publishIfChanged(projectId, board);
-      return board;
+      return liveSteps(board, projectId, visibleLaneIds, refreshLive);
     },
     "board.projects": async () => {
       const listed = await listProjects();

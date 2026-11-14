@@ -306,6 +306,9 @@ A plain "How it works" button in the header, before Doctor, opens a flat region 
 ### Tail card
 The lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed). Holds the pixel spec number, the title (opens the spec), the Lead chip (opens the Lead thread), the lane state with an 8px state square and its time, the PR link with its checks dot (green, red, pulsing amber while checks run, hollow when there are none or none are known), the outside-lane tag, the branch in mono, and the lane actions (Merge, Resume, Stop). An outside lane replaces the actions with a muted read-only line over a hairline: "Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge."
 
+### Live step
+Flying lanes show the Lead's activity below its chip and each active ticket's activity below its title, in both the full page and side panel. The line uses muted ink, 11px type at 400 and a 1.45 line height. It stays on one line with an ellipsis; the title keeps its two-line allowance. Runtime problems include a word as well as ink: Error uses red ink and Waiting for machine uses amber ink. Elapsed minutes follow the step. With no activity the line says "No recent activity". The board displays a short safe summary, never tool arguments, output or file bodies. Reads are limited to on-screen Flying lanes while the page is visible, once per 15 seconds per lane plus board-changed updates.
+
 ### Progress strip
 One segment per ticket in lane order, up to 40px wide (22px basis), 6px tall, 2px apart, then "N/M in branch" and, at the right, the pace ("2 working" with a sky square). Hollow (1px rule-ink outline) for waiting and ready; sky in 1px stripes for working and review; solid green for in branch and done; amber or red at double height for a question and a failure. The tall segment is the form cue that something on this line is stuck.
 

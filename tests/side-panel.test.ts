@@ -97,3 +97,24 @@ test("the side panel opens on the thread's project, read through BB's thread API
   assert.equal(await threadProject({ threads: { get: async () => { throw new Error("gone"); } } }, "thr_gone"), null,
     "an unreadable thread falls back too");
 });
+
+test("both layouts show a muted current step on active pegs, an empty fallback and the Lead's activity", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { BoardView } = await import("../board/Board.js");
+  const live: Board = { ...board, lanes: [{ ...lane,
+    liveStep: { status: "active", step: "Waiting on worker", since: 123 },
+    tickets: lane.tickets.map((item) => item.id === "FIX-3" ? { ...item,
+      liveStep: { status: "error", step: "Running npm test", since: 456 } } : item),
+  }] };
+  for (const placement of ["page", "panel"] as const) {
+    const html = await render(createElement(BoardView, { board: live, demo: false, modeSwitch: null,
+      dispatch: () => undefined, onPlan: () => undefined, placement }));
+    const all = elements(parse(html));
+    const steps = all.filter((element) => element.attrs.class?.split(" ").includes("sq-live-step"));
+    assert.equal(steps.length, 3);
+    assert.ok(steps.some((element) => visibleText(element).includes("Waiting on worker")));
+    assert.ok(steps.some((element) => visibleText(element).includes("Error") && visibleText(element).includes("Running npm test")));
+    assert.ok(steps.some((element) => visibleText(element) === "No recent activity"));
+  }
+});

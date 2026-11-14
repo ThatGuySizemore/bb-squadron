@@ -175,4 +175,23 @@ const states: Fixture = {
   },
 };
 
-export const FIXTURES: Fixture[] = [squadronFlying, squadronReady, squadronPublished, bbBot, empty, states];
+/** Synthetic reader states for SQD-215 visual checks, never live thread data. */
+const liveSteps: Fixture = {
+  name: "live-steps", projectName: "Synthetic live steps", tracker: { kind: "github" }, fleet: 1,
+  board: { ...base, ready: [], shaping: [], openIssues: [], lanes: [{
+    specId: "FIX-1", title: "Synthetic live activity", lead: codex, leadThreadId: "lead", branch: "fixture/live-steps",
+    state: "flying", minutes: 12, acceptOwner: false, workingThreads: 2,
+    liveStep: { status: "active", step: "Waiting on worker", since: now - 4 * MIN },
+    tickets: [
+      ticket("FIX-2", "Read the confirmed testing decisions", [], codex, "working", { threadId: "worker",
+        liveStep: { status: "active", step: "Checking the confirmed testing decisions before running the…", since: now - 2 * MIN } }),
+      ticket("FIX-3", "Run the focused checks", [], codex, "failed", { threadId: "error",
+        liveStep: { status: "error", step: "Running npm test", since: now - MIN } }),
+      ticket("FIX-4", "An agent with no timeline", [], codex, "question", { threadId: "empty" }),
+      ticket("FIX-5", "Review the current branch", [], claude, "review", { threadId: "review",
+        liveStep: { status: "waiting-for-host", step: "Reading file", since: now - 3 * MIN } }),
+    ],
+  }] },
+};
+
+export const FIXTURES: Fixture[] = [squadronFlying, squadronReady, squadronPublished, bbBot, empty, states, liveSteps];

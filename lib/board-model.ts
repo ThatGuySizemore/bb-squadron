@@ -1,4 +1,5 @@
 // The board runtime schema is also the source of its public TypeScript types.
+import { liveStepSchema } from "./live-step.js";
 import { z } from "zod";
 import { doctorReportSchema } from "./doctor-contract.js";
 import { trackerKindSchema } from "./tracker-contract.js";
@@ -7,9 +8,11 @@ const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), e
 const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "held", "ready", "working", "question", "review", "branch", "failed", "done"]),
+  liveStep: liveStepSchema.optional(),
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({
+  liveStep: liveStepSchema.optional(),
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   /** No lane thread is running, independent of the PR's In review state. Derived only. */

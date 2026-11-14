@@ -58,3 +58,12 @@ test("the board's lane controls call their RPC, then refresh, and report refusal
   await laneControlFromBoard({ ...deps, call: async () => { throw new Error("Only a stopped lane can resume."); } }, "proj-one", "resume", "FIX-5");
   assert.deepEqual(calls, ["Only a stopped lane can resume.", "refresh"]);
 });
+
+test("Re-plan shows its pending planning thread and waits while one opens", async () => {
+  const html = await render({ tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, unplanned: [], ready: [], lanes: [
+    { specId: "FIX-5", title: "Stopped spec", lead: route, leadThreadId: "thr_lead", branch: "bb/integration", state: "stopped", minutes: 3,
+      acceptOwner: false, stopReason: "You stopped this lane.", tickets: [] }] }, { planning: "FIX-5" });
+  const needs = html.slice(html.indexOf('class="sq-needs"'), html.indexOf('id="sq-flying-h"'));
+  assert.match(needs, /<button[^>]*disabled=""[^>]*>Opening…<\/button>/);
+  assert.match(needs, /role="status">Starting its planning thread/);
+});

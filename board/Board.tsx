@@ -398,20 +398,26 @@ function CancelLane({ specId, disabled, pending, dispatch }: { specId: string; d
     </button>;
   }
   return (
-    <span className="sq-confirm" role="group" aria-label={`Cancel ${specId}?`} onKeyDown={(event) => { if (event.key === "Escape") back(); }}>
+    <span className="sq-confirm" role="group" aria-label={`Cancel ${specId}?`} onKeyDown={(event) => {
+      // Contain Escape so backing out never also closes the host's surface.
+      if (event.key === "Escape") { event.stopPropagation(); back(); }
+    }}>
       <span className="sq-confirm-text">Stops its threads. The branch and worktrees stay.</span>
-      <Btn onClick={back}>Keep lane</Btn>
-      <button ref={confirmRef} type="button" className="sq-btn" data-tone="danger" onClick={() => { setConfirming(false); dispatch({ type: "cancel", specId }); }}>
+      <Btn disabled={disabled} onClick={back}>Keep lane</Btn>
+      <button ref={confirmRef} type="button" className="sq-btn" data-tone="danger" disabled={disabled}
+        onClick={() => { setConfirming(false); dispatch({ type: "cancel", specId }); }}>
         Cancel lane
       </button>
     </span>
   );
 }
 
-function NeedsYouStrip({ items, dispatch, setup, onRetry, controlling = null }: {
+function NeedsYouStrip({ items, dispatch, setup, onRetry, controlling = null, planning = null }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
   controlling?: Controlling;
+  /** The planning thread being opened, if any: an issue or spec id. */
+  planning?: string | null;
   /** Controls for a setup item, such as choosing the Linear project. */
   setup?: ReactNode;
   onRetry?: (writeId: string) => Promise<void>;
@@ -473,7 +479,10 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry, controlling = null }: 
                   onClick={() => dispatch({ type: "resume", specId: item.specId })}>
                   {controlling?.specId === item.specId && controlling.action === "resume" ? CONTROL_PENDING.resume : "Resume"}
                 </Btn>
-                <Btn disabled={controlling !== null} title={`Open a planning thread on ${item.specId}`} onClick={() => dispatch({ type: "replan", specId: item.specId })}>Re-plan</Btn>
+                {planning === item.specId ? <span className="sq-plan-why" role="status">Starting its planning thread</span> : null}
+                <Btn disabled={controlling !== null || planning !== null} title={`Open a planning thread on ${item.specId}`} onClick={() => dispatch({ type: "replan", specId: item.specId })}>
+                  {planning === item.specId ? "Opening…" : "Re-plan"}
+                </Btn>
                 <span className="sq-isolated">
                   <CancelLane specId={item.specId} disabled={controlling !== null}
                     pending={controlling?.specId === item.specId && controlling.action === "cancel"} dispatch={dispatch} />
@@ -699,7 +708,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           <h2 id="sq-needs-h">
             Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
           </h2>
-          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} controlling={controlling} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} controlling={controlling} planning={planning} />
         </section>
         <DoctorPanel open={doctorOpen} id={doctorId} />
 

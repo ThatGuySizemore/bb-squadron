@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { doctor } from "../lib/doctor.js";
+import { SCOPE_MISSING } from "../lib/squadron-settings.js";
 
 const settingsMarkdown = readFileSync("tests/fixtures/squadron.md", "utf8");
 const names = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
@@ -80,4 +81,21 @@ test("only routed providers need the plugin when final review uses the same fami
   const other = doctor({ ...readyInput, settingsMarkdown: settings.replace("\nsame\n", "\nother\n"), skills: { gpt: names } });
   assert.equal(other.ready, false);
   assert.match(other.checks[0].message, /Claude Code:/);
+});
+
+test("a Linear project without a valid Scope is a fix, and so is a Scope Linear can't match", () => {
+  const noScope = doctor({ ...readyInput, settingsMarkdown: settingsMarkdown.replace(/## Scope\n[\s\S]*?(?=\n## )/, "") });
+  assert.equal(noScope.ready, false);
+  assert.deepEqual(noScope.checks.find((check) => check.id === "settings"), {
+    id: "settings", name: "Project settings", status: "fix", message: SCOPE_MISSING,
+  });
+  const unmatched = "Scope Project \"Fixture project\" matches no Linear project. Fix it in docs/agents/squadron.md.";
+  const report = doctor({ ...readyInput, linearScopeProblem: unmatched });
+  assert.equal(report.ready, false);
+  assert.deepEqual(report.checks.find((check) => check.id === "settings"), {
+    id: "settings", name: "Project settings", status: "fix", message: unmatched,
+  });
+  const github = doctor({ ...readyInput, linearScopeProblem: unmatched,
+    issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/github.md", "utf8") });
+  assert.equal(github.checks.find((check) => check.id === "settings")?.status, "pass", "only Linear reads a Scope");
 });

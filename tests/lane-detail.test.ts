@@ -62,7 +62,7 @@ test("a worker child whose title holds a ticket identifier links its card, and a
 });
 
 function withStatus(base: ReturnType<typeof issue>, name: string, type = "started") {
-  return { ...base, state: { id: `state-${name}`, name, type }, inProject: type !== "completed" && type !== "canceled" };
+  return { ...base, state: { id: `state-${name}`, name, type } };
 }
 
 const ticketStates = (board: ReturnType<typeof deriveBoard>["board"]) =>
@@ -274,9 +274,9 @@ test("a spec the Lead closed after its merge stays a Landed lane with its done t
   assert.deepEqual(board.ready, []);
   assert.deepEqual(board.openIssues, [], "closed issues stay off Open issues");
 
-  const elsewhere = deriveBoard(input(snapshot([{ ...withStatus(spec, "Done", "completed"), projectId: "project-other" }]),
+  const elsewhere = deriveBoard(input(snapshot([{ ...withStatus(spec, "Done", "completed"), projectId: "project-other", inProject: false }]),
     { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;
-  assert.deepEqual(elsewhere.lanes, [], "a spec moved out of the bound project leaves the board");
+  assert.deepEqual(elsewhere.lanes, [], "a spec moved out of the scope leaves the board");
 });
 
 test("Cancel is a demo-only control and never appears on a live lane", async () => {

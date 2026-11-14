@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseSquadronSettings, resolveRoute } from "../lib/squadron-settings.js";
+import { parseLinearScope, parseSquadronSettings, resolveRoute, SCOPE_MISSING } from "../lib/squadron-settings.js";
 
 const fixture = readFileSync("tests/fixtures/squadron.md", "utf8");
 
@@ -22,17 +22,43 @@ test("repo settings supply the quick check, stop list, limits and ordered routes
         lane: { ready: "Todo", flying: "In Progress", inReview: "In Review", landed: "Done" },
         ticket: { waiting: "Todo", working: "In Progress", inBranch: "In Review", done: "Done" },
       },
+      scope: { team: "FIX", project: "Fixture project" },
     },
   });
 });
 
 test("each missing settings section has its own plain fix", () => {
-  for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping"] as const) {
+  for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping", "Scope"] as const) {
     const sample = fixture.replace(new RegExp(`## ${section}\\n[\\s\\S]*?(?=\\n## |$)`), "");
     assert.deepEqual(parseSquadronSettings(sample), {
-      ok: false, issues: [{ section, message: `Add the ${section} section to docs/agents/squadron.md.` }],
+      ok: false, issues: [{ section, message: section === "Scope" ? SCOPE_MISSING : `Add the ${section} section to docs/agents/squadron.md.` }],
     });
   }
+});
+
+test("Scope is required only for Linear, and GitHub and Local markdown settings carry none", () => {
+  const sample = fixture.replace(/## Scope\n[\s\S]*?(?=\n## )/, "");
+  for (const kind of ["github", "local-markdown"] as const) {
+    const result = parseSquadronSettings(sample, kind);
+    assert.equal(result.ok && result.settings.scope, null, kind);
+  }
+});
+
+test("a Scope section sets any of Team, Project, Initiative, Label and View, one per line", () => {
+  const scope = (body: string) => parseLinearScope(`# Settings\n\n## Scope\n\n${body}\n\n## Routes\n\nTeam: not this\n`);
+  assert.deepEqual(scope("Project: BB Squadron"), { ok: true, scope: { project: "BB Squadron" } });
+  assert.deepEqual(scope([
+    "Every key set narrows the board.", "", "- Team: `Sizemore`", "initiative: WordWell", "Label: area/reader",
+    "View: https://linear.app/fixture/view/agent-work-0123456789ab",
+  ].join("\n")), { ok: true, scope: {
+    team: "Sizemore", initiative: "WordWell", label: "area/reader", view: "https://linear.app/fixture/view/agent-work-0123456789ab",
+  } });
+  assert.deepEqual(parseLinearScope("# Settings\n"), { ok: false, message: SCOPE_MISSING });
+  assert.deepEqual(scope("Every key narrows."), { ok: false, message: SCOPE_MISSING });
+  assert.deepEqual(scope("Teams: Sizemore"), { ok: false,
+    message: "Scope has an unknown key, Teams. Use Team, Project, Initiative, Label or View in docs/agents/squadron.md." });
+  assert.deepEqual(scope("Project: One\nProject: Two"), { ok: false, message: "Scope sets Project twice. Set each key once in docs/agents/squadron.md." });
+  assert.deepEqual(scope("Label:"), { ok: false, message: "Scope Label has no value. Name it in docs/agents/squadron.md." });
 });
 
 test("routes use file order for multiple matching labels and a fallback for unmatched labels", () => {

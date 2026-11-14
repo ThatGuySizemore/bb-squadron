@@ -10,7 +10,7 @@ import { registerLinearAuth } from "../lib/linear-auth.js";
 import { registerLinearReader } from "../lib/linear-reader.js";
 import { registerBoard } from "../lib/board-service.js";
 import { registerTracker } from "../lib/tracker-service.js";
-import { binding, workspace, workspaceIssues } from "./fixtures/board-workspace.js";
+import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 
@@ -53,7 +53,7 @@ async function until(check: () => boolean, what: string) {
   assert.ok(check(), `timed out waiting for ${what}`);
 }
 
-test("install, bind a recorded workspace, sync it and read the real board through RPC", async (t) => {
+test("install, read the repo's Scope, sync a recorded workspace and read the real board through RPC", async (t) => {
   const linear = workspace();
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const { bb, harness } = host();
@@ -61,15 +61,7 @@ test("install, bind a recorded workspace, sync it and read the real board throug
   await plugin(bb);
   await harness.lifecycle.install();
 
-  const unbound = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(unbound.tracker?.state, "unbound");
-  assert.deepEqual([unbound.ready, unbound.openIssues], [[], []]);
-
-  await harness.behavior.callRpc("linear.bind", binding);
-  await until(() => harness.inspection.realtimeSignals.some((signal) => signal.channel === "board-changed"), "board-changed");
-  assert.deepEqual(harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").at(-1)?.payload,
-    { projectId: "proj-one" });
-
+  // No binding step: the first board read resolves tests/fixtures/squadron.md's Scope.
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.tracker?.state, "current");
   assert.equal(board.tracker?.project, "Fixture team · Fixture project");
@@ -94,7 +86,7 @@ test("a change in Linear reaches open boards as board-changed on the mirror's ne
   const { bb, harness } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
-  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const before = harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length;
   changed = true;
@@ -105,21 +97,21 @@ test("a change in Linear reaches open boards as board-changed on the mirror's ne
   assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9", "FIX-12"]);
 });
 
-test("a reload keeps the binding and rebuilds the board from Linear without a stored snapshot", async (t) => {
+test("a reload rebuilds the board from the repo's Scope and Linear without a stored snapshot", async (t) => {
   let changed = false;
   const linear = workspace({ issues: () => changed ? withNewIssue() : Response.json(workspaceIssues) });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const first = host();
   await plugin(first.bb);
-  await first.harness.behavior.callRpc("linear.bind", binding);
+  await first.harness.behavior.callRpc("board", { projectId: "proj-one" });
   changed = true;
   const { harness } = await first.harness.lifecycle.reload((api) => plugin(api));
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
 
   const snapshot = await harness.behavior.callRpc("linear.snapshot", { bbProjectId: "proj-one" }) as {
-    binding: { project: { id: string } }; issues: unknown[]; syncedAt: number | null;
+    scope: { name: string } | null; issues: unknown[]; syncedAt: number | null;
   };
-  assert.equal(snapshot.binding.project.id, "linear-one");
+  assert.equal(snapshot.scope, null, "the plugin stores no scope; the repo does");
   assert.deepEqual(snapshot.issues, [], "issues are held only in memory");
   assert.equal(snapshot.syncedAt, null);
   // The poller reads only projects a board page shows (SIZE-953); this page shows proj-one.
@@ -140,7 +132,8 @@ test("without a Linear credential the board asks the owner to connect and reads 
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(board.tracker, { kind: "linear", state: "disconnected", message: "Connect Linear in Squadron settings.", syncedAt: null, project: null });
+  assert.deepEqual(board.tracker, { kind: "linear", state: "disconnected", message: "Connect Linear in Squadron settings.", syncedAt: null,
+    project: "FIX · Fixture project" }, "the Scope shows as written until Linear resolves it");
   assert.deepEqual(linear.operations, []);
 });
 
@@ -174,7 +167,7 @@ test("a failed read keeps the last good copy and shows Linear's safe reason", as
   const { bb, harness } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
-  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const signalsBeforeFailure = harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length;
   failing = true;
@@ -198,7 +191,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
   const { bb, harness } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
-  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
 
   const html = renderToStaticMarkup(createElement(BoardView, {
@@ -228,7 +221,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
   assert.ok(demo.includes("Synthetic data"), "demo data is labelled in the header");
 });
 
-test("empty, disconnected, unbound and failed boards each say what to do", async () => {
+test("empty, disconnected, unscoped and failed boards each say what to do", async () => {
   await import("./fixtures/app-runtime.js");
   const { liveNotice } = await import("../board/Board.js");
   const base = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [] };
@@ -238,7 +231,7 @@ test("empty, disconnected, unbound and failed boards each say what to do", async
   assert.equal(liveNotice({ projectId: "p", board: null, failed: false }), "Reading the board.");
   assert.equal(liveNotice({ projectId: "p", board: null, failed: true }), "Couldn't load the board. Make sure BB is running, then try again.");
   assert.equal(liveNotice({ projectId: "p", board: status("disconnected"), failed: false }), "Connect Linear to see this project's issues.");
-  assert.equal(liveNotice({ projectId: "p", board: status("unbound"), failed: false }), "Choose this project's Linear team and project above.");
+  assert.equal(liveNotice({ projectId: "p", board: status("unscoped"), failed: false }), "Set this project's Linear Scope in docs/agents/squadron.md to see its issues.");
   assert.equal(liveNotice({ projectId: "p", board: status("catching-up"), failed: false }), "Reading this project's issues from Linear.");
   assert.equal(liveNotice({ projectId: "p", board: status("failed", 1), failed: false }), null, "a failed read keeps the last copy");
 });
@@ -252,7 +245,7 @@ test("repeated signals with no change in the board model publish nothing", async
   const auth = registerLinearAuth(bb);
   const mirror = registerLinearReader(bb, auth);
   const board = registerBoard(bb, { connection: () => auth.getConnection(), tracker: registerTracker(bb, mirror) });
-  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const before = harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length;
   await Promise.all([board.refresh("proj-one"), board.refresh("proj-one"), board.refresh("proj-one")]);

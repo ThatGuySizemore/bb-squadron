@@ -6,7 +6,6 @@ import { createRoot } from "react-dom/client";
 import { FIXTURES, pickerProjects } from "./fixtures.js";
 // app.tsx loads these for the plugin.
 import "../../board/board.css";
-import "../../board/live.css";
 
 const providerIcon = ({ provider }: { provider: { id: string } }) =>
   React.createElement("svg", { viewBox: "0 0 6 6", width: 12, height: 12, "aria-hidden": true, shapeRendering: "crispEdges" },

@@ -1,12 +1,18 @@
 # Squadron settings for this repo
 
-BB Squadron reads this file before it starts a lane here. Doctor requires Quick check, Stop list, Time limits, Routes and Final review. Status mapping is required only for Linear. Reading the board needs neither this file nor a Doctor pass once the tracker is detected.
+BB Squadron reads this file before it starts a lane here. Doctor requires Quick check, Stop list, Time limits, Routes and Final review. Scope and Status mapping are required only for Linear. A Linear board reads its Scope from this file; GitHub and Local markdown boards need neither this file nor a Doctor pass once the tracker is detected.
 
 The optional Tracker section overrides detection from `docs/agents/issue-tracker.md`. Its entire value must be `Linear`, `GitHub` or `Local markdown`. Omit it to use detection. This repo uses Linear. See [settings](../settings.md) for examples and tracker-specific requirements.
 
 ## Tracker
 
 Linear
+
+## Scope
+
+The board shows open Linear issues matching every key set here. This repo names only its project, so issues stay on the board if they move between teams. New issues must be filed inside this scope, as `docs/agents/issue-tracker.md` says, or they won't show on the board.
+
+Project: BB Squadron
 
 ## Quick check
 

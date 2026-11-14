@@ -18,6 +18,14 @@ export class LinearRequestError extends Error {
   constructor(readonly code: keyof typeof messages, readonly retryAfterMs: number | null = null) { super(messages[code]); }
 }
 
+/** One GraphQL error's message and extensions.code, on one bounded line. */
+function describe(error: unknown): string {
+  const record = error && typeof error === "object" ? error as { message?: unknown; extensions?: { code?: unknown } } : {};
+  const message = typeof record.message === "string" ? record.message.replace(/\s+/g, " ").slice(0, 300) : "(no message)";
+  const code = record.extensions && typeof record.extensions === "object" && typeof record.extensions.code === "string" ? record.extensions.code : "no code";
+  return `${message} [${code}]`;
+}
+
 const identityResponse = z.object({
   viewer: z.object({ id: z.string(), name: z.string() }),
   organization: z.object({ id: z.string(), name: z.string() }),
@@ -84,6 +92,8 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     catch { throw new LinearRequestError("invalid_response"); }
     if (!body || typeof body !== "object") throw new LinearRequestError("invalid_response");
     if (Array.isArray(body.errors) && body.errors.length) {
+      // Linear's own words, for diagnosis. Never the headers, variables or key.
+      for (const error of body.errors) bb.log.warn(`Linear GraphQL error: ${describe(error)}`);
       if (body.errors.some((error) => error && typeof error === "object" && "extensions" in error &&
         error.extensions && typeof error.extensions === "object" && "code" in error.extensions && error.extensions.code === "RATELIMITED")) {
         budgetResetAt = Math.max(budgetResetAt, now() + 60_000);

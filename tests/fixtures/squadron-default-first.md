@@ -1,5 +1,9 @@
 # Squadron settings with an early fallback
 
+## Scope
+
+Project: Fixture project
+
 ## Quick check
 
 ```sh

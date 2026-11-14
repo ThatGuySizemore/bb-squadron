@@ -137,9 +137,8 @@ components:
     rounded: "{rounded.none}"
     padding: "10px 12px"
   needs-you-kind:
-    backgroundColor: "{colors.needs-you-amber}"
-    textColor: "{colors.on-amber}"
-    padding: "2px 7px"
+    textColor: "{colors.amber-ink}"
+    padding: "0"
   picker-button:
     backgroundColor: "{colors.board-ground}"
     textColor: "{colors.board-ink}"
@@ -189,7 +188,7 @@ Motion is continuous and only where something is happening: the Flying airstream
 The theme supplies the neutrals; four state inks supply the meaning.
 
 ### Primary
-- **Needs-You Amber** (needs-you-amber): the one colour that means "the owner". It fills the Needs-you count and kind tags and the Answer, Merge, Resume-in-Needs-you and Set up buttons, edges Needs-you rows and question pegs with a doubled line, tops the tail card of a lane whose merge waits on the owner, outlines Doctor's square when something needs fixing, dashes Doctor's Fix tags, and tints text selection at 38%. Text on solid amber is always **On-Amber** (on-amber), never white. Amber ink names what a Shaping spec is missing.
+- **Needs-You Amber** (needs-you-amber): the one colour that means "the owner". It fills the Needs-you count, the square before each Needs-you kind label and the Answer, Merge, Resume-in-Needs-you and Set up buttons, edges Needs-you rows and question pegs with a doubled line, tops the tail card of a lane whose merge waits on the owner, outlines Doctor's square when something needs fixing, dashes Doctor's Fix tags, and tints text selection at 38%. Text on solid amber is always **On-Amber** (on-amber), never white. Amber ink names what a Shaping spec is missing.
 
 ### Secondary
 - **Working Sky** (working-sky): an agent is on it. The airstream, the working peg's march and grain, the striped working and review progress segments, the formation mark's flying chevrons, the Flying station's rule and count while anything flies, the pace square, and the auto-start switch when on. Sky ink also marks "N can start" on Ready rows and is the focus outline.
@@ -229,7 +228,7 @@ The theme supplies the neutrals; four state inks supply the meaning.
 - **Title** (620, 14px, 1.3, balanced wrap): the spec title in each tail card and the project name on the picker. List-row titles are 600 at 13.5px; Open issue and Landed titles are 400 at 13px.
 - **Body** (400, 13px, 1.45): Needs-you text, empty-state lines (max 70ch), Doctor messages.
 - **Body small** (400, 12.5px, 1.3, clamped to two lines): peg titles; one line on waiting pegs.
-- **Label** (650, 12px, 0.08em, uppercase): section headings, each on a pixel rule with its count beside it. Station labels use the same voice at 11px. The Needs-you kind tag is 700, 11px, 0.04em on solid amber.
+- **Label** (650, 12px, 0.08em, uppercase): section headings, each on a pixel rule with its count beside it. Station labels use the same voice at 11px. The Needs-you kind label is 700, 11px, 0.08em in amber ink after a 6px solid amber square, with no fill or box: it names the row and is never pressable, so only the row's buttons look like controls.
 - **Meta** (600, 11–12px): buttons (12px), peg state, tags, AI chips, counts, the picker's tracker-and-counts line (11.5px).
 - **Mono** (650, 11px, tabular figures): ticket ids on pegs; branch names, Open issue ids, "after" lines (10.5px) and file paths at 400 in muted ink.
 
@@ -282,7 +281,7 @@ Small, quiet, near-square; colour only when the owner is the one acting.
 - **Formation mark** (92x40 canvas) before the title: one sky chevron per lane flying across all of the owner's projects, three slots minimum with empty ones in hairline, each bobbing under a pixel with a short dithered contrail. Before the picker opens it shows only the shown project. Afterward it combines that live count with other available counts from the last picker read; its label explains this coverage. No additional poller or page-mount count read runs. Labelled with that coverage; the demo labels it against its lane cap ("2 of 3 lanes flying"). Still when nothing flies; absent only until the live board's first read.
 - **Project picker:** a 32px button naming the project (Title voice), then its tracker kind and its Ready and Flying counts in 11.5px muted meta ("Linear · 1 ready · 0 flying"), then a pixel caret that flips when open. It opens a list under the button (min 330px): each row has a 6px square that fills for the shown project, the name at 620, the tracker kind under it in muted 11.5px, and the counts (or why there are none) at the right. Escape or a click outside closes it. With no project to show it stays open, asking.
 - **Doctor status:** a 28px quiet button with an 8px square, "Doctor", and in muted ink what it means for Start: solid green "Start ready", amber-outlined "N to fix before Start", hollow muted "Needs Set up". Before Doctor has run it reads just "Doctor" with a hollow square. It expands Doctor's region.
-- **Tracker line:** 12px muted ink, starting with a hairline tracker-kind tag. Linear: the bound "Team · Project" in board ink at 600 and when it was last read (a failed read in red ink). Local markdown: "**.scratch/** on main · Flying lanes read from their integration branch". GitHub: "**GitHub Issues** read through gh". No tracker: "**No tracker found**" and the short reason.
+- **Tracker line:** 12px muted ink, starting with a hairline tracker-kind tag. Linear: the Scope's matched names ("Team · Project", or just the project) in board ink at 600 and when it was last read (a failed read in red ink). Local markdown: "**.scratch/** on main · Flying lanes read from their integration branch". GitHub: "**GitHub Issues** read through gh". No tracker: "**No tracker found**" and the short reason.
 
 ### Path strip
 Five stations, each an 11px label over a path count on a 2px pixel rule, joined by 6x10 pixel chevrons in rule ink at their bottom right. Zero counts are muted; Flying turns its count sky ink and its rule sky while anything flies. While the board can't show Ready, Shaping and Open issues, those counts read "–". Each station scrolls to its section.
@@ -293,7 +292,7 @@ Five stations, each an 11px label over a path count on a 2px pixel rule, joined 
 - **Outside-lane tag:** "Started outside Squadron", 11px at 600, dashed rule-ink border.
 
 ### Needs-you row
-Ground fill, 1px amber border plus a 1px amber outline offset 2px, with an amber grain along the edges (7–10px deep) breathing on a 3.6s sine, so the text sits on a clean ground. Kind tag (Setup, Failed, Blocked, Stopped, Question, Merge), the spec or ticket number in 2px pixel cells and amber ink, one line of text, then its actions. Rows stack 12px apart; with none, "Nothing needs you. Every lane is flying on its own."
+Ground fill, 1px amber border plus a 1px amber outline offset 2px, with an amber grain along the edges (7–10px deep) breathing on a 3.6s sine, so the text sits on a clean ground. Kind label (Setup, Failed, Blocked, Stopped, Question, Merge; amber ink, never a filled tag), the spec or ticket number in 2px pixel cells and amber ink, one line of text, then its actions. Rows stack 12px apart; with none, "Nothing needs you. Every lane is flying on its own."
 
 ### Doctor region
 A flat region under the Needs-you rows: 12px padding, hairline border. A summary line, then one row per check (150px name, Pass/Warning/Fix tag, muted explanation) on hairlines, then "Configuration files" with a linked file name, Present or Missing tag and its mono path. Check again uses the plain button. In a narrow box explanations and paths move under their name and tag.
@@ -322,7 +321,7 @@ Pegs with a thread are buttons that open it beside the board.
 - **Landed:** plate with a still green grain and green-ink number, title, then "PR #n merged" for a confirmed merged PR, otherwise "Lane landed", when it landed and how long it flew.
 
 ### Linear connection settings
-The settings page uses the same ground, ink, type and quiet controls. Workspace names use Title; connection state sits in an announced status region. BB owns the API key's secret input. Linear binding uses native team and project selects, 28px high, 2px corners, ground fill, hairline border, 12px at 600, max 220px.
+The settings page uses the same ground, ink, type and quiet controls. Workspace names use Title; connection state sits in an announced status region. BB owns the API key's secret input. Which Linear issues a board reads is the repo's Scope in `docs/agents/squadron.md`, not a control on the board.
 
 ## Motion
 

@@ -6,32 +6,45 @@ import { CLOSED_ISSUE_STATE_TYPES, isOpenIssue } from "./linear-issues.js";
 import { linearMirrorChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { z } from "zod";
 import { LinearRequestError, type LinearAuth } from "./linear-auth.js";
-import { bindInputSchema, linearMirrorContract, mirrorLabelSchema, mirrorStateSchema,
-  type LinearBinding, type MirrorCatalog, type MirrorIssue, type MirrorRelation, type MirrorSnapshot } from "./linear-mirror-contract.js";
+import { linearMirrorContract, mirrorLabelSchema, mirrorStateSchema,
+  type MirrorIssue, type MirrorRelation, type MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import { suggestLinearBinding } from "./linear-binding-suggestion.js";
+import { LINEAR_QUERIES, PAGE } from "./linear-queries.js";
+import { resolveScope, scopeDisplayName, scopeIssueFilter, scopeLookup, type ResolvedScope } from "./linear-scope.js";
+import { parseLinearScope, SETTINGS_UNREADABLE, type LinearScope } from "./squadron-settings.js";
 
 const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() });
 const connection = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node), pageInfo });
-const targetResponse = z.object({
-  team: z.object({ id: z.string(), name: z.string(), key: z.string() }),
-  project: z.object({ id: z.string(), name: z.string(), teams: connection(z.object({ id: z.string() })) }),
-});
-const issueNode = z.object({
+const reference = z.object({
   id: z.string(), identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
   updatedAt: z.string().datetime(), team: z.object({ id: z.string() }), project: z.object({ id: z.string() }).nullable(),
-  parent: z.object({ id: z.string() }).nullable(), state: mirrorStateSchema, labels: connection(mirrorLabelSchema),
+  parent: z.object({ id: z.string() }).nullable(), state: mirrorStateSchema,
   assignee: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
 });
-const relatedNode = issueNode.omit({ labels: true });
-const relationNode = z.object({ id: z.string(), type: z.string(), issue: relatedNode, relatedIssue: relatedNode });
-const graphNode = issueNode.extend({ relations: connection(relationNode), inverseRelations: connection(relationNode) });
-const issuesResponse = z.object({ issues: connection(graphNode) });
+const issueNode = reference.extend({ labels: connection(mirrorLabelSchema) });
+const self = z.object({ id: z.string() });
+/** `relations` name this issue as `issue`; `inverseRelations` name it as `relatedIssue`. */
+const outgoingNode = z.object({ id: z.string(), type: z.string(), issue: self, relatedIssue: reference });
+const incomingNode = z.object({ id: z.string(), type: z.string(), issue: reference, relatedIssue: self });
+const graphNode = issueNode.extend({ relations: connection(outgoingNode), inverseRelations: connection(incomingNode) });
+const issuesPage = connection(graphNode);
 const laneSpecResponse = z.object({ issue: issueNode.extend({ children: connection(issueNode) }).nullable() });
-const referenceFields = `id identifier title description url updatedAt team { id } project { id } parent { id } state { id name type } assignee { id name }`;
-const relationFields = `nodes { id type issue { ${referenceFields} } relatedIssue { ${referenceFields} } } pageInfo { hasNextPage endCursor }`;
-const issueFields = `id identifier title description url updatedAt team { id } project { id } parent { id }
-  state { id name type } assignee { id name } labels(first: 50) { nodes { id name color } pageInfo { hasNextPage endCursor } }`;
+const refs = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node) }).nullish();
+const scopeResponse = z.object({
+  teams: refs(z.object({ id: z.string(), name: z.string(), key: z.string() })),
+  projects: refs(z.object({ id: z.string(), name: z.string() })), initiatives: refs(z.object({ id: z.string(), name: z.string() })),
+  issueLabels: refs(z.object({ id: z.string(), name: z.string() })), customViews: refs(z.object({ id: z.string(), name: z.string() })),
+});
+const membersResponse = z.object({ nodes: z.array(z.object({ id: z.string() })) });
+
+/** A Scope Linear can't resolve. Its message is safe to show and names the key. */
+class ScopeError extends Error {}
+
+/** The project's Scope as written, or why there isn't a usable one. */
+export type ScopeSource = { ok: true; scope: LinearScope } | { ok: false; message: string };
+
+/** Resolved names and ids are reused this long; a rename or deletion shows on the next resolve. */
+const RESOLVE_MS = 5 * 60_000;
 
 async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pageInfo: z.infer<typeof pageInfo> }>,
   initial?: { nodes: T[]; pageInfo: z.infer<typeof pageInfo> }): Promise<T[]> {
@@ -48,11 +61,16 @@ async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pag
   }
 }
 
+const empty = (scope: MirrorSnapshot["scope"] = null, error: string | null = null): MirrorSnapshot =>
+  ({ scope, issues: [], relations: [], labels: [], states: [], syncedAt: null, error });
+
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
   /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
   laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
-  /** Which bound projects the background poller reads: those a board shows. Default: every bound project. */
+  /** Which projects the background poller reads: those a board shows. Default: every project read so far. */
   shouldPoll?: (bbProjectId: string) => boolean;
+  /** The project's Scope. Default: the Scope section of its checkout's docs/agents/squadron.md. */
+  scope?: (bbProjectId: string, signal: AbortSignal) => Promise<ScopeSource>;
   now?: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 } = {}) {
@@ -60,9 +78,15 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   const wait = options.wait ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
   const lifetime = new AbortController();
   const running = new Set<Promise<unknown>>();
-  const inFlight = new Map<string, { binding: string; task: Promise<MirrorSnapshot> }>();
-  let wake = new AbortController();
+  const inFlight = new Map<string, { key: string; task: Promise<MirrorSnapshot> }>();
   const polls = new Map<string, number>();
+  /** Projects read at least once since start: the poller's candidates. */
+  const known = new Set<string>();
+  const snapshots = new Map<string, { key: string; snapshot: MirrorSnapshot }>();
+  const resolved = new Map<string, { key: string; at: number; scope: ResolvedScope }>();
+  /** The latest sync started per project. An older one finishing later never overwrites it. */
+  const latest = new Map<string, number>();
+  let sequence = 0;
   // Server-side listeners (the board watcher) hear the same changes as pages.
   const listeners = new Set<(bbProjectId: string) => void>();
   function changed(bbProjectId: string) {
@@ -73,251 +97,231 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     listeners.add(listener);
     return () => { listeners.delete(listener); };
   }
-  async function graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
-    const result = await linear.graphql<T>(query, variables, lifetime.signal);
-    if (lifetime.signal.aborted) throw new LinearRequestError("unavailable");
-    return result;
-  }
-  bb.onDispose(async () => { lifetime.abort(); wake.abort(); await Promise.allSettled([...running]); });
-  const snapshots = new Map<string, MirrorSnapshot>();
-  const db = bb.storage.database();
-  db.exec(`CREATE TABLE IF NOT EXISTS mirror_bindings (bb_project_id TEXT PRIMARY KEY, binding TEXT NOT NULL)`);
+  bb.onDispose(async () => { lifetime.abort(); await Promise.allSettled([...running]); });
+
   function getSnapshot(bbProjectId: string): MirrorSnapshot {
-    const row = db.prepare("SELECT binding FROM mirror_bindings WHERE bb_project_id = ?").get(bbProjectId) as { binding: string } | undefined;
-    return snapshots.get(bbProjectId) ?? { binding: row ? JSON.parse(row.binding) as LinearBinding : null,
-      issues: [], relations: [], labels: [], states: [], syncedAt: null, error: null };
+    return snapshots.get(bbProjectId)?.snapshot ?? empty();
   }
-  async function projectTeams(id: string, initial: z.infer<typeof targetResponse>["project"]["teams"]) {
-    return walk(async (after) => z.object({ project: z.object({ teams: connection(z.object({ id: z.string() })) }) }).parse(
-      await graphql(`query SquadronProjectTeams($id: String!, $after: String) {
-        project(id: $id) { teams(first: 50, after: $after) { nodes { id } pageInfo { hasNextPage endCursor } } }
-      }`, { id, after })).project.teams, initial);
+  function commit(bbProjectId: string, key: string, snapshot: MirrorSnapshot) {
+    const previous = getSnapshot(bbProjectId);
+    snapshots.set(bbProjectId, { key, snapshot });
+    const content = (value: MirrorSnapshot) => JSON.stringify([value.scope, value.issues, value.relations, value.labels, value.states, value.error]);
+    if (content(previous) !== content(snapshot)) changed(bbProjectId);
+    return snapshot;
   }
-  async function catalog() {
-    const teams = await walk(async (after) => z.object({ teams: connection(targetResponse.shape.team) }).parse(
-      await graphql(`query SquadronTeams($after: String) {
-        teams(first: 50, after: $after) { nodes { id name key } pageInfo { hasNextPage endCursor } }
-      }`, { after })).teams);
-    const projects = await walk(async (after) => z.object({ projects: connection(targetResponse.shape.project) }).parse(
-      await graphql(`query SquadronProjects($after: String) {
-        projects(first: 50, after: $after) { nodes { id name teams(first: 50) { nodes { id } pageInfo { hasNextPage endCursor } } } pageInfo { hasNextPage endCursor } }
-      }`, { after })).projects);
-    const catalogProjects: MirrorCatalog["projects"] = [];
-    for (const project of projects) {
-      catalogProjects.push({ id: project.id, name: project.name,
-        teamIds: (await projectTeams(project.id, project.teams)).map((team) => team.id) });
-    }
-    return { teams, projects: catalogProjects };
+  /** The Scope problem Doctor reports, if the last read found one. */
+  function scopeProblem(bbProjectId: string): string | null {
+    const snapshot = getSnapshot(bbProjectId);
+    return snapshot.scope === null && snapshot.error ? snapshot.error : null;
   }
-  async function bind(input: z.infer<typeof bindInputSchema>) {
-    const value = bindInputSchema.parse(input);
-    const result = targetResponse.parse(await graphql(`query SquadronBinding($teamId: String!, $projectId: String!) {
-      team(id: $teamId) { id name key }
-      project(id: $projectId) { id name teams(first: 50) { nodes { id } pageInfo { hasNextPage endCursor } } }
-    }`, { teamId: value.teamId, projectId: value.projectId }));
-    const members = await projectTeams(result.project.id, result.project.teams);
-    if (result.team.id !== value.teamId || result.project.id !== value.projectId || !members.some((team) => team.id === result.team.id)) throw new Error("Choose a project in the selected Linear team.");
-    const binding: LinearBinding = { bbProjectId: value.bbProjectId, team: result.team,
-      project: { id: result.project.id, name: result.project.name } };
-    if (lifetime.signal.aborted) throw new LinearRequestError("unavailable");
-    db.prepare("INSERT INTO mirror_bindings VALUES (?, ?) ON CONFLICT(bb_project_id) DO UPDATE SET binding = excluded.binding")
-      .run(value.bbProjectId, JSON.stringify(binding));
-    snapshots.delete(value.bbProjectId);
-    polls.delete(value.bbProjectId);
-    wake.abort(); wake = new AbortController();
-    changed(value.bbProjectId);
-    return getSnapshot(value.bbProjectId);
+
+  async function readScope(bbProjectId: string, signal: AbortSignal): Promise<ScopeSource> {
+    if (options.scope) return options.scope(bbProjectId, signal);
+    const checkout = await readProjectCheckout(bb, bbProjectId, signal).catch(() => null);
+    if (!checkout) return { ok: false, message: "Choose a ready checkout for this project, then check again." };
+    if (checkout.settingsMarkdown === null) return { ok: false, message: SETTINGS_UNREADABLE };
+    return parseLinearScope(checkout.settingsMarkdown);
   }
-  function sync(bbProjectId: string, signal?: AbortSignal): Promise<MirrorSnapshot> {
-    const binding = JSON.stringify(getSnapshot(bbProjectId).binding);
+
+  async function sync(bbProjectId: string, signal?: AbortSignal): Promise<MirrorSnapshot> {
+    known.add(bbProjectId);
+    const combined = AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]);
+    let source: ScopeSource;
+    try { source = await readScope(bbProjectId, combined); }
+    catch { throw new LinearRequestError("unavailable"); }
+    const key = JSON.stringify(source);
     const current = inFlight.get(bbProjectId);
-    if (current?.binding === binding) return current.task;
-    const task = syncOnce(bbProjectId, AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]));
+    if (current?.key === key) return current.task;
+    const turn = ++sequence;
+    latest.set(bbProjectId, turn);
+    const task = syncOnce(bbProjectId, source, key, turn, combined);
     running.add(task);
-    inFlight.set(bbProjectId, { binding, task });
+    inFlight.set(bbProjectId, { key, task });
     void task.finally(() => {
       running.delete(task);
       if (inFlight.get(bbProjectId)?.task === task) inFlight.delete(bbProjectId);
     }).catch(() => undefined);
     return task;
   }
-  async function syncOnce(bbProjectId: string, signal: AbortSignal): Promise<MirrorSnapshot> {
-    const expected = JSON.stringify(getSnapshot(bbProjectId).binding);
-    try { return await readSnapshot(bbProjectId, signal); }
-    catch (error) {
+
+  async function syncOnce(bbProjectId: string, source: ScopeSource, key: string, turn: number, signal: AbortSignal): Promise<MirrorSnapshot> {
+    const superseded = () => latest.get(bbProjectId) !== turn;
+    // A missing or invalid Scope shows no issues: data read for another scope would mislead.
+    if (!source.ok) return commit(bbProjectId, key, empty(null, source.message));
+    try {
+      const scope = await resolve(bbProjectId, source.scope, key, signal);
+      const snapshot = await readSnapshot(bbProjectId, scope, signal);
+      return superseded() ? getSnapshot(bbProjectId) : commit(bbProjectId, key, snapshot);
+    } catch (error) {
+      if (error instanceof ScopeError) resolved.delete(bbProjectId);
+      if (error instanceof ScopeError) return superseded() ? getSnapshot(bbProjectId) : commit(bbProjectId, key, empty(null, error.message));
+      if (!(error instanceof LinearRequestError)) bb.log.warn(`linear read failed: ${error instanceof Error ? error.name : "unknown"}`);
       const safe = error instanceof LinearRequestError ? error : new LinearRequestError("invalid_response");
       if (signal.aborted) throw safe;
-      const snapshot = getSnapshot(bbProjectId);
-      if (JSON.stringify(snapshot.binding) !== expected) return snapshot;
-      if (snapshot.binding) snapshots.set(bbProjectId, { ...snapshot, error: safe.message });
-      if (snapshot.error !== safe.message) changed(bbProjectId);
+      if (superseded()) return getSnapshot(bbProjectId);
+      // The last complete read of this Scope stays visible with the error.
+      const kept = snapshots.get(bbProjectId);
+      const base = kept?.key === key ? kept.snapshot : empty({ name: scopeDisplayName(source.scope) });
+      commit(bbProjectId, key, { ...base, error: safe.message });
       throw safe;
     }
   }
-  async function readSnapshot(bbProjectId: string, signal: AbortSignal): Promise<MirrorSnapshot> {
-    async function graphql<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+
+  async function resolve(bbProjectId: string, scope: LinearScope, key: string, signal: AbortSignal): Promise<ResolvedScope> {
+    const cached = resolved.get(bbProjectId);
+    if (cached?.key === key && now() - cached.at < RESOLVE_MS) return cached.scope;
+    if (signal.aborted) throw new LinearRequestError("unavailable");
+    const result = resolveScope(scope, scopeResponse.parse(await linear.graphql(LINEAR_QUERIES.scope, scopeLookup(scope), signal)));
+    if (signal.aborted) throw new LinearRequestError("unavailable");
+    if (!result.ok) { resolved.delete(bbProjectId); throw new ScopeError(result.message); }
+    resolved.set(bbProjectId, { key, at: now(), scope: result.scope });
+    return result.scope;
+  }
+
+  async function readSnapshot(bbProjectId: string, scope: ResolvedScope, signal: AbortSignal): Promise<MirrorSnapshot> {
+    async function graphql(query: string, variables?: Record<string, unknown>): Promise<unknown> {
       if (signal.aborted) throw new LinearRequestError("unavailable");
-      const result = await linear.graphql<T>(query, variables, signal);
+      const result = await linear.graphql<unknown>(query, variables, signal);
       if (signal.aborted) throw new LinearRequestError("unavailable");
       return result;
     }
-    const previous = getSnapshot(bbProjectId);
-    if (!previous.binding) return previous;
-    const binding = previous.binding;
     const issues = new Map<string, MirrorIssue>();
     const relations = new Map<string, MirrorRelation>();
-    function putIssue(node: z.infer<typeof relatedNode>, labels: MirrorIssue["labels"] = []) {
+    /** The open walk returns every open issue in scope; only closed ones need asking. */
+    const walked = new Set<string>();
+    function putIssue(node: z.infer<typeof reference>, labels: MirrorIssue["labels"] = []) {
       const existing = issues.get(node.id);
       issues.set(node.id, {
         id: node.id, identifier: node.identifier, title: node.title, description: node.description, url: node.url,
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
         state: node.state, labels: labels.length ? labels : existing?.labels ?? [],
         assignees: node.assignee === undefined ? existing?.assignees ?? [] : node.assignee ? [node.assignee] : [],
-        // Match the open-issue walk's board eligibility, including relation endpoints.
-        inProject: node.team.id === binding.team.id && node.project?.id === binding.project.id &&
-          isOpenIssue(node),
+        inProject: walked.has(node.id),
       });
     }
-    function putRelations(nodes: z.infer<typeof relationNode>[]) {
-      for (const relation of nodes) {
-        if (relation.type !== "blocks") continue;
-        putIssue(relation.issue); putIssue(relation.relatedIssue);
-        relations.set(relation.id, { id: relation.id, type: "blocks", issueId: relation.issue.id, relatedIssueId: relation.relatedIssue.id });
-      }
+    function putRelation(relation: { id: string; type: string; issue: { id: string }; relatedIssue: { id: string } }, other: z.infer<typeof reference>) {
+      if (relation.type !== "blocks") return;
+      putIssue(other);
+      relations.set(relation.id, { id: relation.id, type: "blocks", issueId: relation.issue.id, relatedIssueId: relation.relatedIssue.id });
     }
-    async function remainingRelations(id: string, field: "relations" | "inverseRelations", info: z.infer<typeof pageInfo>) {
-      const cursors = new Set<string>();
-      while (info.hasNextPage) {
-        if (!info.endCursor || cursors.has(info.endCursor) || cursors.size >= 1_000) throw new LinearRequestError("invalid_response");
-        cursors.add(info.endCursor);
-        const name = field === "relations" ? "SquadronRelations" : "SquadronInverseRelations";
-        const schema = z.object({ issue: z.object({ [field]: connection(relationNode) }) });
-        const page = schema.parse(await graphql(`query ${name}($id: String!, $after: String) {
-          issue(id: $id) { ${field}(first: 50, after: $after) { ${relationFields} } }
-        }`, { id, after: info.endCursor })).issue[field];
-        putRelations(page.nodes); info = page.pageInfo;
-      }
+    async function remainingRelations(id: string, info: z.infer<typeof pageInfo>) {
+      if (!info.hasNextPage) return;
+      const rest = await walk(async (after) => z.object({ issue: z.object({ relations: connection(outgoingNode) }) })
+        .parse(await graphql(LINEAR_QUERIES.relations, { id, after })).issue.relations, { nodes: [], pageInfo: info });
+      for (const relation of rest) putRelation(relation, relation.relatedIssue);
     }
-    const seen = new Set<string>();
-    let after: string | null = null;
-    do {
-      const result = issuesResponse.parse(await graphql(`query SquadronIssues($filter: IssueFilter!, $after: String) {
-        issues(first: 25, after: $after, filter: $filter) { nodes { ${issueFields}
-          relations(first: 5) { ${relationFields} } inverseRelations(first: 5) { ${relationFields} }
-        } pageInfo { hasNextPage endCursor } }
-      }`, { filter: { team: { id: { eq: binding.team.id } }, project: { id: { eq: binding.project.id } },
-        state: { type: { nin: [...CLOSED_ISSUE_STATE_TYPES] } } }, after }));
-      for (const node of result.issues.nodes) {
-        const labels = [...node.labels.nodes];
-        let labelPage = node.labels.pageInfo;
-        const labelCursors = new Set<string>();
-        while (labelPage.hasNextPage) {
-          if (!labelPage.endCursor || labelCursors.has(labelPage.endCursor) || labelCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
-          labelCursors.add(labelPage.endCursor);
-          const page = z.object({ issue: z.object({ labels: connection(mirrorLabelSchema) }) }).parse(await graphql(
-            `query SquadronIssueLabels($id: String!, $after: String) {
-              issue(id: $id) { labels(first: 50, after: $after) { nodes { id name color } pageInfo { hasNextPage endCursor } } }
-            }`, { id: node.id, after: labelPage.endCursor })).issue.labels;
-          labels.push(...page.nodes); labelPage = page.pageInfo;
-        }
-        putIssue(node, labels);
-        putRelations(node.relations.nodes); putRelations(node.inverseRelations.nodes);
-        await remainingRelations(node.id, "relations", node.relations.pageInfo);
-        await remainingRelations(node.id, "inverseRelations", node.inverseRelations.pageInfo);
-      }
-      if (!result.issues.pageInfo.hasNextPage) break;
-      const next = result.issues.pageInfo.endCursor;
-      if (!next || seen.has(next) || seen.size >= 1_000) throw new LinearRequestError("invalid_response");
-      seen.add(next);
-      after = next;
-    } while (true);
+    async function remainingInverseRelations(id: string, info: z.infer<typeof pageInfo>) {
+      if (!info.hasNextPage) return;
+      const rest = await walk(async (after) => z.object({ issue: z.object({ inverseRelations: connection(incomingNode) }) })
+        .parse(await graphql(LINEAR_QUERIES.inverseRelations, { id, after })).issue.inverseRelations, { nodes: [], pageInfo: info });
+      for (const relation of rest) putRelation(relation, relation.issue);
+    }
+    async function allLabels(node: z.infer<typeof issueNode>) {
+      return walk(async (after) => z.object({ issue: z.object({ labels: connection(mirrorLabelSchema) }) }).parse(
+        await graphql(LINEAR_QUERIES.issueLabels, { id: node.id, after })).issue.labels, node.labels);
+    }
+
+    const filter = { ...scopeIssueFilter(scope), state: { type: { nin: [...CLOSED_ISSUE_STATE_TYPES] } } };
+    const nodes = await walk(async (after) => {
+      if (!scope.view) return z.object({ issues: issuesPage }).parse(await graphql(LINEAR_QUERIES.issues, { filter, after })).issues;
+      const view = z.object({ customView: z.object({ issues: issuesPage }).nullable() }).parse(
+        await graphql(LINEAR_QUERIES.viewIssues, { view: scope.view.id, filter, after })).customView;
+      if (!view) throw new ScopeError(`Scope View "${scope.view.name}" is no longer readable in Linear. Fix it in docs/agents/squadron.md.`);
+      return view.issues;
+    });
+    for (const node of nodes) walked.add(node.id);
+    for (const node of nodes) {
+      putIssue(node, await allLabels(node));
+      for (const relation of node.relations.nodes) putRelation(relation, relation.relatedIssue);
+      for (const relation of node.inverseRelations.nodes) putRelation(relation, relation.issue);
+      await remainingRelations(node.id, node.relations.pageInfo);
+      await remainingInverseRelations(node.id, node.inverseRelations.pageInfo);
+    }
+
     // The open walk misses a lane's done tickets and a spec its Lead closed after the merge.
     // Read each Lead's spec and its completed sub-issues so the lane can land and stay Landed.
     let laneSpecIds: string[] = [];
     try { laneSpecIds = await options.laneSpecIds?.(bbProjectId) ?? []; }
     catch (error) { bb.log.warn(`lane spec ids unavailable: ${error instanceof Error ? error.name : "unknown"}`); }
     for (const id of new Set(laneSpecIds)) {
-      let childrenAfter: string | null = null;
-      const childCursors = new Set<string>();
-      do {
-        let issue: z.infer<typeof laneSpecResponse>["issue"];
-        try {
-          issue = laneSpecResponse.parse(await graphql(`query SquadronLaneSpec($id: String!, $after: String) {
-            issue(id: $id) { ${issueFields}
-              children(first: 50, after: $after, filter: { state: { type: { eq: "completed" } } }) { nodes { ${issueFields} } pageInfo { hasNextPage endCursor } }
-            }
-          }`, { id, after: childrenAfter })).issue;
-        } catch (error) {
-          // A deleted spec must not stop the whole read.
-          if (error instanceof LinearRequestError && error.code === "graphql") break;
-          throw error;
-        }
-        if (!issue) break;
-        putIssue(issue, issue.labels.nodes);
-        for (const child of issue.children.nodes) putIssue(child, child.labels.nodes);
-        if (!issue.children.pageInfo.hasNextPage) break;
-        const cursor: string | null = issue.children.pageInfo.endCursor;
-        if (!cursor || childCursors.has(cursor) || childCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
-        childCursors.add(cursor); childrenAfter = cursor;
-      } while (true);
+      try {
+        await walk(async (after) => {
+          const issue = laneSpecResponse.parse(await graphql(LINEAR_QUERIES.laneSpec, { id, after })).issue;
+          if (!issue) return { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+          putIssue(issue, issue.labels.nodes);
+          for (const child of issue.children.nodes) putIssue(child, child.labels.nodes);
+          return issue.children;
+        });
+      } catch (error) {
+        // A deleted spec must not stop the whole read. Linear's own errors are logged by linear-auth.
+        if (error instanceof LinearRequestError && error.code === "graphql") { bb.log.warn(`lane spec ${id} unreadable: graphql`); continue; }
+        throw error;
+      }
     }
-    const teamLabels: MirrorSnapshot["labels"] = [];
+
+    // Closed relation endpoints and lane tickets are in scope only if Linear says they match it.
+    const unknown = [...issues.values()].filter((issue) => !walked.has(issue.id) && !isOpenIssue(issue)).map((issue) => issue.id);
+    for (let start = 0; start < unknown.length; start += PAGE.members) {
+      const batch = { ...scopeIssueFilter(scope), id: { in: unknown.slice(start, start + PAGE.members) } };
+      const members = scope.view
+        ? z.object({ customView: z.object({ issues: membersResponse }).nullable() }).parse(
+          await graphql(LINEAR_QUERIES.viewMembers, { view: scope.view.id, filter: batch })).customView?.issues.nodes ?? []
+        : z.object({ issues: membersResponse }).parse(await graphql(LINEAR_QUERIES.scopeMembers, { filter: batch })).issues.nodes;
+      for (const { id } of members) {
+        const issue = issues.get(id);
+        if (issue) issue.inProject = true;
+      }
+    }
+
+    // States and labels come from the teams of the issues in scope, and the named team.
+    const teamIds = [...new Set([...(scope.team ? [scope.team.id] : []),
+      ...[...issues.values()].filter((issue) => issue.inProject).map((issue) => issue.teamId)])];
     const teamStates: MirrorSnapshot["states"] = [];
-    const stateCursors = new Set<string>();
-    const vocabularyLabelCursors = new Set<string>();
-    let statesAfter: string | null = null;
-    let labelsAfter: string | null = null;
-    let statesDone = false;
-    let labelsDone = false;
-    do {
-      const result = z.object({ workflowStates: connection(mirrorStateSchema), issueLabels: connection(mirrorLabelSchema) }).parse(
-        await graphql(`query SquadronVocabulary($teamId: ID!, $statesAfter: String, $labelsAfter: String, $statesFirst: Int!, $labelsFirst: Int!) {
-          workflowStates(first: $statesFirst, after: $statesAfter, filter: { team: { id: { eq: $teamId } } }) {
-            nodes { id name type } pageInfo { hasNextPage endCursor }
-          }
-          issueLabels(first: $labelsFirst, after: $labelsAfter, filter: { or: [{ team: { id: { eq: $teamId } } }, { team: { null: true } }] }) {
-            nodes { id name color } pageInfo { hasNextPage endCursor }
-          }
-        }`, { teamId: binding.team.id, statesAfter, labelsAfter, statesFirst: statesDone ? 0 : 50, labelsFirst: labelsDone ? 0 : 50 }));
-      if (!statesDone) {
-        teamStates.push(...result.workflowStates.nodes);
-        statesDone = !result.workflowStates.pageInfo.hasNextPage;
+    const teamLabels: MirrorSnapshot["labels"] = [];
+    if (teamIds.length) {
+      const stateCursors = new Set<string>();
+      const labelCursors = new Set<string>();
+      let statesAfter: string | null = null;
+      let labelsAfter: string | null = null;
+      let statesDone = false;
+      let labelsDone = false;
+      do {
+        const result = z.object({ workflowStates: connection(mirrorStateSchema), issueLabels: connection(mirrorLabelSchema) }).parse(
+          await graphql(LINEAR_QUERIES.vocabulary, { teamIds, statesAfter, labelsAfter,
+            statesFirst: statesDone ? 0 : PAGE.vocabulary, labelsFirst: labelsDone ? 0 : PAGE.vocabulary }));
         if (!statesDone) {
-          const cursor = result.workflowStates.pageInfo.endCursor;
-          if (!cursor || stateCursors.has(cursor) || stateCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
-          stateCursors.add(cursor); statesAfter = cursor;
+          teamStates.push(...result.workflowStates.nodes);
+          statesDone = !result.workflowStates.pageInfo.hasNextPage;
+          if (!statesDone) {
+            const cursor = result.workflowStates.pageInfo.endCursor;
+            if (!cursor || stateCursors.has(cursor) || stateCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
+            stateCursors.add(cursor); statesAfter = cursor;
+          }
         }
-      }
-      if (!labelsDone) {
-        teamLabels.push(...result.issueLabels.nodes);
-        labelsDone = !result.issueLabels.pageInfo.hasNextPage;
         if (!labelsDone) {
-          const cursor = result.issueLabels.pageInfo.endCursor;
-          if (!cursor || vocabularyLabelCursors.has(cursor) || vocabularyLabelCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
-          vocabularyLabelCursors.add(cursor); labelsAfter = cursor;
+          teamLabels.push(...result.issueLabels.nodes);
+          labelsDone = !result.issueLabels.pageInfo.hasNextPage;
+          if (!labelsDone) {
+            const cursor = result.issueLabels.pageInfo.endCursor;
+            if (!cursor || labelCursors.has(cursor) || labelCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
+            labelCursors.add(cursor); labelsAfter = cursor;
+          }
         }
-      }
-    } while (!statesDone || !labelsDone);
+      } while (!statesDone || !labelsDone);
+    }
     const allIssues = [...issues.values()];
-    const snapshot: MirrorSnapshot = { binding, issues: allIssues, relations: [...relations.values()],
+    return { scope: { name: scope.name }, issues: allIssues, relations: [...relations.values()],
       labels: [...new Map([...allIssues.flatMap((issue) => issue.labels), ...teamLabels].map((label) => [label.id, label])).values()],
       states: [...new Map([...allIssues.map((issue) => issue.state), ...teamStates].map((state) => [state.id, state])).values()],
       syncedAt: now(), error: null };
-    const current = getSnapshot(bbProjectId);
-    if (JSON.stringify(current.binding) !== JSON.stringify(binding)) return current;
-    snapshots.set(bbProjectId, snapshot);
-    if (previous.error || JSON.stringify([previous.issues, previous.relations, previous.labels, previous.states]) !== JSON.stringify([snapshot.issues, snapshot.relations, snapshot.labels, snapshot.states])) {
-      changed(bbProjectId);
-    }
-    return snapshot;
   }
+
   bb.background.service("linear-reader", { start: async (signal) => {
-    polls.clear(); // Every service start rebuilds the in-memory snapshot.
+    polls.clear(); // Every service start catches up in full.
     let budgetAt = 0;
     while (!signal.aborted && !lifetime.signal.aborted) {
-      const rows = (db.prepare("SELECT bb_project_id FROM mirror_bindings ORDER BY bb_project_id").all() as { bb_project_id: string }[])
-        .filter(({ bb_project_id: id }) => options.shouldPoll?.(id) ?? true);
-      for (const { bb_project_id: id } of rows) {
+      const ids = [...known].sort().filter((id) => options.shouldPoll?.(id) ?? true);
+      for (const id of ids) {
         if (signal.aborted || lifetime.signal.aborted || now() < budgetAt) break;
         const at = polls.get(id) ?? 0;
         if (at > now()) continue;
@@ -332,21 +336,14 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
         }
       }
       if (signal.aborted || lifetime.signal.aborted) return;
-      const next = rows.length ? Math.min(...rows.map(({ bb_project_id: id }) => polls.get(id) ?? now())) : now() + 60_000;
+      const next = ids.length ? Math.min(...ids.map((id) => polls.get(id) ?? now())) : now() + 60_000;
       const sleepFor = Math.max(1, Math.max(next, budgetAt) - now());
-      try { await wait(sleepFor, AbortSignal.any([signal, lifetime.signal, wake.signal])); }
+      try { await wait(sleepFor, AbortSignal.any([signal, lifetime.signal])); }
       catch { if (signal.aborted || lifetime.signal.aborted) return; }
     }
   } });
   bb.rpc.register(linearMirrorContract, {
-    "linear.suggestBinding": async ({ bbProjectId }) => {
-      const checkout = await readProjectCheckout(bb, bbProjectId);
-      if (checkout?.tracker.kind !== "linear" || !checkout.issueTrackerMarkdown) return null;
-      return suggestLinearBinding(checkout.issueTrackerMarkdown, await catalog());
-    },
-    "linear.catalog": catalog,
-    "linear.bind": async (input) => { await bind(input); return sync(input.bbProjectId); },
     "linear.snapshot": ({ bbProjectId }) => getSnapshot(bbProjectId),
   });
-  return { bind, getSnapshot, sync, catalog, onChange };
+  return { getSnapshot, sync, onChange, scopeProblem };
 }

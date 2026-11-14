@@ -23,7 +23,8 @@ export function issue(identifier: string, options: {
     teamId: outside ? "team-other" : "team-one", projectId: outside ? "project-other" : "linear-one",
     parentId: options.parent ? options.parent.toLowerCase() : null,
     state: done ? closed : options.status ? { ...open, name: options.status } : open, labels: (options.labels ?? []).map(label),
-    inProject: !outside && !done,
+    // Scope membership, closed issues included, as the reader reports it.
+    inProject: !outside,
   };
 }
 
@@ -37,8 +38,7 @@ export const SYNCED_AT = Date.parse("2026-11-13T20:00:00.000Z");
 export function snapshot(issues: MirrorIssue[], relations: ReturnType<typeof blocks>[] = [],
   overrides: Partial<MirrorSnapshot> = {}): MirrorSnapshot {
   return {
-    binding: { bbProjectId: "proj-one", team: { id: "team-one", name: "Fixture team", key: "FIX" },
-      project: { id: "linear-one", name: "Fixture project" } },
+    scope: { name: "Fixture team · Fixture project" },
     issues, relations, labels: [], states: [open, closed], syncedAt: SYNCED_AT, error: null, ...overrides,
   };
 }

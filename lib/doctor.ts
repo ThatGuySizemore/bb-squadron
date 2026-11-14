@@ -23,6 +23,8 @@ export interface DoctorInput {
   settingsMarkdown: string | null;
   issueTrackerMarkdown: string | null;
   linearConnected: boolean;
+  /** Why the Linear reader couldn't resolve the Scope, such as a name that matches nothing. */
+  linearScopeProblem?: string | null;
   ghAuthenticated: boolean;
   ghHostname?: string;
   /** False only for a verified no-remote local tracker checkout. */
@@ -47,6 +49,7 @@ export function doctor(input: DoctorInput): DoctorReport {
     return missing.length ? [`${family === "claude" ? "Claude Code" : "Codex"}: ${missing.join(", ")}`] : [];
   });
   const missingSetup = setupFiles.filter((path) => !input.setupFiles.includes(path));
+  const scopeProblem = tracker.kind === "linear" && parsed?.ok ? input.linearScopeProblem ?? null : null;
   const checks: DoctorCheck[] = [
     {
       id: "skills", name: "Matt's plugin", status: missingSkills.length ? "fix" : "pass",
@@ -59,10 +62,10 @@ export function doctor(input: DoctorInput): DoctorReport {
       message: missingSetup.length ? `Press Set up to create ${missingSetup.join(", ")} with Matt's setup in a thread.` : "Issue tracker, triage labels and domain docs are present.",
     },
     {
-      id: "settings", name: "Project settings", status: parsed?.ok ? "pass" : "fix",
-      message: parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? " and status mapping" : ""} are ready.`
+      id: "settings", name: "Project settings", status: parsed?.ok && !scopeProblem ? "pass" : "fix",
+      message: scopeProblem ?? (parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? ", scope and status mapping" : ""} are ready.`
         : parsed ? parsed.issues.map((issue) => issue.message).join(" ")
-        : `Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes, Final review${tracker.kind === "linear" ? " and Status mapping" : ""} sections.`,
+        : `Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes, Final review${tracker.kind === "linear" ? ", Scope and Status mapping" : ""} sections.`),
     },
     ...((tracker.kind === "linear" ? [{
       id: "linear", name: "Linear key", status: input.linearConnected ? "pass" : "fix",

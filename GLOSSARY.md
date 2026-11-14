@@ -93,4 +93,5 @@ _Avoid_: personal settings, local config
 
 **Needs you**: The board's first section: threads waiting on the owner, `accept:owner` PRs ready to merge, and setup problems.
 
-**Binding**: The owner's choice of which Linear team and project a BB project's board reads. Only Linear uses a binding.
+**Scope**: Which Linear issues a BB project's board reads, set in the `## Scope` section of the repo's `docs/agents/squadron.md`. Any of Team, Project, Initiative, Label and View; every key set narrows. An issue matching it is in scope. Only Linear uses a scope.
+_Avoid_: binding, filter

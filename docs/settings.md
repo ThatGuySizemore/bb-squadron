@@ -14,7 +14,7 @@ Local markdown
 
 The entire section value must be `Linear`, `GitHub` or `Local markdown`, matched without regard to case. `local-markdown` is also accepted. The override takes precedence over `issue-tracker.md`; omit the section to use detection. An invalid value leaves the tracker undetermined and Doctor explains how to fix it.
 
-Only Linear projects need a Linear connection and binding. GitHub reads issues through `gh` under the owner's existing login. Local markdown reads the repo's `.scratch/` files. Squadron's code never writes to a tracker; agents follow the repo's `issue-tracker.md` when publishing work.
+Only Linear projects need a Linear connection and a Scope. GitHub reads issues through `gh` under the owner's existing login. Local markdown reads the repo's `.scratch/` files. Squadron's code never writes to a tracker; agents follow the repo's `issue-tracker.md` when publishing work.
 
 ## Required lane settings
 
@@ -27,6 +27,30 @@ Every tracker needs these sections before Start:
 | Time limits | A Setting / Value table with positive Lane time limit and Worker time limit durations, such as `8 h` and `3 h`. |
 | Routes | A Label / Family / Model / Effort table with one `(default)` row. Families are Claude or GPT; effort is medium or high. |
 | Final review | `other` or `same`, relative to the Lead's model family. |
+
+## Scope applies only to Linear
+
+A Linear project's board reads the issues its `## Scope` section names. Without a valid Scope the board shows no issues and Doctor reports a fix. Set at least one key, one per line:
+
+```md
+## Scope
+
+Project: BB Squadron
+```
+
+| Key | Value | Board shows |
+|---|---|---|
+| Team | name, key or team URL | everything in that team |
+| Project | name, project URL or id | the whole project, across teams |
+| Initiative | name, initiative URL or id | issues in any project of that initiative |
+| Label | name, `group/name`, or id | issues carrying that label |
+| View | name, view URL or id | what the saved view shows, by its own filter |
+
+Every key set narrows: the board shows open issues matching all of them. A team is not required; a project-only scope keeps working when issues move between teams. Squadron resolves each value through Linear on read. A value that matches nothing, or more than one record, is a board and Doctor error naming the key. A label name that several teams share needs a Team key or the label's id. Prose lines in the section are ignored; a line starting with an unknown `Word:` is an error.
+
+`docs/agents/issue-tracker.md` must file new issues inside this scope, or they won't show on the board.
+
+Membership includes closed issues: a blocker, parent or lane ticket is in scope when Linear says it matches. For a View, in scope means returned by the view. States and labels come from the teams of the issues read, plus the Team key's team, so status mapping by name works across teams.
 
 ## Status mapping applies only to Linear
 

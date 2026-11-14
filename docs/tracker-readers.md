@@ -8,7 +8,7 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 - `kind` is `linear`, `github` or `local-markdown`. It is null when detection cannot choose a tracker; `error` then explains the missing configuration.
 - `bbProjectId` scopes threads to the selected BB project.
-- `project` holds the display name. It is null while a required binding is unconfirmed.
+- `project` holds the display name: for Linear, the Scope's matched names. It is null while a Linear Scope is missing, invalid or not yet read.
 - `issues` holds open issues and any closed or external issues needed to resolve parents, blockers and existing lanes. Each has an opaque `id`, display `identifier`, title, description, URL, update time, `parentId`, state, labels and assignees. `path` optionally names a repository-relative markdown file.
 - `inProject` means membership, including closed issues. External parent and blocker endpoints are false. This differs from the old Linear mirror flag, which excludes closed issues.
 - `state.name` preserves the source status. `state.type` uses `completed` for done and `canceled` for canceled; other values are open. Linear's name is also used with its configured Status mapping. GitHub and Local markdown readers normalize Working to `started`; board derivation maps `completed`, `started` and other open states to Done, Working and Waiting.
@@ -23,19 +23,19 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 ## Polling
 
-Only the project a board page shows is polled. The page reads its board every 30 s while visible, and `registerBoard` treats a project as shown for 75 s after its last board read. The board watcher refreshes only shown projects. The Linear mirror's poller reads only bound projects that `isShown` reports. Other readers add no background poller of their own. `board.projectCounts` reads every project once each time the picker opens. Before that read the formation mark uses only the shown project; afterwards it combines its live count with the other available counts from that picker read. Unknown counts are not invented and other projects have no additional poller.
+Only the project a board page shows is polled. The page reads its board every 30 s while visible, and `registerBoard` treats a project as shown for 75 s after its last board read. The board watcher refreshes only shown projects. The Linear mirror's poller reads only projects it has read before (a board, Plan or Start read them first) that `isShown` reports. Other readers add no background poller of their own. `board.projectCounts` reads every project once each time the picker opens. Before that read the formation mark uses only the shown project; afterwards it combines its live count with the other available counts from that picker read. Unknown counts are not invented and other projects have no additional poller.
 
-## Detection and binding
+## Detection and Scope
 
 `detectTracker(issueTrackerMarkdown, settingsMarkdown)` in [`lib/tracker-detection.ts`](../lib/tracker-detection.ts) is pure and returns `{ kind, reason }`. The optional level-two `Tracker` section in `squadron.md` takes precedence. Its value is `Linear`, `GitHub`, or `Local markdown`. Missing, ambiguous or unsupported configuration returns a null kind and a visible fix. A formal declaration wins over incidental mentions. Without a declaration, an unambiguous mention of `.scratch/`, GitHub or `gh issue`, or Linear selects that tracker. Multiple candidates require an override. `readProjectCheckout` reads the files from the selected project's default checkout.
 
 `readProjectCheckout` returns this detection alongside parsed settings. Pass the detected kind to `parseSquadronSettings` when parsing elsewhere; Status mapping is required only for Linear. Doctor shows the detection reason and checks the Linear key only for Linear.
 
-`linear.suggestBinding({ bbProjectId })` matches the project named in `issue-tracker.md` against the live read-only catalog. A unique match returns `{ teamId, projectId }`; ambiguity returns null. The picker prefills those IDs. Nothing is bound until the owner's existing `linear.bind` action.
+A Linear board reads the `## Scope` section of `squadron.md` ([settings](settings.md#scope-applies-only-to-linear)). `parseLinearScope` in `lib/squadron-settings.ts` parses it; `lib/linear-scope.ts` turns it into one `SquadronScope` lookup and the issue filter, and resolves each key to exactly one Linear record or a safe error naming the key. Resolutions are reused for 5 minutes. A View scope walks `customView(id).issues(filter:)`, so the view's saved filter and the other keys both apply. Closed relation endpoints and lane tickets are checked against the scope with one `id in` query per 50 issues; open ones are in scope exactly when the open walk returned them. The plugin stores no scope and exposes only `linear.snapshot`. The first `getSnapshot` of a Linear project in a plugin run reads it once.
 
 ## Evidence
 
-`tests/tracker-detection.test.ts` uses checked-in copies of Matt's local and GitHub templates and BB Squadron's and WordWell's Linear prose. `tests/tracker-plugin.test.ts` uses recorded GraphQL responses and the SDK testing host for binding suggestions, snapshot fields, and non-Linear configuration. Existing board derivation and plugin tests retain their behavioral expectations while receiving the new snapshot.
+`tests/tracker-detection.test.ts` uses checked-in copies of Matt's local and GitHub templates and BB Squadron's and WordWell's Linear prose. `tests/tracker-plugin.test.ts` uses recorded GraphQL responses and the SDK testing host for a missing Scope, snapshot fields, and non-Linear configuration. `tests/linear-reader.test.ts` and `tests/linear-scope.test.ts` cover each Scope key, resolution errors and membership. Existing board derivation and plugin tests retain their behavioral expectations while receiving the new snapshot.
 
 ## GitHub
 

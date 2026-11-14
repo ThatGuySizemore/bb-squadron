@@ -13,7 +13,6 @@ import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fak
 import type { BoardAction } from "../lib/fake-board.js";
 import { layoutPixels } from "../lib/pixels.js";
 import { DitherCanvas } from "./DitherCanvas.js";
-import { BindProject } from "./BindProject.js";
 import { DoctorPanel } from "./Doctor.js";
 import { currentProject, fleetFlying, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 import type { ProjectCounts } from "../lib/board-contract.js";
@@ -414,11 +413,9 @@ const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
   setup: "Setup", waiting: "Question", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
 };
 
-export function NeedsYouStrip({ items, dispatch, setup, setUp, demo = false, acting = null }: {
+export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = null }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
-  /** Controls for the Linear setup item, such as choosing the Linear project. */
-  setup?: ReactNode;
   /** The Set up button, shown once, on the first missing-setup row. */
   setUp?: ReactNode;
   demo?: boolean;
@@ -444,7 +441,6 @@ export function NeedsYouStrip({ items, dispatch, setup, setUp, demo = false, act
             {item.text}
           </span>
           <span className="sq-need-actions">
-            {item.key === "setup" ? setup : null}
             {item.key === setUpKey ? setUp : null}
             {item.kind === "waiting" && item.threadId ? (
               <Btn
@@ -712,7 +708,7 @@ function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerI
   const kind = tracker ? tracker.kind : status?.kind !== undefined ? status.kind : status ? "linear" : undefined;
   if (kind === undefined) return null;
   if (kind === "linear") {
-    if (!status || status.state === "disconnected" || status.state === "unbound") return null;
+    if (!status || status.state === "disconnected" || status.state === "unscoped") return null;
     const age = status.syncedAt === null ? null : Math.max(0, Math.round((now - status.syncedAt) / 60_000));
     const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
     return (
@@ -808,7 +804,6 @@ interface BoardViewProps {
   starting?: string | null;
   /** A Stop or Resume on its way to a Lead. */
   acting?: LaneAction | null;
-  setup?: ReactNode;
   /** Starts the Set up thread; the button shows when needsSetup(board). */
   onSetUp?: () => void;
   settingUp?: boolean;
@@ -832,7 +827,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, fleetLabel, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, fleetLabel, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -915,7 +910,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <SectionHead id="sq-needs-h" title="Needs you" count={items.length} amber />
-          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} setUp={setUpButton} demo={demo} acting={acting} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setUp={setUpButton} demo={demo} acting={acting} />
           <DoctorPanel open={doctorOpen} id={doctorId} projectId={projectId} />
         </section>
 
@@ -1053,7 +1048,7 @@ export function liveNotice(state: { projectId: string | null; board: Board | nul
   if (!state.board) return "Reading the board.";
   const status = state.board.tracker?.state;
   if (status === "disconnected") return "Connect Linear to see this project's issues.";
-  if (status === "unbound") return "Choose this project's Linear team and project above.";
+  if (status === "unscoped") return "Set this project's Linear Scope in docs/agents/squadron.md to see its issues.";
   if (status === "catching-up" && state.board.tracker?.syncedAt === null) {
     const kind = state.board.tracker.kind;
     return kind ? `Reading this project's issues from ${trackerName(kind)}.` : "Reading this project's issues from Linear.";
@@ -1289,7 +1284,6 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
           {failed ? <> <Btn onClick={() => void load()}>Try again</Btn></> : null}
         </>
       ) : undefined}
-      setup={board?.tracker?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
     />
   );
 }

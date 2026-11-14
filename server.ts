@@ -18,7 +18,7 @@ export default async function plugin(bb: BbPluginApi) {
   const mirror = registerLinearReader(bb, linear, {
     laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId),
     shouldPoll: (projectId) => shown(projectId) });
-  const doctor = registerDoctor(bb, () => linear.getConnection());
+  const doctor = registerDoctor(bb, () => linear.getConnection(), (projectId) => mirror.scopeProblem(projectId));
   const tracker = registerTracker(bb, mirror);
   const outside = createOutsideLaneReader(bb);
   const board = registerBoard(bb, { connection: () => linear.getConnection(), tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),

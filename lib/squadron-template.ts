@@ -5,6 +5,12 @@ export const DEFAULT_SQUADRON_TEMPLATE = `# Squadron settings for this repo
 
 BB Squadron reads this file before it starts a lane here. Doctor refuses to start when a section is missing.
 
+## Scope
+
+Linear only; delete this section for GitHub or Local markdown. The board shows open Linear issues matching every key set below. Set at least one of Team, Project, Initiative, Label or View, one per line, as a name, key, URL or id. New issues must be filed inside this scope, as docs/agents/issue-tracker.md says, or they won't show on the board.
+
+Project: <Linear project name or URL>
+
 ## Quick check
 
 \`\`\`sh

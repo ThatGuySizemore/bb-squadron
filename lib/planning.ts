@@ -27,7 +27,7 @@ interface Seed {
   existingTickets: TrackerIssue[];
   blockers: { identifier: string; blockedBy: string[] }[];
   kind: TrackerSnapshot["kind"];
-  /** The tracker's project name, such as "Team · Project" of the bound Linear project. */
+  /** The tracker's project name, such as the matched names of a Linear Scope ("Team · Project"). */
   project: string | null;
   routes: SquadronRoute[];
 }
@@ -102,7 +102,7 @@ function setupPrompt(report: DoctorReport | null): string {
     lines.push("1. Matt's setup files are present, so skip setup-matt-pocock-skills.");
   }
   lines.push(settingsMissing
-    ? "2. Then write docs/agents/squadron.md from Squadron's default template below. Go through each section with me and change what doesn't fit this repo. Keep the Status mapping section only when the tracker is Linear."
+    ? "2. Then write docs/agents/squadron.md from Squadron's default template below. Go through each section with me and change what doesn't fit this repo. Keep the Scope and Status mapping sections only when the tracker is Linear. For Linear, set Scope to the Team, Project, Initiative, Label or View that holds this repo's issues, and check that docs/agents/issue-tracker.md files new issues inside that scope."
     : "2. docs/agents/squadron.md exists. Compare it with Squadron's default template below and fix any section Doctor reports, with me.");
   lines.push("3. When you're done, tell me to press Check again in Squadron's Doctor.", "", "Squadron's default template:", "", "````md",
     DEFAULT_SQUADRON_TEMPLATE.trim(), "````");

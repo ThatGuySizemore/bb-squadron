@@ -30,6 +30,27 @@ Every tracker needs these sections before Start:
 | Routes | A Label / Family / Model / Effort table with one `(default)` row. Families are Claude or GPT; effort is medium or high. |
 | Final review | `other` or `same`, relative to the Lead's model family. |
 
+## Quick check
+
+After a merge, Squadron runs the quick check on main with SQUADRON_BASE set to the commit before the merge.
+Quick checks that select tests from changed files should compare against `$SQUADRON_BASE` when it is set. Lanes do not set it.
+
+## Check setup
+
+A merged-main check starts in a clean scratch worktree without the owner's dependencies. If the quick check needs preparation, add an optional command in `docs/agents/squadron.md`, for example:
+
+````md
+## Check setup
+
+```sh
+npm ci
+```
+````
+
+Use your project's own preparation command. Squadron assumes no package manager or language and never borrows dependencies from the owner's checkout. Omit this section if the quick check needs no preparation; a present section must contain a nonempty fenced command.
+
+Squadron runs Check setup only in the isolated worktree at the merged main commit, then runs Quick check there if setup succeeds. Both receive `SQUADRON_BASE` set to the commit before the merge and share a 30-minute command budget. Setup output and quick-check output stay in the check's log. A setup failure skips Quick check and pauses Autopilot through the main-check brake with the log link. The owner's checkout is never used to execute either command. Lane checks keep their existing behavior.
+
 ## Lead and worker routes
 
 Routes may include one `Lead` row, such as `| Lead | GPT | gpt-6.1-sol | medium |`. It selects the Lead regardless of spec labels. The Lead coordinates and merges; workers build tickets, including UI. Without a Lead row, Start keeps the existing behaviour: the first matching spec label wins, then the default row.

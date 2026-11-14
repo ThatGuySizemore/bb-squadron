@@ -15,6 +15,7 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const events = new Map<string, Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["events"]["list"]>>>();
   const projects = ["one", "two"].map((id) => ({ id, name: id === "one" ? "Fixture" : "Second", kind: "standard" as const, gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }));
+  let mainCheck = async () => ({ passed: true, logPath: "/scratch/main.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) });
   const fake = createFakePluginHost({ pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-wake-key" }, sdk: {
       projects: { list: async () => projects, get: async ({ projectId }) => ({ ...projects.find((p) => p.id === projectId)!,
@@ -33,7 +34,7 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
         defaultExecutionOptions: async () => ({ model: "gpt-6.1-sol", reasoningLevel: "medium", permissionMode: "auto", serviceTier: "default", source: "client/turn/start" }),
         send: async () => ({ ok: true, delivery: "queued" }),
       },
-    }, experimental_callHostRpc: async ({ method, input }) => method === "githubLogin" ? { authenticated: true } : method === "readRepositoryState"
+    }, experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck() : method === "githubLogin" ? { authenticated: true } : method === "readRepositoryState"
       ? { hasRemote: true, mainUpdatedAt: null, mergedBranches: [], mergedBranchUpdatedAt: {} }
       : { homePath: "/owner", repoRulesExists: true, playbookExists: true, machineProfileExists: true,
         setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"], regularSkillFiles: (input as { skillPaths: string[] }).skillPaths },
@@ -54,6 +55,7 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
     .filter((call) => !call.input[0].text.startsWith("Use the squadron-helper skill"));
   const advance = async (ms: number) => { t.mock.timers.tick(ms); await settle(); };
   return { threads, projects, lead, sends, advance, linear, events,
+    setMainCheck: (check: typeof mainCheck) => { mainCheck = check; },
     get harness() { return harness; },
     startWatcher: async () => { harness.behavior.runService("board-watcher"); await settle(); },
     reload: async () => { ({ harness } = await harness.lifecycle.reload(plugin)); },

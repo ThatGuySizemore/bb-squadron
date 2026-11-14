@@ -1,9 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Autopilot, type AutopilotChange } from "./Autopilot.js";
+import { autopilotContract } from "../lib/autopilot-contract.js";
+import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isActiveTicket } from "../lib/ticket-activity.js";
 import type { LiveStep } from "../lib/live-step.js";
 import { LIVE_STEP_MS } from "../lib/live-step.js";
 import type { ReactNode, Ref } from "react";
-import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_FileLink as FileLink, experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
 import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
@@ -582,15 +584,18 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
 
 const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
   setup: "Setup", waiting: "Question", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
+  "autopilot-paused": "Autopilot paused",
 };
 
-export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = null }: {
+export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = null, onAutopilotResume, autopilotSaving = false }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
   /** The Set up button, shown once, on the first missing-setup row. */
   setUp?: ReactNode;
   demo?: boolean;
   acting?: LaneAction | null;
+  onAutopilotResume?: () => void;
+  autopilotSaving?: boolean;
 }) {
   const open = useOpen();
   const setUpKey = setUp ? items.find((item) => item.key === "setup:setup" || item.key === "setup:settings")?.key : undefined;
@@ -612,6 +617,8 @@ export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = n
             {item.text}
           </span>
           <span className="sq-need-actions">
+            {item.log ? <FileLink target={{ kind: "host", hostId: item.log.hostId, path: item.log.path }}>Check log</FileLink> : null}
+            {item.kind === "autopilot-paused" ? <Btn tone="amber" disabled={autopilotSaving} onClick={onAutopilotResume}>Resume</Btn> : null}
             {item.key === setUpKey ? setUp : null}
             {item.kind === "waiting" && item.threadId ? (
               <Btn
@@ -667,7 +674,7 @@ function Plate({ id, landed = false }: { id: string; landed?: boolean }) {
   );
 }
 
-function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
+function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false, next = false }: { spec: ReadySpec; next?: boolean; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
   // Real specs carry the board model's reason; the demo computes its own.
   const blocked = (spec.startReason !== undefined ? spec.startReason : canStart(board, spec))
     ?? (startBusy ? "Wait for the Lead thread to open." : null);
@@ -680,6 +687,8 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
       <div className="sq-row-main">
         <IssueTitle title={spec.title} url={spec.url} className="sq-row-title" />
         <div className="sq-row-meta">
+          {next ? <span className="sq-tag" aria-label={`${spec.id} is next in the queue`}>Next</span> : null}
+          {spec.waitingFor?.length ? <span>Waiting for {spec.waitingFor.map((blocker, i) => <Fragment key={blocker.id}>{i ? ", " : ""}<IssueTitle title={blocker.id} url={blocker.url} className="sq-issue-link" /></Fragment>)}</span> : null}
           <span className="sq-num"><b>{spec.ticketCount}</b> {spec.ticketCount === 1 ? "ticket" : "tickets"}</span>
           {waiting.length || held.length ? <span className="sq-frontier sq-num">{canStartNow} can start</span> : null}
           {spec.routes.length ? (
@@ -1005,13 +1014,16 @@ interface BoardViewProps {
   tracker?: TrackerInfo;
   /** False until the live board's first read, so the formation mark never counts lanes it hasn't read. */
   lanesKnown?: boolean;
+  autopilotSaving?: boolean;
+  onAutopilotChange?: (patch: AutopilotChange) => void;
+  onAutopilotResume?: () => void;
   footer?: ReactNode;
   /** The full page, or a thread's side panel: always the narrow layout, with thread links opening in the main view. */
   placement?: Placement;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, autopilotSaving = false, onAutopilotChange, onAutopilotResume, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const [howOpen, setHowOpen] = useState(false);
@@ -1101,12 +1113,13 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         </header>
         {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
         <TrackerLine board={board} tracker={tracker} now={Date.now()} />
+        {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
         <PathStrip counts={counts} onJump={jump} />
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <SectionHead id="sq-needs-h" title="Needs you" count={items.length} amber />
-          <NeedsYouStrip items={items} dispatch={dispatch} setUp={setUpButton} demo={demo} acting={acting} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setUp={setUpButton} demo={demo} acting={acting} onAutopilotResume={onAutopilotResume} autopilotSaving={autopilotSaving} />
           <DoctorPanel open={doctorOpen} id={doctorId} projectId={projectId} />
         </section>
 
@@ -1137,7 +1150,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
           ) : (
             <ul className="sq-list">
               {board.ready.map((spec) => (
-                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
+                <ReadyRow key={spec.id} next={startable?.id === spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
               ))}
             </ul>
           )}
@@ -1322,7 +1335,7 @@ const POLL_MS = LIVE_STEP_MS;
 /** The real board for the project the owner picked, read from the reader. `context` is the project the
  * surface opens on: BB's sidebar selection on the full page, the thread's project in its side panel. */
 export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwitch: ReactNode; context: string | null; placement?: Placement }) {
-  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof setupContract & typeof laneContract>();
+  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof setupContract & typeof laneContract & typeof autopilotContract>();
   const open = useOpen();
   const [listed, setListed] = useState<PickerProjects | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -1346,6 +1359,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     setListed((value) => value && { ...value, lastPick: id });
     void rpc.call("board.pick", { projectId: id }).catch(() => undefined);
   }, [rpc]);
+  const [autopilotSaving, setAutopilotSaving] = useState(false);
   const [settingUp, setSettingUp] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [planning, setPlanning] = useState<string | null>(null);
@@ -1407,6 +1421,20 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     if (payload.projectId === projectId) void load(true);
   }, invalid);
   useSquadronSignal(linearConnectionChanged, () => { loadSoon(); }, invalid);
+  const changeAutopilot = useCallback(async (patch: AutopilotChange) => {
+    if (!projectId || autopilotSaving) return;
+    setAutopilotSaving(true);
+    try { await rpc.call("autopilot.set", { projectId, ...patch }); }
+    catch (error) { toast(error instanceof Error && error.message ? error.message : "Couldn't save Autopilot. Try again."); }
+    finally { await load(); setAutopilotSaving(false); }
+  }, [rpc, projectId, autopilotSaving, load]);
+  const resumeAutopilot = useCallback(async () => {
+    if (!projectId || autopilotSaving) return;
+    setAutopilotSaving(true);
+    try { await rpc.call("autopilot.resume", { projectId }); }
+    catch (error) { toast(error instanceof Error && error.message ? error.message : "Couldn't resume Autopilot. Try again."); }
+    finally { await load(); setAutopilotSaving(false); }
+  }, [rpc, projectId, autopilotSaving, load]);
   const setUp = useCallback(async () => {
     if (!projectId || settingUp) return;
     setSettingUp(true);
@@ -1474,6 +1502,9 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
       lanesKnown={board !== null}
       onSetUp={() => void setUp()}
       settingUp={settingUp}
+      autopilotSaving={autopilotSaving}
+      onAutopilotChange={(patch) => void changeAutopilot(patch)}
+      onAutopilotResume={() => void resumeAutopilot()}
       diagnostic={diagnostic}
       board={board ?? EMPTY_BOARD}
       demo={false}

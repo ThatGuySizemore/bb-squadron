@@ -17,6 +17,7 @@ const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().null
 const connection = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node), pageInfo });
 const reference = z.object({
   id: z.string(), identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
+  sortOrder: z.number().optional(), priority: z.number().optional(), createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime(), team: z.object({ id: z.string() }), project: z.object({ id: z.string() }).nullable(),
   parent: z.object({ id: z.string() }).nullable(), state: mirrorStateSchema,
   assignee: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
@@ -219,6 +220,9 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
       const existing = issues.get(node.id);
       issues.set(node.id, {
         id: node.id, identifier: node.identifier, title: node.title, description: node.description, url: node.url,
+        ...(node.sortOrder !== undefined ? { sortOrder: node.sortOrder } : {}),
+        ...(node.priority !== undefined ? { priority: node.priority } : {}),
+        ...(node.createdAt !== undefined ? { createdAt: node.createdAt } : {}),
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
         state: node.state, labels: labels.length ? labels : existing?.labels ?? [],
         assignees: node.assignee === undefined ? existing?.assignees ?? [] : node.assignee ? [node.assignee] : [],

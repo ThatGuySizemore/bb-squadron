@@ -192,4 +192,15 @@ const liveSteps: Fixture = {
   }] },
 };
 
-export const FIXTURES: Fixture[] = [squadronFlying, squadronReady, squadronPublished, bbBot, empty, states, liveSteps];
+/** Synthetic queue, including a blocker before the next eligible spec. */
+const queue: Fixture = {
+  name: "queue", projectName: "Synthetic queue", tracker: { kind: "linear" },
+  board: { ...base, doctor: doctorPass, tracker: linear("Synthetic queue"), lanes: [], shaping: [], openIssues: [],
+    ready: [
+      { id: "FIX-1", title: "A spec waiting for its dependency", ticketCount: 2, routes: [codex], blockedBy: ["FIX-9"], acceptOwner: false,
+        startReason: "Waits on FIX-9", waitingFor: [{ id: "FIX-9", title: "Dependency", url: "https://example.invalid/FIX-9", outside: false }] },
+      { id: "FIX-5", title: "The next eligible spec in the owner's queue", ticketCount: 3, routes: [codex], blockedBy: [], acceptOwner: false, startReason: null },
+    ] },
+};
+
+export const FIXTURES: Fixture[] = [squadronFlying, squadronReady, squadronPublished, bbBot, empty, states, liveSteps, queue];

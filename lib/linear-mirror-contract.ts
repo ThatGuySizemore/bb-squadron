@@ -5,6 +5,7 @@ export const mirrorLabelSchema = z.object({ id, name: z.string(), color: z.strin
 export const mirrorStateSchema = z.object({ id, name: z.string(), type: z.string() });
 export const mirrorIssueSchema = z.object({
   id, identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
+  sortOrder: z.number().optional(), priority: z.number().optional(), createdAt: z.string().optional(),
   updatedAt: z.string(), teamId: id, projectId: id.nullable(), parentId: id.nullable(),
   state: mirrorStateSchema, labels: z.array(mirrorLabelSchema),
   assignees: z.array(z.object({ id, name: z.string() })).optional(),

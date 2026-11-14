@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
-import { readLeadThreads } from "./lead-threads.js";
+import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { resolveLeadRoute } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
@@ -29,20 +29,26 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   }
   const refuse = (specId: string, action: string) =>
     new Error(`${specId} was started outside Squadron, so Squadron doesn't ${action} it. Open its thread to follow it.`);
-  const starting = new Map<string, Promise<{ threadId: string }>>();
-  async function start(projectId: string, specId: string) {
+  const starting = new Map<string, Promise<{ threadId: string } | null>>();
+  async function start(projectId: string, specId: string, startedBy: "owner" | "autopilot", allowed?: () => Promise<boolean>) {
     const snapshot = await sources.tracker.getSnapshot(projectId);
-    const leads = await readLeadThreads(bb, projectId);
+    const leads = latestLeads(await readLeadThreads(bb, projectId));
     const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
     const existing = spec && leads.find((lead) => lead.specId === spec.id);
-    if (existing) return { threadId: existing.thread.id };
     const planning = await readPlanningThreads(bb, projectId);
     const outside = spec ? (await outsideLanes(projectId, snapshot, leads, planning)).filter((lane) => lane.specId === spec.id) : [];
     if (outside.length) throw refuse(specId, "start another Lead for");
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to start a lane in.");
+    const progress = await readLaneProgress(bb, snapshot, leads);
+    const pullRequests = await readPullRequests(bb, leads.flatMap((lead) => lead.thread.environmentId ? [lead.thread.environmentId] : []));
+    const previous = deriveBoard({ snapshot, leads, planning, settings: checkout.settings, ...progress, pullRequests,
+      connection: { status: "connected", message: "" }, now: Date.now() }).board;
+    const returning = existing && previous.lanes.some((lane) => lane.leadThreadId === existing.thread.id && lane.state === "landed")
+      && previous.ready.some((row) => row.id === specId);
+    if (existing && (isRunningThread(existing.thread) || !returning)) return { threadId: existing.thread.id };
     const doctor = await sources.doctor(projectId);
-    const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], planning, settings: checkout.settings, doctor,
+    const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], planning, settings: checkout.settings, doctor, ...progress, pullRequests,
       connection: { status: "connected", message: "" }, now: Date.now() });
     const ready = board.ready.find((row) => row.id === specId);
     if (!ready || !spec) throw new Error(`${specId} isn't a ready spec in this project's tracker. Read the board again.`);
@@ -51,12 +57,17 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const route = resolveLeadRoute(checkout.settings.settings, spec.labels.map((label) => label.name));
     const { holdLabels } = checkout.settings.settings;
     const ownerPath = (id: "playbook" | "machine-profile") => doctor.configurationFiles.find((file) => file.id === id)?.path;
+    if (allowed && !await allowed()) return null;
     const thread = await bb.sdk.threads.spawn({
       projectId, title: `Lead ${spec.identifier}`, visibility: "visible",
       providerId: route.family === "claude" ? "claude-code" : "codex", model: route.model, reasoningLevel: route.effort, serviceTier: "default",
-      pluginMetadata: { role: "lead", specId: spec.id },
+      pluginMetadata: { role: "lead", specId: spec.id, startedBy, ...(returning ? { previousLeadId: existing.thread.id } : {}) },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
       prompt: ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
+        ...(returning ? [
+          `This spec's previous lane landed. Start a fresh integration branch from this new worktree's default branch; never reuse the landed branch ${existing.branch}.`,
+          `Previous Lead: ${existing.thread.id}. Its branch, workers and PR are evidence for that lane only. Read remaining tickets afresh.`,
+        ] : []),
         ...(snapshot.kind === "linear" ? [] : ["Read docs/agents/issue-tracker.md and update the spec and its tickets as that file describes. Tell workers to do the same."]),
         "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
         `House rules: ${ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md"}`,
@@ -71,7 +82,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   async function leadOf(projectId: string, specId: string, action: string) {
     const snapshot = await sources.tracker.getSnapshot(projectId);
     const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
-    const leads = await readLeadThreads(bb, projectId);
+    const leads = latestLeads(await readLeadThreads(bb, projectId));
     const lead = spec && leads.find((found) => found.specId === spec.id);
     if (lead) return lead;
     if (spec && (await outsideLanes(projectId, snapshot, leads)).some((lane) => lane.specId === spec.id)) throw refuse(specId, action);
@@ -113,6 +124,16 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });
     return { number: pr.number };
   }
+  /** Both owner and Autopilot use this path, including the in-flight dedupe and first message. */
+  function startLane(projectId: string, specId: string, startedBy: "owner" | "autopilot", allowed?: () => Promise<boolean>) {
+    const key = JSON.stringify([projectId, specId]);
+    let running = starting.get(key);
+    if (!running) {
+      running = start(projectId, specId, startedBy, allowed).finally(() => { starting.delete(key); });
+      starting.set(key, running);
+    }
+    return running;
+  }
   const fromBoard = (context: { experimental_caller: { kind: string } }, action: string) => {
     if (context.experimental_caller.kind !== "client") throw new Error(`${action} a lane from the Squadron board.`);
   };
@@ -121,13 +142,14 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     stop: (projectId: string, specId: string) => tell(projectId, specId, STOP_MESSAGE, "steer-if-active", "stop"),
     resume: (projectId: string, specId: string) => tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume"),
     start(projectId: string, specId: string) {
-      const key = JSON.stringify([projectId, specId]);
-      let running = starting.get(key);
-      if (!running) {
-        running = start(projectId, specId).finally(() => { starting.delete(key); });
-        starting.set(key, running);
-      }
-      return running;
+      return startLane(projectId, specId, "owner").then((result): Promise<{ threadId: string }> | { threadId: string } => {
+        // An owner action outlives an automatic start cancelled by Off or a lower limit.
+        if (result) return result;
+        return startLane(projectId, specId, "owner").then((retried) => {
+          if (!retried) throw new Error("Read the board and try Start again.");
+          return retried;
+        });
+      });
     },
   };
   bb.rpc.register(laneContract, {
@@ -148,7 +170,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
       return actions.start(projectId, specId);
     },
   });
-  return actions;
+  return { ...actions, startAutomatic: startLane };
 }
 
-export type LaneActions = ReturnType<typeof registerLaneStart>;
+export type LaneActions = Pick<ReturnType<typeof registerLaneStart>, "start" | "stop" | "resume" | "merge">;

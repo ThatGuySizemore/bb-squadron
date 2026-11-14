@@ -1,0 +1,7 @@
+# Autopilot brakes and local BB lifetime
+
+Autopilot schedules lanes inside the existing board watcher, only while BB runs on this Mac. Its controls survive a reload in per-project plugin storage; a closed board page doesn't stop it, but a closed BB does. A remote runner would need a separate lifetime and ownership model, so this spec doesn't add one.
+
+Two Squadron lanes in a row ending Stopped pause Autopilot with “Two lanes in a row stopped”; Landed resets the count. An owner question keeps its slot and doesn't count as a stop. Outside lanes affect neither the count nor the reset. Pausing prevents new automatic starts and leaves flying lanes alone. The other brake pauses when main fails its quick check after a merge; that check belongs to SQD-212. Both brakes produce an Autopilot-paused Needs you item. The Helper's notifier delivers that item; Resume is an owner action and clears the reason and count.
+
+Lane states still come from BB, the tracker and merge evidence, as ADR-0008 requires. The stored pause controls future automatic starts; it is never a ruling or a hold copied onto tickets. We store each observed Lead's outcome marker with the count in the same serialized write, so repeated reads and reloads don't recount historical stops. Markers survive Resume, and a later landing can reset a previously observed stop once. Newly observed outcomes are ordered by merge time or the latest lane-thread update, with Lead ID breaking ties. Polling cannot recover finer event order than those sources provide.

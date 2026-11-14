@@ -3,9 +3,11 @@
 import { createLiveStepReader } from "./live-step.js";
 import { waitFor } from "./watch-clock.js";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { autopilotLaneCount, type AutopilotControls } from "./autopilot.js";
+import type { registerLaneStart } from "./lane-start.js";
 import type { Board } from "./board-model.js";
 import { boardContract, type ProjectCounts } from "./board-contract.js";
-import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
+import { boardChanged, publishSquadronSignal, onSquadronSignal } from "./realtime-contract.js";
 import { deriveBoard, type BoardInput, type PlanningThread } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
@@ -16,8 +18,11 @@ import type { PullRequestRow } from "./pull-requests.js";
 import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
+import { mainCheckHostContract } from "./main-check-contract.js";
 
 export interface BoardSources {
+  autopilot?: AutopilotControls;
+  startLane?: ReturnType<typeof registerLaneStart>["startAutomatic"];
   connection(): Promise<LinearConnectionState>;
   observed?(projectId: string, projectName: string, board: Board | null): Promise<void>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
@@ -101,24 +106,59 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const leads = await lanesOf(projectId, snapshot, planning);
     const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
     const environments = leads.flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
+    // Outside visibility remains open-only. Its unresolved merge sources survive
+    // tracker closure and reload independently, without exposing lane controls.
+    const visibleOutside = leads.flatMap(({ outside, thread }) => outside && thread.environmentId ? [thread.environmentId] : []);
+    const outsideEnvironments = await sources.autopilot?.rememberOutside(projectId, visibleOutside) ?? [];
+    const checkEnvironments = [...new Set([...environments, ...outsideEnvironments])];
+    const pullRequests = checkEnvironments.length ? await sources.pullRequests?.(checkEnvironments, lifetime.signal) : undefined;
     const { board } = deriveBoard({
       snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
       leads, planning,
       ...progress,
-      pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
+      pullRequests,
     });
+    if (sources.autopilot) {
+      board.autopilot = snapshot.error || snapshot.syncedAt === null
+        ? await sources.autopilot.get(projectId) : await sources.autopilot.observe(projectId, board);
+      if (!snapshot.error && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
+        // Main is shared: include Outside merges and older Leads hidden by returning lanes.
+        const merges = checkEnvironments.flatMap((id) => {
+          const row = pullRequests?.[id];
+          return row?.outcome === "available" && row.pullRequest.state === "merged" ? [row.pullRequest] : [];
+        });
+        board.autopilot = await sources.autopilot.checkMain(projectId, merges, async (prNumber) => {
+          const checkout = await readProjectCheckout(bb, projectId, lifetime.signal);
+          const quickCheck = checkout?.settings?.ok ? checkout.settings.settings.quickCheck : null;
+          const checkSetup = checkout?.settings?.ok ? checkout.settings.settings.checkSetup : undefined;
+          if (!checkout || !quickCheck) throw new Error("Main quick check setup is unavailable.");
+          const result = await bb.hosts.experimental_client({ contract: mainCheckHostContract }).call("runMainQuickCheck",
+            { checkoutPath: checkout.path, prNumber, quickCheck, ...(checkSetup ? { checkSetup } : {}) },
+            { hostId: checkout.hostId, signal: lifetime.signal, timeoutMs: 32 * 60_000 });
+          return { ...result, hostId: checkout.hostId };
+        }, { visible: visibleOutside,
+          requests: Object.fromEntries(outsideEnvironments.flatMap((id) => pullRequests?.[id] ? [[id, pullRequests[id]]] : [])) });
+      }
+      board.laneCapacity = board.autopilot.laneLimit;
+      board.autoStart = board.autopilot.status === "on";
+    }
     return board;
   }
 
+  let publishing = false;
   function publishIfChanged(projectId: string, board: Board) {
     const entry = project(projectId);
     const json = JSON.stringify(board);
     if (entry.published === json) return;
     const first = entry.published === null;
     entry.published = json;
-    if (!first) publishSquadronSignal(bb.realtime, boardChanged, { projectId });
+    if (!first) {
+      publishing = true;
+      try { publishSquadronSignal(bb.realtime, boardChanged, { projectId }); }
+      finally { publishing = false; }
+    }
   }
 
   /** Signals that arrive during a refresh coalesce into one more pass. */
@@ -126,6 +166,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const entry = project(projectId);
     if (entry.refreshing) { entry.again = true; return entry.refreshing; }
     const run = async () => {
+      // A start emits board-changed. Observe it before the next cycle, without filling every slot at once.
+      let attempted = false;
       do {
         entry.again = false;
         if (lifetime.signal.aborted) return;
@@ -133,9 +175,23 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
         try {
           board = await compute(projectId, false);
           publishIfChanged(projectId, board);
-        } catch (error) {
-          bb.log.warn(`board refresh failed: ${error instanceof Error ? error.name : "unknown"}`);
+          if (!attempted && sources.autopilot?.isOn(projectId) && sources.startLane) {
+            attempted = true;
+            const state = await sources.autopilot.get(projectId);
+            const flying = autopilotLaneCount(board);
+            const next = board.ready.find((spec) => spec.startReason === null);
+            if (board.doctor?.ready && flying < state.laneLimit && next) {
+              await sources.startLane(projectId, next.id, "autopilot", async () => {
+                // Owner controls and hand starts can change while Start checks Doctor.
+                const current = await compute(projectId, false);
+                return !lifetime.signal.aborted && current.autopilot?.status === "on"
+                  && current.ready.some((spec) => spec.id === next.id && spec.startReason === null)
+                  && autopilotLaneCount(current) < current.autopilot.laneLimit;
+              });
+            }
+          }
         }
+        catch (error) { bb.log.warn(`board refresh failed: ${error instanceof Error ? error.name : "unknown"}`); }
         if (sources.observed && !lifetime.signal.aborted) {
           const name = entry.name ?? await bb.sdk.projects.get({ projectId }).then((value) => value.name).catch(() => projectId);
           await sources.observed(projectId, name, board).catch(() => { bb.log.warn("Project notification observation unavailable."); });
@@ -152,14 +208,20 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return at !== undefined && now() - at < SHOWN_MS;
   }
 
-  sources.tracker.onChange((projectId) => { void refresh(projectId); });
+  bb.onDispose(sources.tracker.onChange((projectId) => { void refresh(projectId); }));
+  bb.onDispose(onSquadronSignal(bb.realtime, boardChanged, ({ projectId }) => {
+    if (!publishing && sources.autopilot?.isEnabled(projectId)) void refresh(projectId);
+  }));
 
   bb.background.service("board-watcher", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);
     while (!stop.aborted) {
       const listed = await bb.sdk.projects.list().catch(() => []);
       for (const { id, name } of listed) project(id).name = name;
-      await Promise.all(listed.map(({ id }) => refresh(id)));
+      const ids = new Set([...listed.map(({ id }) => id), ...sources.autopilot?.enabledProjectIds() ?? []]);
+      // A project's refresh retains its own check/start barrier. A long host check
+      // must not hold discovery or observation of any other project.
+      for (const id of ids) void refresh(id).catch(() => { bb.log.warn("Project observation unavailable."); });
       try { await wait(WATCH_MS, stop); } catch { return; }
     }
   } });

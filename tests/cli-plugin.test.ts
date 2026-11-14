@@ -163,15 +163,21 @@ test("needs names a waiting merge in owner words and links its PR", async (t) =>
 });
 
 test("status counts Shaping, Flying and only today's landed specs from the board's lane evidence", async (t) => {
+  let delivered = false;
   const nodes = workspaceIssues.data.issues.nodes;
   const { harness } = await setup(t, { issues: () => Response.json({ data: { issues: {
-    ...workspaceIssues.data.issues, nodes: [...nodes, { ...nodes[4], id: "fix-10", identifier: "FIX-10", parent: { id: "fix-9" } }],
+    // This case counts a fully delivered lane. Open tickets after landing are
+    // returning work, covered separately below, rather than completed delivery.
+    ...workspaceIssues.data.issues, nodes: [...nodes.map((node) => node.identifier === "FIX-6" && delivered
+      ? { ...node, state: { id: "done", name: "Done", type: "completed" } } : node),
+      { ...nodes[4], id: "fix-10", identifier: "FIX-10", parent: { id: "fix-9" } }],
   } } }) });
   harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   assert.deepEqual(await harness.behavior.runCli(["status"]), {
     exitCode: 0, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 1 | Shaping 1 | Flying 1 | Landed today 0 | Needs you 0\n",
   });
+  delivered = true; // The tracker records completion before the merged PR is observed.
   for (const [updatedAt, count] of [[new Date().toISOString(), 1], [new Date(Date.now() - 86_400_000).toISOString(), 0]] as const) {
     harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
       number: 7, state: "merged", url: "https://github.com/fixture/repo/pull/7", updatedAt, checks: { state: "passing" },
@@ -180,6 +186,26 @@ test("status counts Shaping, Flying and only today's landed specs from the board
       exitCode: 0, stderr: "", stdout: `Fixture | Tracker: Up to date with Linear. | Ready 1 | Shaping 1 | Flying 0 | Landed today ${count} | Needs you 0\n`,
     });
   }
+});
+
+test("status counts a landed spec with remaining open tickets as Ready and keeps its old lane evidence", async (t) => {
+  const { harness, native } = await setup(t);
+  harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
+  await harness.behavior.runCli(["start", "FIX-5"], { projectId: "proj-one" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
+    number: 7, state: "merged", url: "https://github.com/fixture/repo/pull/7", updatedAt: new Date().toISOString(), checks: { state: "passing" },
+  } } }));
+  assert.deepEqual(await harness.behavior.runCli(["status"]), {
+    exitCode: 0, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 1 | Needs you 0\n",
+  });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as import("../lib/board-model.js").Board;
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1", "FIX-5"]);
+  assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.leadThreadId, lane.state, lane.pr?.number]),
+    [["FIX-5", "thr_lead_1", "landed", 7]]);
+  assert.equal(board.lanes[0].tickets[0].id, "FIX-6");
+  assert.notEqual(board.lanes[0].tickets[0].state, "done");
+  assert.ok(native.threads.has("thr_lead_1"));
+  assert.equal(native.count, 1, "observing returning work doesn't start it with Autopilot Off");
 });
 
 test("failed tracker reads show unknown counts and a Setup item instead of a false empty result", async (t) => {

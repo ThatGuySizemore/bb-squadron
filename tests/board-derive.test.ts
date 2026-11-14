@@ -418,3 +418,43 @@ test("a repo's own hold labels hold tickets on the board too", () => {
   ]), { settings: parseSquadronSettings(markdown) }));
   assert.deepEqual(board.shaping.map(({ id, missing }) => [id, missing]), [["FIX-1", "Every open ticket is held: FIX-2."]]);
 });
+
+for (const kind of ["github", "local-markdown"] as const) {
+  test(`${kind} Ready queue preserves tracker order rather than identifier or Linear priority`, () => {
+    const snap = snapshot([
+      issue("FIX-20", { labels: ["ready-for-agent"] }), issue("FIX-21", { parent: "FIX-20" }),
+      issue("FIX-10", { labels: ["ready-for-agent"] }), issue("FIX-11", { parent: "FIX-10" }),
+    ]);
+    snap.issues[0].priority = 0;
+    snap.issues[2].priority = 1;
+    const { board } = deriveBoard(input(snap, { kind }));
+    assert.deepEqual(board.ready.map((row) => row.id), ["FIX-20", "FIX-10"]);
+  });
+}
+
+for (const kind of ["github", "local-markdown"] as const) {
+  test(`${kind} Ready queue uses oldest creation time for equal tracker ordinals`, () => {
+    const source = input(snapshot([
+      issue("FIX-20", { labels: ["ready-for-agent"] }), issue("FIX-21", { parent: "FIX-20" }),
+      issue("FIX-10", { labels: ["ready-for-agent"] }), issue("FIX-11", { parent: "FIX-10" }),
+    ]), { kind });
+    Object.assign(source.snapshot.issues[0], { trackerOrder: 1, createdAt: "2026-01-01T00:00:00.100Z" });
+    Object.assign(source.snapshot.issues[2], { trackerOrder: 1, createdAt: "2026-01-01T00:00:00Z" });
+    assert.deepEqual(deriveBoard(source).board.ready.map((row) => row.id), ["FIX-10", "FIX-20"]);
+  });
+}
+
+test("a returning completed spec keeps its queue order beside Ready specs and its Landed history", () => {
+  const returning = { ...issue("FIX-20", { labels: ["ready-for-agent"], done: true }), sortOrder: -1 };
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
+    returning, issue("FIX-21", { parent: "FIX-20" }),
+  ]), {
+    leads: [{ specId: "fix-20", branch: "landed/old", route: { family: "gpt", model: "gpt-6.1-sol", effort: "high" },
+      thread: makeThreadResponse({ id: "old-lead", projectId: "proj-one", environmentId: "old-env", status: "idle" }) }],
+    pullRequests: { "old-env": { outcome: "available", pullRequest: { number: 1, state: "merged", url: "https://example.invalid/pr/1",
+      updatedAt: "2026-11-13T20:00:00Z", checks: { state: "passing" } } } },
+  }));
+  assert.deepEqual(board.ready.map((row) => row.id), ["FIX-20", "FIX-1"]);
+  assert.deepEqual(board.lanes.map((row) => [row.specId, row.state, row.leadThreadId]), [["FIX-20", "landed", "old-lead"]]);
+});

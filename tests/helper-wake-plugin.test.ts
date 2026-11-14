@@ -285,3 +285,63 @@ test("landings already present at first observation establish a baseline without
   await f.reload(); await f.startWatcher(); await f.advance(120_000);
   assert.equal(f.sends().length, 0);
 });
+
+test("the two-stop brake sends the Helper one Autopilot pause with its reason and keeps Resume an owner action", async (t) => {
+  const f = await fixture(t);
+  const first = f.lead("one", "Lead");
+  f.threads.set(first.id, { ...first, status: "error" });
+  f.threads.set("lead-second", makeThreadResponse({ id: "lead-second", projectId: "one", title: "Lead FIX-1",
+    environmentId: "env-second", status: "error", createdAt: epoch + 1 }));
+  f.harness.sdk.stub("threads.getPluginMetadata", async ({ threadId }: { threadId: string }) =>
+    threadId.startsWith("lead-") ? { role: "lead", specId: threadId === "lead-second" ? "fix-1" : "fix-5" } : {});
+  await f.harness.behavior.callRpc("autopilot.set", { projectId: "one", status: "on" });
+  await f.startWatcher();
+  assert.equal((await f.board()).autopilot?.status, "paused");
+  await f.advance(119_999);
+  assert.equal(f.sends().length, 0);
+  await f.advance(1);
+  assert.equal(f.sends().length, 1);
+  const pauseLine = "Fixture | Autopilot paused | Project | Two lanes in a row stopped | /plugins/squadron/board";
+  assert.ok(f.sends()[0].input[0].text.split("\n").includes(pauseLine));
+  assert.equal(f.sends()[0].threadId, "helper");
+  assert.equal(f.sends()[0].mode, "queue-if-active");
+  assert.equal(f.harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+  await f.advance(120_000);
+  assert.equal(f.sends().length, 1, "an already reported pause doesn't wake again");
+  await assert.rejects(f.harness.behavior.callRpc("autopilot.resume", { projectId: "one" },
+    { experimental_caller: { kind: "plugin", pluginId: "other" } }), /Resume Autopilot from the Squadron board/);
+  assert.equal((await f.board()).autopilot?.status, "paused", "notification grants no permission to resume");
+});
+
+test("a failed merged-main check reaches the Helper once with its reason, log on the board, and owner-only Resume", async (t) => {
+  const f = await fixture(t);
+  f.lead("one", "Lead");
+  let merged = false;
+  f.harness.sdk.stub("plugins.callRpc", async () => ({ "env-one": { outcome: "available", pullRequest: {
+    number: 12, state: merged ? "merged" : "open", url: "https://github.example/fixture/pull/12",
+    updatedAt: new Date(epoch).toISOString(), checks: { state: "passing" },
+  } } }));
+  f.setMainCheck(async () => ({ passed: false, logPath: "/scratch/main-failure.log",
+    mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) }));
+  await f.harness.behavior.callRpc("autopilot.set", { projectId: "one", status: "on" });
+  await f.startWatcher();
+  merged = true;
+  await f.advance(30_000);
+  const board = await f.board();
+  assert.equal(board.autopilot?.status, "paused");
+  assert.equal(board.autopilot?.pauseReason, "Main fails its quick check");
+  assert.deepEqual(board.autopilot?.pauseLog, { hostId: "host", path: "/scratch/main-failure.log" });
+  await f.advance(120_000);
+  assert.equal(f.sends().length, 1);
+  assert.equal(f.sends()[0].input[0].text,
+    "Fixture | Autopilot paused | Project | Main fails its quick check | /plugins/squadron/board\nFixture | Landed | FIX-5 | The lane landed. | https://github.example/fixture/pull/12");
+  assert.equal(f.sends()[0].mode, "queue-if-active");
+  assert.equal(f.harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+  await assert.rejects(f.harness.behavior.callRpc("autopilot.resume", { projectId: "one" },
+    { experimental_caller: { kind: "plugin", pluginId: "other" } }), /Resume Autopilot from the Squadron board/);
+  await f.reload(); await f.startWatcher(); await f.advance(120_000);
+  assert.equal(f.sends().length, 0, "reload doesn't repeat the pause or landing");
+  assert.equal((await f.board()).autopilot?.status, "paused");
+  const resumed = await f.harness.behavior.callRpc("autopilot.resume", { projectId: "one" });
+  assert.deepEqual(resumed, { status: "on", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+});

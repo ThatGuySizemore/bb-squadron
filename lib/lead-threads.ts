@@ -5,7 +5,7 @@ import { isActiveProjectThread } from "./project-thread.js";
 
 type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 /** The thread list adds whether a thread waits on the owner and whether its queued work failed. */
-type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork" | "activity">>;
+type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork" | "updatedAt" | "activity">>;
 
 /** A child thread of a Lead: one of its workers, or its reviewer. */
 export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status" | "runtime"> & Attention;
@@ -13,6 +13,8 @@ export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status
 /** BB owns these records. Squadron reads them afresh rather than storing lanes. */
 export interface LeadThread {
   specId: string;
+  /** A returning Lead must establish its own PR or local branch landing. */
+  previousLeadId?: string;
   /** Epoch milliseconds of a normal terminal turn, never a generic row update. */
   idleSince?: number;
   thread: Pick<BbThread,
@@ -25,6 +27,20 @@ export interface LeadThread {
   outside?: true;
   /** Branches that may be the lane's integration branch, most likely first. The first readable one wins. */
   branchCandidates?: string[];
+}
+
+/** One current lane per spec. Older Leads remain in BB with their own environment,
+ * branch, workers and PR; list order must never make their evidence current again. */
+export function latestLeads(leads: LeadThread[]): LeadThread[] {
+  const current = new Map<string, LeadThread>();
+  for (const lead of leads) {
+    const previous = current.get(lead.specId);
+    if (!previous || lead.thread.createdAt > previous.thread.createdAt ||
+      (lead.thread.createdAt === previous.thread.createdAt && lead.thread.id.localeCompare(previous.thread.id) > 0)) {
+      current.set(lead.specId, lead);
+    }
+  }
+  return [...current.values()];
 }
 
 /** The route BB actually runs on a thread, including its unavailable-model fallback. */
@@ -52,7 +68,7 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       if (metadata.role !== "lead" || typeof metadata.specId !== "string" || !metadata.specId) continue;
       const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
       const idleSince = await readIdleSince(bb, thread);
-      leads.push({ ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
+      leads.push({ ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
         workers: await readWorkers(bb, projectId, thread.id),
         route: threadRoute(thread.providerId, execution) });
     }

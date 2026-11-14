@@ -4,7 +4,7 @@ import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { DEFAULT_HOLD_LABELS, isHoldLabel, resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
-import { isRunningThread, type LeadThread, type WorkerThread } from "./lead-threads.js";
+import { latestLeads, isRunningThread, type LeadThread, type WorkerThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
@@ -72,6 +72,26 @@ export function openSpecs(snapshot: TrackerSnapshot, planningIssueIds: ReadonlyS
     (readyMarked(issue) || planningIssueIds.has(issue.id) || open.some((ticket) => ticket.parentId === issue.id)));
 }
 
+function createdTime(issue: TrackerIssue): number {
+  const time = Date.parse(issue.createdAt ?? "");
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
+}
+
+/** Ready order is shared by the board and Autopilot. Snapshot order breaks remaining ties. */
+export function sortQueue(issues: readonly TrackerIssue[], snapshot: TrackerSnapshot): TrackerIssue[] {
+  const position = new Map(snapshot.issues.map((issue, index) => [issue.id, index]));
+  return [...issues].sort((a, b) => {
+    if (snapshot.kind === "linear") {
+      const order = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      const priority = (a.priority || 5) - (b.priority || 5);
+      const age = createdTime(a) - createdTime(b);
+      return order || priority || age || (position.get(a.id)! - position.get(b.id)!);
+    }
+    return ((a.trackerOrder ?? position.get(a.id)!) - (b.trackerOrder ?? position.get(b.id)!))
+      || createdTime(a) - createdTime(b);
+  });
+}
+
 export function deriveBoard(input: BoardInput): DerivedBoard {
   const { snapshot } = input;
   const usesLinear = snapshot.kind === "linear";
@@ -86,8 +106,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const project = snapshot.project;
-  const leads = new Map((input.leads ?? []).filter(({ thread }) =>
-    project && isActiveProjectThread(thread, thread.id, snapshot.bbProjectId)).map((lead) => [lead.specId, lead]));
+  const leads = new Map(latestLeads((input.leads ?? []).filter(({ thread }) =>
+    project && isActiveProjectThread(thread, thread.id, snapshot.bbProjectId))).map((lead) => [lead.specId, lead]));
   // A spec its Lead closed after the merge keeps its lane, so the lane lands and stays Landed.
   const closedSpecs = snapshot.issues.filter((issue) => issue.parentId === null && issue.state.type === "completed" &&
     issue.inProject && (readyMarked(issue) || leads.has(issue.id)));
@@ -114,7 +134,12 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // A fresh branch at main has no lane work. Ancestry alone cannot prove a landing.
     const mergedLaneWork = input.repository?.mergedBranches.includes(branch) &&
       (input.repository.mergedBranchUpdatedAt[branch] ?? 0) > lead.thread.createdAt;
-    const localLanded = noRemote && (mergedLaneWork || spec.state.type === "completed");
+    // A completed parent can return with remaining tickets. Its old completion
+    // belongs to the previous Lead, never to one started after that evidence.
+    const returningLead = lead.previousLeadId !== undefined || (input.leads ?? []).some((previous) =>
+      previous.specId === spec.id && previous.thread.id !== lead.thread.id && previous.thread.createdAt <= lead.thread.createdAt);
+    const specLanded = !returningLead && spec.state.type === "completed";
+    const localLanded = noRemote && (mergedLaneWork || specLanded);
     const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
     const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue));
     const laneById = new Map(laneSnapshot.issues.map((issue) => [issue.id, issue]));
@@ -147,8 +172,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
     const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt)
-      : spec.state.type === "completed" ? Date.parse(spec.updatedAt)
-      : localLanded ? (spec.state.type === "completed" ? Date.parse(spec.updatedAt) : input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt)) : undefined;
+      : specLanded ? Date.parse(spec.updatedAt)
+      : localLanded ? input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt) : undefined;
     const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
     const acceptOwner = labels(spec).includes(ACCEPT_OWNER);
     const outside = lead.outside === true;
@@ -166,6 +191,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
+      ...(landedAt !== undefined ? { outcomeAt: landedAt } : stopped ? {
+        outcomeAt: Math.max(...[lead.thread, ...workers].map((thread) => thread.updatedAt ?? thread.createdAt)),
+      } : {}),
       workingThreads: [lead.thread, ...workers].filter((thread) => isRunningThread(thread)).length,
       ...(outside ? { outside } : {}),
       ...(noRemote && !outside ? { localMerge } : {}),
@@ -196,7 +224,13 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     }));
   const ready: ReadySpec[] = [];
   const shaping: ShapingSpec[] = [];
-  for (const spec of specs.filter((spec) => !leads.has(spec.id))) {
+  // The landed lane stays visible until another Lead starts. Read remaining work
+  // from today's tracker, never from the landed integration branch.
+  const returning = new Set(lanes.filter((lane) => lane.state === "landed" && !lane.outside)
+    .map((lane) => lane.specId));
+  const queueSpecs = [...specs, ...closedSpecs.filter((spec) => returning.has(spec.identifier))];
+  for (const spec of queueSpecs.filter((spec) => !leads.has(spec.id) ||
+    (returning.has(spec.identifier) && ticketsOf(spec).some((ticket) => !held(ticket))))) {
     const tickets = ticketsOf(spec);
     const marked = readyMarked(spec);
     const heldTickets = tickets.filter(held);
@@ -205,6 +239,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // An open planning thread keeps a spec Shaping; Ready needs an open, unblocked ticket.
     if (planning.has(spec.id)) {
       shaping.push({ ...row, missing: "Planning is still open in its thread.", action: "resume", threadId: planning.get(spec.id)! });
+    } else if (held(spec)) {
+      shaping.push({ ...row, missing: "This spec is held. Clear its hold before Start.", action: "tickets" });
     } else if (!tickets.length) {
       shaping.push({ ...row, missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" });
     } else if (!marked) {
@@ -248,12 +284,15 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       id: spec.identifier, title: spec.title, url: spec.url, ticketCount: open.length,
       routes: settings ? uniqueRoutes(tickets.map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
+      ...(specBlockers.length ? { waitingFor: specBlockers } : {}),
       acceptOwner: labels(spec).includes(ACCEPT_OWNER),
       waiting: tickets.flatMap((ticket, i) => ticketBlockers[i].length
         ? [{ id: ticket.identifier, title: ticket.title, blockedBy: ticketBlockers[i].map((blocker) => blocker.id) }] : []),
       held: open.filter(held).map((ticket) => ({ id: ticket.identifier, title: ticket.title })),
     };
   }
+  const queueOrder = new Map(sortQueue(queueSpecs, snapshot).map((spec, index) => [spec.identifier, index]));
+  ready.sort((a, b) => queueOrder.get(a.id)! - queueOrder.get(b.id)!);
   // Anything open that isn't a spec or one of its tickets waits here,
   // so no issue in the project's scope drops off the board.
   const under = (issue: TrackerIssue): string | undefined => {

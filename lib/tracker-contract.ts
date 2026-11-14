@@ -6,6 +6,9 @@ export const trackerStateSchema = z.object({ id: z.string(), name: z.string(), t
 export const trackerAssigneeSchema = z.object({ id: z.string(), name: z.string() });
 export const trackerIssueSchema = z.object({
   id: z.string(), identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
+  /** Ordinal supplied by a non-Linear tracker; otherwise snapshot order is authoritative. */
+  trackerOrder: z.number().optional(),
+  sortOrder: z.number().optional(), priority: z.number().optional(), createdAt: z.string().optional(),
   updatedAt: z.string(), parentId: z.string().nullable(),
   state: trackerStateSchema, labels: z.array(trackerLabelSchema), assignees: z.array(trackerAssigneeSchema),
   /** Membership, including closed issues. External blocker endpoints are false. */

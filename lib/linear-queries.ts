@@ -7,7 +7,7 @@
 export const PAGE = { issues: 15, labels: 10, relations: 3, children: 25, followUp: 50, members: 50, vocabulary: 50, scope: 2 } as const;
 
 const pageInfo = "pageInfo { hasNextPage endCursor }";
-const reference = "id identifier title description url updatedAt team { id } project { id } parent { id } state { id name type } assignee { id name }";
+const reference = "id identifier title description url updatedAt sortOrder priority createdAt team { id } project { id } parent { id } state { id name type } assignee { id name }";
 /** `relations` lists this issue as `issue`; `inverseRelations` lists it as `relatedIssue`. Only the other end needs its fields. */
 const outgoing = `nodes { id type issue { id } relatedIssue { ${reference} } } ${pageInfo}`;
 const incoming = `nodes { id type issue { ${reference} } relatedIssue { id } } ${pageInfo}`;

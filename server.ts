@@ -1,5 +1,6 @@
 // BB Squadron backend. Feature registrations keep their server state here.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { registerAutopilot } from "./lib/autopilot.js";
 import { registerLinearAuth } from "./lib/linear-auth.js";
 import { registerLinearReader } from "./lib/linear-reader.js";
 import { registerDoctor } from "./lib/doctor-service.js";
@@ -16,6 +17,7 @@ import { registerHelperSummary } from "./lib/helper-summary.js";
 import { registerHelper } from "./lib/helper.js";
 
 export default async function plugin(bb: BbPluginApi) {
+  const autopilot = await registerAutopilot(bb);
   const linear = registerLinearAuth(bb);
   const mirror = registerLinearReader(bb, linear, {
     shouldPoll: (projectId) => board.isShown(projectId),
@@ -26,12 +28,14 @@ export default async function plugin(bb: BbPluginApi) {
   const helper = registerHelper(bb);
   const notifier = registerHelperNotifier(bb, helper);
   const summary = registerHelperSummary(bb, helper);
-  const board = registerBoard(bb, { connection: () => linear.getConnection(), observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); }, tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
+  const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
+  const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection: () => linear.getConnection(),
+    observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); },
+    tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   summary.register(board.read);
   registerPlanning(bb, { tracker, doctor: doctor.read });
-  const actions = registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
-  registerSquadronCli(bb, board, actions, helper);
+  registerSquadronCli(bb, board, lanes, helper, autopilot);
   bb.log.info("loaded");
 }

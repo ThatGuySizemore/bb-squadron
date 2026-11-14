@@ -244,7 +244,7 @@ Small, quiet, near-square; colour only when the owner is the one acting.
 
 ### Cards / Containers
 - **Tail card:** the lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed); 11px 12px 10px padding. Holds the pixel spec number, title, Lead chip, lane state with an 8px state square, time, PR link with checks dot, branch name in mono and the lane actions.
-- **Needs-you row:** ground fill, 1px amber border plus a 1px amber outline offset 2px, a three-layer amber dither (levels 3, 6, 3) at 18–20% pulsing on a 3.6s step cycle. Kind tag, pixel spec number, one line of text, one to three actions; a stopped row's Cancel sits 14px apart and the actions wrap. Rows stack 12px apart.
+- **Needs-you row:** ground fill, 1px amber border plus a 1px amber outline offset 2px, a three-layer amber dither (levels 3, 6, 3) at 18–20% pulsing on a 3.6s step cycle. Kind tag, pixel spec number (a ticket id or a write's issue in Mono instead), one line of text, one to three actions; a stopped row's Cancel sits 14px apart and the actions wrap. Rows stack 12px apart.
 
 ### Navigation
 The board is a single BB nav page; it adds no navigation of its own. Every peg, Lead chip and PR link opens where the thing lives (thread beside the board, Linear issue or GitHub PR).

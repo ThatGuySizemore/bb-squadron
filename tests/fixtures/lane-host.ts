@@ -15,7 +15,9 @@ const head = "b".repeat(40);
 
 export interface Push { title: string; body?: string; threadId?: string }
 
-export async function laneHost(t: import("node:test").TestContext, options: { pushFails?: boolean; leadSpawnFails?: boolean; leadEnvironmentGate?: Promise<void> } = {}) {
+export async function laneHost(t: import("node:test").TestContext, options: { pushFails?: boolean; leadSpawnFails?: boolean; leadEnvironmentGate?: Promise<void>;
+  /** Holds the first write's identity check after the Lead's worktree is ready: the start status enqueue, in flight. */
+  holdStartWrite?: Promise<void> } = {}) {
   const nodes = structuredClone(workspaceIssues.data.issues.nodes);
   const original = nodes.find((issue) => issue.id === "fix-6")!;
   for (const i of [7, 8]) nodes.push({ ...structuredClone(original), id: `fix-${i}`, identifier: `FIX-${i}`, title: `Ticket ${i}` });
@@ -24,8 +26,12 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
       { id: "state-started", name: "In Progress", type: "started" }, { id: "state-review", name: "In Review", type: "started" }], pageInfo: end },
       issueLabels: { nodes: [], pageInfo: end } } }) });
   const mutations: Array<{ query: string; variables: { id?: string; input: Record<string, string> } }> = [];
+  let armed = false;
+  let reached!: () => void;
+  const startWriteHeld = new Promise<void>((resolve) => { reached = resolve; });
   const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const body = JSON.parse(String(init?.body));
+    if (armed && body.query.includes("SquadronIdentity")) { armed = false; reached(); await options.holdStartWrite; }
     if (!body.query.trimStart().startsWith("mutation")) return linear.fetch(url, init);
     mutations.push(body);
     return Response.json({ data: body.query.includes("issueUpdate") ? { issueUpdate: { success: true, issue: { id: body.variables.id } } }
@@ -79,7 +85,7 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
         get: async ({ threadId }) => threads.get(threadId) ?? makeThreadResponse({ id: threadId, projectId: "proj-one" }),
       },
       environments: { get: async ({ environmentId }) => {
-        if (environmentId === "env-thr_lead") await options.leadEnvironmentGate;
+        if (environmentId === "env-thr_lead") { await options.leadEnvironmentGate; if (options.holdStartWrite && !mutations.length) armed = true; }
         return { id: environmentId, projectId: "proj-one", hostId: "repo-host", status: "ready" as const,
         branchName: environmentId === "env-thr_lead" ? "bb/integration" : `bb/${environmentId}`, path: "/worktree",
         baseBranch: environmentId === "env-thr_lead" ? "main" : "bb/integration", defaultBranch: "main", mergeBaseBranch: "main", name: null, createdAt: 0, updatedAt: 0,
@@ -99,5 +105,5 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
     await harness.inspection.registrations.hooks["message.dispatch"]!(makeMessageDispatchHookContext({ thread: { id: threadId }, project: { id: "proj-one" },
       initiator: from.initiator, senderThreadId: from.senderThreadId ?? null, ...(from.originPluginId ? { originPluginId: from.originPluginId } : {}) }));
   const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 2)); };
-  return { bb: bb as BbPluginApi, harness, call, board, rpc, dispatch, settle, mutations, threads, queued, sends, pushes, levels };
+  return { startWriteHeld, bb: bb as BbPluginApi, harness, call, board, rpc, dispatch, settle, mutations, threads, queued, sends, pushes, levels };
 }

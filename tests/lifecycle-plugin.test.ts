@@ -170,3 +170,72 @@ test("the owner's Stop during a slow start pass is not overwritten when provisio
   assert.equal(board.lanes[0].stopReason, "You stopped this lane. Its threads, worktrees and branch are kept. Resume, re-plan or cancel it.");
   assert.equal(board.lanes[0].branch, "bb/integration", "the start pass still records the branch it observed");
 });
+
+test("an owner's Send-now answer, which skips the dispatch hook, still clears the question; agent, system and Squadron rows never do", async (t) => {
+  const host = await laneHost(t);
+  const { makeQueueEntry } = await import("@get-bb/plugin-sdk/testing");
+  await host.rpc("lanes.start");
+  const worker = await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  await host.call("squadron_report", { type: "question", text: "Which wording?" }, { threadId: worker.threadId, projectId: "proj-one" });
+  const state = async () => (await host.board()).lanes[0].tickets.find((item) => item.id === "FIX-6")?.state;
+  // BB's Send-now dispatches a queued row without the message.dispatch pass; only the row's dispatch is observable.
+  const sent = async (row: Parameters<typeof makeQueueEntry>[0]) => {
+    const { errors } = await host.harness.behavior.emitThreadEvent("message.dispatched", { entry: makeQueueEntry({ threadId: worker.threadId, ...row }) });
+    assert.deepEqual(errors, []);
+    await host.settle();
+  };
+  await sent({ initiator: "agent", senderThreadId: "thr_lead", originPluginId: null });
+  await sent({ initiator: "agent", senderThreadId: worker.threadId, originPluginId: null });
+  await sent({ initiator: "system", senderThreadId: null, originPluginId: null });
+  await sent({ initiator: "user", senderThreadId: null, originPluginId: "squadron", origin: "plugin" });
+  await sent({ initiator: "user", senderThreadId: null, originPluginId: null, threadId: "thr_other" });
+  assert.equal(await state(), "question");
+  await sent({ initiator: "user", senderThreadId: null, originPluginId: null, origin: "app" });
+  assert.equal(await state(), "working");
+  assert.deepEqual(needsYou(await host.board()).filter((item) => item.kind === "question"), []);
+});
+
+async function delivered(host: Awaited<ReturnType<typeof laneHost>>, t: import("node:test").TestContext) {
+  const delivery = host.harness.behavior.runService("linear-outbox"); t.after(() => delivery.controller.abort());
+  for (let i = 0; i < 40; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  const fix5 = host.mutations.filter((item) => item.variables.id === "fix-5" || item.variables.input.issueId === "fix-5");
+  return { statuses: fix5.filter((item) => item.query.includes("issueUpdate")).map((item) => item.variables.input.stateId),
+    comments: fix5.filter((item) => item.query.includes("commentCreate")).map((item) => item.variables.input.body) };
+}
+
+test("Cancel during provisioning: the old start pass never moves the canceled spec to In Progress, and its branch is kept", async (t) => {
+  // The first review's reproduction (review-size-883-dcb7b3a.md), kept as a permanent regression.
+  let open!: () => void;
+  const host = await laneHost(t, { leadEnvironmentGate: new Promise<void>((resolve) => { open = resolve; }) });
+  const starting = host.rpc("lanes.start");
+  for (let i = 0; i < 100 && !host.harness.inspection.sdk.callsTo("environments.get").length; i++) await new Promise((resolve) => setTimeout(resolve, 2));
+  await host.rpc("lanes.cancel");
+  open();
+  await starting;
+  const { statuses, comments } = await delivered(host, t);
+  assert.notEqual(statuses.at(-1), "state-started", "the canceled spec must not finish in In Progress");
+  assert.deepEqual(statuses, [], "the lane never moved the spec, so Cancel leaves its status alone");
+  assert.ok(!comments.some((body) => /Started lane/.test(body)), "no late start comment");
+  assert.ok(comments.some((body) => /Lane canceled by the owner/.test(body)));
+  const board = await host.board();
+  assert.deepEqual(board.lanes, []);
+  assert.equal(board.ready.find((spec) => spec.id === "FIX-5")?.keptBranch, "bb/integration", "the branch the start pass observed is kept");
+});
+
+test("Cancel while the start status write is already in flight waits for it, then queues the spec back to Ready", async (t) => {
+  let release!: () => void;
+  const host = await laneHost(t, { holdStartWrite: new Promise<void>((resolve) => { release = resolve; }) });
+  const starting = host.rpc("lanes.start");
+  await host.startWriteHeld;
+  let canceled = false;
+  const canceling = host.rpc("lanes.cancel").then(() => { canceled = true; });
+  await host.settle();
+  assert.equal(canceled, false, "Cancel waits for the in-flight start write before deciding its own writes");
+  assert.deepEqual((await host.board()).lanes, [], "the lane already reads canceled");
+  release();
+  await Promise.all([starting, canceling]);
+  const { statuses, comments } = await delivered(host, t);
+  assert.deepEqual(statuses, ["state-started", "state-ready"], "the in-flight In Progress is followed by the move back");
+  assert.ok(!comments.some((body) => /Started lane/.test(body)), "no start comment is queued after Cancel");
+  assert.match(comments.join("\n"), /Lane canceled by the owner\. Integration branch kept: bb\/integration\./);
+});

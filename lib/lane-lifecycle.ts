@@ -121,7 +121,10 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
       if (current.state === "landed" || current.state === "canceled") throw new Error("This lane is no longer flying. Refresh the board.");
       const canceled = saveLifecycle(current, { state: "canceled", canceledAt: now() }, ["stopReason", "writeError"]);
       await stopThreads(canceled);
-      await queueCancelWrites(canceled);
+      // A start status already being queued finishes first; no new start write
+      // begins once the lane reads canceled. Then the move back follows it.
+      await lanes.settleStartWrites(canceled.id);
+      await queueCancelWrites(latest(projectId, laneId));
       return latest(projectId, laneId);
     });
   }

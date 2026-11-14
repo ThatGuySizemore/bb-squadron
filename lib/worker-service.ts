@@ -220,6 +220,17 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       saveWorkers(run);
     }).catch((error) => { bb.log.warn(`Lane ${bound.lane.id} worker ${bound.worker?.id} answer: ${diagnostic(error)}`); });
   }
+  // BB's Send-now dispatches a queued row without the message.dispatch pass.
+  // The row's dispatch event carries its author, so the same owner-only rule
+  // applies; BB supplies the thread's project.
+  bb.events.on("message.dispatched", async ({ entry }) => {
+    if (entry.initiator !== "user" || entry.senderThreadId !== null || entry.originPluginId) return;
+    try {
+      const thread = await bb.sdk.threads.get({ threadId: entry.threadId, signal: lifetime.signal });
+      if (!thread.projectId || !isActiveProjectThread(thread, entry.threadId, thread.projectId)) return;
+      ownerMessage(thread.projectId, entry.threadId, entry);
+    } catch (error) { if (!lifetime.signal.aborted) bb.log.warn(`Owner answer: ${diagnostic(error)}`); }
+  });
   async function report(input: z.infer<typeof reportSchema>, context: PluginAgentToolContext) {
     if (input.type === "question") return ask(input.text, context);
     const bound = await authorize(context);

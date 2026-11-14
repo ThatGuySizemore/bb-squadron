@@ -433,10 +433,11 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry, controlling = null, pl
         <li key={item.key} className="sq-need" data-kind={item.kind}>
           <Dither levels={[3, 6, 3]} />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
-          {item.issueId ? (
-            <span className="sq-need-issue sq-num">{item.issueId}</span>
-          ) : item.ticketId ?? item.specId ? (
-            <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" />
+          {item.issueId ?? item.ticketId ? (
+            // Ticket ids and write issues use mono; pixel type is for spec numbers only.
+            <span className="sq-need-issue sq-num">{item.issueId ?? item.ticketId}</span>
+          ) : item.specId ? (
+            <PixelText text={item.specId} cell={2} className="sq-need-id" />
           ) : (
             <span />
           )}

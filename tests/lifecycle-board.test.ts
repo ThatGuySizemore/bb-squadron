@@ -67,3 +67,18 @@ test("Re-plan shows its pending planning thread and waits while one opens", asyn
   assert.match(needs, /<button[^>]*disabled=""[^>]*>Opening…<\/button>/);
   assert.match(needs, /role="status">Starting its planning thread/);
 });
+
+test("Needs-you rows set a ticket id in mono, keeping pixel type for spec numbers", async () => {
+  const html = await render({ tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, unplanned: [], ready: [], lanes: [
+    { specId: "FIX-9", title: "Flying spec", lead: route, leadThreadId: "thr_lead_9", branch: "bb/nine", state: "flying", minutes: 3, acceptOwner: false,
+      tickets: [{ id: "FIX-10", title: "Asks", blockedBy: [], route, state: "question", question: "Which wording?", questionId: "q", minutes: 1, threadId: "thr_worker" },
+        { id: "FIX-11", title: "Refused", blockedBy: [], route, state: "working", writeError: "Couldn't queue FIX-11's status.", minutes: 1, threadId: "thr_worker_11" }] },
+    { specId: "FIX-5", title: "Stopped spec", lead: route, leadThreadId: "thr_lead", branch: "bb/integration", state: "stopped", minutes: 3,
+      acceptOwner: false, stopReason: "You stopped this lane.", tickets: [] }] });
+  const needs = html.slice(html.indexOf('class="sq-needs"'), html.indexOf('id="sq-flying-h"'));
+  for (const id of ["FIX-10", "FIX-11"]) {
+    assert.match(needs, new RegExp(`<span class="sq-need-issue sq-num">${id}</span>`), `${id} is a ticket id in mono`);
+    assert.doesNotMatch(needs, new RegExp(`class="sq-need-id"><svg[^]*?<span class="sq-sr">${id}</span>`), `${id} never uses pixel type`);
+  }
+  assert.match(needs, /class="sq-need-id"><svg[^]*?<span class="sq-sr">FIX-5<\/span>/, "the stopped lane keeps its pixel spec number");
+});

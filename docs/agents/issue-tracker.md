@@ -1,12 +1,12 @@
 # Issue tracker: Linear
 
-Issues and specs for this repo live in Linear: team **Sizemore**, project **BB Squadron**. Agents write with the Linear MCP tools as their own verified identity (Claude as Claude Local, Codex as Codex Local).
+Issues and specs for this repo live in Linear: team **Squadron** (`SQD`), project **BB Squadron**. Agents write with the Linear MCP tools as their own verified identity (Claude as Claude Local, Codex as Codex Local).
 
 ## Conventions
 
 - **Spec**: one issue holding the `to-spec` template. Its tickets are its sub-issues.
-- **Create an issue**: `save_issue` with `team: "Sizemore"`, `project: "BB Squadron"`, `title` and `description`.
-- **Read an issue**: `get_issue` with its identifier, such as `SIZE-123`, and `includeRelations: true` for blockers. Comments come from `list_comments`.
+- **Create an issue**: `save_issue` with `team: "Squadron"`, `project: "BB Squadron"`, `title` and `description`.
+- **Read an issue**: `get_issue` with its identifier, such as `SQD-123` (tickets from before 14 Nov 2026 also answer to their old `SIZE-…` IDs), and `includeRelations: true` for blockers. Comments come from `list_comments`.
 - **List issues**: `list_issues` with `team` and `project`, plus `state`, `label`, `parentId` or `query`. While `hasNextPage` is true, pass the returned `cursor`.
 - **Make an issue a sub-issue of a parent**: `save_issue` with `parentId`.
 - **Blocking**: Linear's native relations, through `blockedBy` or `blocks` on `save_issue`. A ticket with an open blocker waits.
@@ -18,7 +18,7 @@ Issues and specs for this repo live in Linear: team **Sizemore**, project **BB S
 
 ## When a skill says "publish to the issue tracker"
 
-Create a Linear issue in team Sizemore, project BB Squadron.
+Create a Linear issue in team Squadron, project BB Squadron.
 
 ## When a skill says "fetch the relevant ticket"
 

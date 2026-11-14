@@ -10,6 +10,7 @@ import { readLeadThreads } from "./lib/lead-threads.js";
 import { readPullRequests } from "./lib/pull-requests.js";
 import { registerTracker } from "./lib/tracker-service.js";
 import { createOutsideLaneReader } from "./lib/outside-lanes.js";
+import { registerSquadronCli } from "./lib/squadron-cli.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
@@ -25,6 +26,7 @@ export default async function plugin(bb: BbPluginApi) {
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   shown = board.isShown;
+  registerSquadronCli(bb, board);
   registerPlanning(bb, { tracker, doctor: doctor.read });
   registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
   bb.log.info("loaded");

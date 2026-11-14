@@ -198,5 +198,11 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     },
   });
 
-  return { refresh, isShown };
+  /** A one-shot CLI read doesn't make the project visible or start background polling. */
+  async function read(projectId: string): Promise<Board> {
+    await sources.tracker.refresh?.(projectId);
+    return compute(projectId, true);
+  }
+
+  return { refresh, isShown, read };
 }

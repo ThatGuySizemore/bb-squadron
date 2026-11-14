@@ -13,6 +13,7 @@ import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import type { TrackerReader } from "./tracker-contract.js";
+import { readLaneProgress } from "./lane-progress.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
@@ -72,12 +73,14 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
     const leads = await sources.leads?.(projectId);
+    const progress = await readLaneProgress(bb, snapshot, leads ?? [], lifetime.signal);
     const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
     const { board } = deriveBoard({
       snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
       leads,
+      ...progress,
       pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
     return board;

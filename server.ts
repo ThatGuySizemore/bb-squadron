@@ -19,6 +19,6 @@ export default async function plugin(bb: BbPluginApi) {
   registerBoard(bb, { connection: () => linear.getConnection(), tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal) });
   registerPlanning(bb, { mirror });
-  registerLaneStart(bb, { mirror, doctor: doctor.read });
+  registerLaneStart(bb, { tracker, doctor: doctor.read });
   bb.log.info("loaded");
 }

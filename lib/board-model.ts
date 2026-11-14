@@ -13,6 +13,8 @@ const lane = z.object({
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   /** No lane thread is running, independent of the PR's In review state. Derived only. */
   stopped: z.boolean().optional(),
+  /** A no-remote lane whose tickets are ready for the Lead's local merge. */
+  localMerge: z.boolean().optional(),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
   pr: z.object({
     number: z.number(), checks: z.enum(["pending", "passing", "failing", "none", "unknown"]), url: z.string(),
@@ -73,6 +75,7 @@ export interface NeedsYouItem {
   ticketId?: string;
   text: string;
   threadId: string | null;
+  localMerge?: boolean;
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
@@ -92,8 +95,10 @@ export function needsYou(board: Board): NeedsYouItem[] {
         key: `merge:${lane.specId}`,
         kind: "merge",
         specId: lane.specId,
-        text: `PR #${lane.pr?.number} passed its checks. accept:owner holds it for your merge.`,
+        text: lane.localMerge ? "The tickets are in the integration branch. accept:owner holds the local merge for you."
+          : `PR #${lane.pr?.number} passed its checks. accept:owner holds it for your merge.`,
         threadId: lane.leadThreadId,
+        ...(lane.localMerge ? { localMerge: true } : {}),
       });
     }
     for (const need of lane.needs ?? []) {
@@ -172,7 +177,8 @@ export function nextLandings(previous: Landings | null, lanes: readonly Lane[], 
 }
 
 /** Merge shows, and the server merges, only for an open PR whose checks pass. The demo's PRs carry no state. */
-export function canMerge(lane: { pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+export function canMerge(lane: { localMerge?: boolean; pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+  if (lane.localMerge) return true;
   return (lane.pr?.state ?? "open") === "open" && lane.pr?.checks === "passing";
 }
 

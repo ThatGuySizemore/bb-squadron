@@ -1,0 +1,924 @@
+<!doctype html>
+<!--
+  PROTOTYPE · throwaway · branch prototype/bolder-board · never merge.
+  Question: how bold can the Squadron board get in its own dithered-pixel world
+  while staying readable and useful?
+  Two structural variants of the board, switchable via ?variant=A|B and the
+  floating bar at the bottom (or the ← → keys):
+    A  Tall sky: a tall banner of open sky, the formation flying a V across it,
+       SQUADRON in a clear corner of sky.
+    B  Runway: a shorter banner; the planes stand in a row of stands on a
+       runway, take off from it, and SQUADRON is stencilled on the tarmac.
+  Everything else on the board is shared and follows the owner's decisions of
+  14 Nov 2026. All data is synthetic. Self-contained: no network, no build.
+  The dither engine and pixel font are ports of lib/dither.ts and lib/pixels.ts.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PROTOTYPE · Squadron · bolder board</title>
+<style>
+:root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+.theme-dark  { --background:#131415; --foreground:#e9e7e3; --muted-foreground:#9c9993; --border:#2c2d30; color-scheme:dark; }
+.theme-light { --background:#fbfaf8; --foreground:#1c1c1a; --muted-foreground:#66645e; --border:#e1dfda; color-scheme:light; }
+* { box-sizing:border-box; }
+html, body { margin:0; }
+body { background:var(--background); color:var(--foreground); font-size:13px; line-height:1.45; -webkit-font-smoothing:antialiased; }
+canvas { display:block; image-rendering:pixelated; }
+
+/* ---------- comp chrome (not the board) ---------- */
+.cb { position:sticky; top:0; z-index:30; display:flex; flex-wrap:wrap; align-items:center; gap:8px 16px; padding:9px 18px;
+  background:color-mix(in oklab, var(--foreground) 7%, var(--background)); border-bottom:1px dashed color-mix(in oklab, var(--foreground) 30%, transparent); font-size:12px; }
+.cb-title { margin-right:auto; display:flex; gap:8px; align-items:baseline; }
+.cb-title strong { font-weight:650; }
+.cb-title span { color:var(--muted-foreground); }
+.cb-group { display:flex; align-items:center; gap:6px; }
+.cb-group > span { color:var(--muted-foreground); font-weight:600; }
+.seg { display:inline-flex; border:1px solid var(--border); border-radius:2px; background:var(--background); }
+.seg button { border:0; background:transparent; height:26px; padding:0 9px; cursor:pointer; font:inherit; font-weight:600; color:var(--muted-foreground); }
+.seg button + button { border-left:1px solid var(--border); }
+.seg button[aria-pressed="true"] { background:var(--foreground); color:var(--background); }
+.seg button:not([aria-pressed="true"]):not(:disabled):hover { color:var(--foreground); }
+.seg button:disabled { opacity:.4; cursor:not-allowed; }
+.cb-state { flex-basis:100%; margin:0; color:var(--muted-foreground); font-variant-numeric:tabular-nums; }
+.cb-state b { color:var(--foreground); font-weight:600; }
+.cb :focus-visible, .vbar :focus-visible { outline:2px solid #6bb8de; outline-offset:2px; }
+
+.stage { display:flex; align-items:stretch; min-height:calc(100vh - 80px); padding-bottom:70px; }
+.frame-wide { flex:1; min-width:0; }
+.frame-panel { flex:0 0 560px; width:560px; border-left:1px solid var(--border); border-right:1px solid var(--border); }
+.stage[data-layout="panel"] { justify-content:center; }
+.ptabs { display:flex; align-items:center; gap:2px; height:36px; padding:0 10px; border-bottom:1px solid var(--border); font-size:12px; color:var(--muted-foreground); }
+.ptabs .tab { padding:0 9px; height:100%; display:inline-flex; align-items:center; font-weight:600; }
+.ptabs .tab[aria-current] { color:var(--foreground); box-shadow:inset 0 -2px var(--foreground); }
+.ptabs .who { margin-left:auto; font-size:11.5px; }
+
+.vbar { position:fixed; left:50%; bottom:16px; transform:translateX(-50%); z-index:40; display:flex; align-items:center; gap:4px;
+  padding:5px; border-radius:999px; background:#111; color:#fff; box-shadow:0 6px 24px rgba(0,0,0,.35), 0 0 0 1px rgba(255,255,255,.12); font-size:12.5px; }
+.vbar button { width:30px; height:30px; border-radius:999px; border:0; background:transparent; color:#fff; cursor:pointer; font-size:15px; }
+.vbar button:hover { background:rgba(255,255,255,.12); }
+.vbar span { padding:0 10px; font-weight:600; min-width:150px; text-align:center; }
+.vbar span i { font-style:normal; color:#aaa; font-weight:500; }
+
+/* ---------- the board ---------- */
+.sq {
+  --sq-amber:#f2a900; --sq-sky:#3fa7d6; --sq-red:#d7263d; --sq-green:#2fa36b; --sq-on-amber:#1d1600;
+  --sq-amber-ink:color-mix(in oklab, var(--sq-amber) 46%, var(--foreground));
+  --sq-sky-ink:color-mix(in oklab, var(--sq-sky) 50%, var(--foreground));
+  --sq-red-ink:color-mix(in oklab, var(--sq-red) 62%, var(--foreground));
+  --sq-green-ink:color-mix(in oklab, var(--sq-green) 52%, var(--foreground));
+  --sq-rule-ink:color-mix(in oklab, var(--foreground) 30%, transparent);
+  --sq-pixel-rule:repeating-linear-gradient(90deg, var(--sq-rule-ink) 0 2px, transparent 2px 4px);
+  --sq-dot-rule:repeating-linear-gradient(90deg, var(--sq-rule-ink) 0 2px, transparent 2px 8px);
+  --sq-band:color-mix(in oklab, var(--foreground) 4.5%, var(--background));
+  --sq-tarmac:color-mix(in oklab, var(--foreground) 8%, var(--background));
+  --sq-hover:color-mix(in oklab, var(--foreground) 6%, var(--background));
+  --sq-muted:var(--muted-foreground);
+  --sq-mono:ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --pad:28px;
+  container-type:inline-size; color:var(--foreground); background:var(--background); font-size:13px; line-height:1.45;
+}
+.sq[data-layout="narrow"] { --pad:14px; }
+.sq ::selection { background:color-mix(in oklab, var(--sq-amber) 38%, transparent); color:inherit; }
+.sq button { font:inherit; color:inherit; }
+.sq :focus-visible { outline:2px solid var(--sq-sky-ink); outline-offset:2px; }
+.sq-sr { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.sq-num { font-variant-numeric:tabular-nums; }
+.px { display:block; }
+.px rect { fill:currentColor; }
+.sq-page { max-width:1480px; margin:0 auto; padding:0 var(--pad) 40px; }
+
+/* banner */
+.sq-banner { position:relative; overflow:hidden; background:var(--sq-pixel-rule) bottom / 100% 2px no-repeat; }
+.sq-banner > canvas { position:absolute; inset:0; width:100%; height:100%; }
+.sq-banner-title { position:absolute; color:var(--foreground); }
+.sq-banner-sub { position:absolute; font-size:12px; font-weight:600; color:var(--sq-muted); white-space:nowrap; }
+.sq-banner-sub b { color:var(--sq-sky-ink); font-weight:650; }
+.sq-hit { position:absolute; border:0; padding:0; background:transparent; cursor:pointer; }
+.sq-hit:hover { background:color-mix(in oklab, var(--foreground) 5%, transparent); }
+
+/* row under the banner */
+.sq-bar { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; padding-top:14px; }
+.sq-picker { display:inline-flex; align-items:center; gap:10px; height:32px; padding:0 10px 0 11px; border:1px solid var(--border); border-radius:2px; background:var(--background); cursor:pointer; }
+.sq-picker:hover { background:var(--sq-hover); }
+.sq-picker-name { font-size:14px; font-weight:620; }
+.sq-picker-meta { font-size:11.5px; color:var(--sq-muted); }
+.sq-picker svg { fill:var(--sq-muted); }
+.sq-actions-top { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-left:auto; }
+.sq-btn { height:28px; padding:0 11px; border-radius:2px; cursor:pointer; border:1px solid var(--border); background:var(--background); font-size:12px; font-weight:600; white-space:nowrap; transition:background-color 130ms ease-out; }
+.sq-btn:hover { background:var(--sq-hover); }
+.sq-btn[data-tone="primary"] { background:var(--foreground); color:var(--background); border-color:var(--foreground); }
+.sq-btn[data-tone="primary"]:hover { background:color-mix(in oklab, var(--foreground) 86%, var(--background)); }
+.sq-btn[data-tone="amber"] { background:var(--sq-amber); color:var(--sq-on-amber); border-color:var(--sq-amber); }
+.sq-btn[data-tone="amber"]:hover { background:color-mix(in oklab, var(--sq-amber) 88%, var(--foreground)); }
+.sq-btn[data-tone="danger"] { background:transparent; color:var(--sq-red-ink); border-color:color-mix(in oklab, var(--sq-red) 45%, var(--border)); }
+.sq-doctor { display:inline-flex; align-items:center; gap:7px; }
+.sq-doctor i { width:8px; height:8px; background:var(--sq-green); }
+.sq-doctor em { font-style:normal; color:var(--sq-muted); font-weight:500; }
+.sq-tag { display:inline-flex; align-items:center; padding:1px 6px; border:1px solid var(--border); border-radius:2px; font-size:11px; font-weight:600; }
+.sq-tag[data-tone="amber"] { background:var(--sq-amber); color:var(--sq-on-amber); border-color:var(--sq-amber); }
+.sq-tracker { margin-top:8px; font-size:12px; color:var(--sq-muted); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.sq-tracker b { color:var(--foreground); font-weight:600; }
+
+/* path strip */
+.sq-path { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); margin-top:18px; }
+.sq-station { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:10px 12px 12px 0; border:0; background:none; text-align:left; cursor:pointer; }
+.sq-station::before { content:""; position:absolute; left:0; right:0; bottom:0; height:2px; background:var(--sq-pixel-rule); }
+.sq-station[data-hot="true"]::before { background:repeating-linear-gradient(90deg, var(--sq-sky) 0 2px, transparent 2px 4px); }
+.sq-station-label { font-size:11px; font-weight:650; letter-spacing:.08em; text-transform:uppercase; color:var(--sq-muted); }
+.sq-station:hover .sq-station-label { color:var(--foreground); }
+.sq-station-count { display:flex; gap:3px; color:var(--foreground); }
+.sq-station[data-zero="true"] .sq-station-count { color:var(--sq-muted); }
+.sq-station[data-hot="true"] .sq-station-count { color:var(--sq-sky-ink); }
+.sq-station[data-st="landed"]:not([data-zero="true"]) .sq-station-count { color:var(--sq-green-ink); }
+.sq-station-chev { position:absolute; right:10px; bottom:7px; fill:var(--sq-rule-ink); }
+.sq-digit { display:block; overflow:hidden; }
+.sq-digit.flip .px { animation:sq-flip 460ms cubic-bezier(0.16,1,0.3,1) both; }
+@keyframes sq-flip { from { transform:translateY(-105%); } to { transform:none; } }
+.sq-short { display:none; }
+
+/* sections: a pixel-dotted rule between each */
+.sq-section { margin-top:26px; padding-top:22px; background:var(--sq-dot-rule) top / 100% 2px no-repeat; scroll-margin-top:60px; }
+.sq-label { display:flex; align-items:center; gap:10px; margin:0 0 14px; }
+.sq-label h2 { margin:0; line-height:0; }
+.sq-count { font-size:12px; font-weight:600; color:var(--sq-muted); }
+.sq-count-amber { padding:0 6px; font-size:11px; font-weight:650; line-height:18px; color:var(--sq-on-amber); background:var(--sq-amber); }
+.sq-clear { margin:0; max-width:70ch; color:var(--sq-muted); }
+.sq-empty { display:flex; flex-wrap:wrap; align-items:center; gap:10px 14px; }
+
+/* needs you: heavier amber edge */
+.sq-needs { display:grid; gap:14px; margin:0 3px; padding:0; list-style:none; }
+.sq-need { position:relative; isolation:isolate; display:grid; grid-template-columns:auto auto minmax(0,1fr) auto; align-items:center; gap:12px;
+  padding:16px 22px; border:2px solid var(--sq-amber); outline:1px solid var(--sq-amber); outline-offset:2px; background:var(--background); }
+.sq-need > canvas { position:absolute; inset:0; width:100%; height:100%; z-index:0; }
+.sq-need > :not(canvas) { position:relative; z-index:1; }
+.sq-need.ping { animation:sq-ping 900ms cubic-bezier(0.16,1,0.3,1); }
+@keyframes sq-ping { 0% { outline-offset:9px; } 100% { outline-offset:2px; } }
+.sq-need-kind { display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--sq-amber-ink); }
+.sq-need-kind::before { content:""; width:6px; height:6px; background:var(--sq-amber); }
+.sq-need-id { color:var(--sq-amber-ink); }
+.sq-need-text { min-width:0; }
+.sq-need-actions { display:flex; gap:6px; flex-wrap:wrap; }
+
+/* flying lanes */
+.sq-lanes { display:grid; gap:14px; }
+.sq-lane { display:grid; grid-template-columns:minmax(320px, 440px) minmax(0,1fr); gap:20px; align-items:start; transition:grid-template-rows 420ms cubic-bezier(0.16,1,0.3,1); }
+.sq[data-layout="narrow"] .sq-lane { grid-template-columns:minmax(0,1fr); gap:6px; }
+.sq-lane.leaving { animation:sq-fold 420ms cubic-bezier(0.16,1,0.3,1) 1180ms both; }
+@keyframes sq-fold { to { opacity:0; transform:translateY(-4px); } }
+.sq-lane-row { position:relative; display:grid; gap:6px; padding:9px 10px 26px; background:var(--sq-band); border-top:2px solid var(--border); }
+.sq-lane[data-lane="stopped"] .sq-lane-row { border-top-color:var(--sq-red); }
+.sq-lane[data-need="true"] .sq-lane-row { border-top-color:var(--sq-amber); }
+.sq-lane-top { display:flex; align-items:flex-start; gap:9px; }
+.sq-lane-top .px { margin-top:2px; flex:none; }
+.sq-lane-title { flex:1; min-width:0; margin:0; font-size:13.5px; font-weight:620; line-height:1.3; text-wrap:balance; }
+.sq-time { flex:none; font-size:11.5px; color:var(--sq-muted); line-height:18px; }
+.sq-lane-foot { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; font-size:11.5px; }
+.sq-lead { color:var(--sq-muted); font-weight:600; flex:1 1 160px; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sq-lead span { font-weight:400; }
+.sq-progress-n { color:var(--sq-muted); }
+.sq-progress-n b { color:var(--foreground); font-weight:650; }
+.sq-pace i { display:inline-block; width:7px; height:7px; background:var(--sq-sky); margin-right:5px; }
+.sq-pace { color:var(--sq-sky-ink); font-weight:600; }
+.sq-lane-state { font-size:11px; font-weight:650; display:inline-flex; gap:6px; align-items:center; }
+.sq-lane-state::before { content:""; width:8px; height:8px; background:currentColor; }
+.sq-lane-state[data-s="stopped"] { color:var(--sq-red-ink); }
+.sq-lane-state[data-s="need"] { color:var(--sq-amber-ink); }
+.sq-contrail { position:absolute; left:0; right:0; bottom:2px; height:16px; pointer-events:none; }
+.sq-contrail canvas { width:100%; height:100%; }
+.sq-tickets { display:grid; }
+.sq-ticket { display:grid; grid-template-columns:auto minmax(0,1fr) auto; gap:2px 10px; align-items:baseline; padding:6px 10px; border-bottom:1px solid var(--border); font-size:12.5px; }
+.sq-ticket .id { font-family:var(--sq-mono); font-size:11px; font-weight:650; }
+.sq-ticket .t { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.sq-ticket .st { font-size:11px; font-weight:650; }
+.sq-ticket[data-s="working"] .st { color:var(--sq-sky-ink); }
+.sq-ticket[data-s="need"] .st { color:var(--sq-amber-ink); }
+.sq-ticket[data-s="stopped"] .st { color:var(--sq-red-ink); }
+.sq-ticket .step { grid-column:2 / 4; font-size:11px; color:var(--sq-muted); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+
+/* list rows */
+.sq-rows { list-style:none; margin:0; padding:0; }
+.sq-row { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:14px; padding:11px 0; border-bottom:1px solid var(--border); }
+.sq-row-title { font-size:13.5px; font-weight:600; }
+.sq-row-meta { font-size:12px; color:var(--sq-muted); display:flex; flex-wrap:wrap; gap:4px 12px; }
+.sq-row-meta .can { color:var(--sq-sky-ink); }
+.sq-row-meta .miss { color:var(--sq-amber-ink); font-weight:600; }
+.sq-plate { display:inline-flex; padding:6px 8px; background:var(--sq-band); color:var(--foreground); }
+.sq-mono { font-family:var(--sq-mono); font-size:11px; font-weight:650; color:var(--sq-muted); min-width:72px; }
+.sq-open .sq-row-title, .sq-landed .sq-row-title { font-weight:400; font-size:13px; }
+.sq-open .sq-row, .sq-landed .sq-row { padding:9px 0; }
+.sq-stamp { position:relative; isolation:isolate; display:inline-flex; padding:11px 13px; color:var(--sq-green-ink); border:2px solid var(--sq-green); outline:1px solid var(--sq-green); outline-offset:2px; margin:3px; }
+.sq-stamp > canvas { position:absolute; inset:0; width:100%; height:100%; z-index:-1; }
+.sq-landed .fresh .sq-stamp { animation:sq-stamp 520ms cubic-bezier(0.16,1,0.3,1) both; }
+.sq-landed .fresh { animation:sq-arrive 700ms cubic-bezier(0.16,1,0.3,1) both; }
+@keyframes sq-stamp { from { transform:scale(1.18); } to { transform:none; } }
+@keyframes sq-arrive { from { opacity:0; transform:translateY(-6px); } to { opacity:1; transform:none; } }
+.sq-foot { margin-top:30px; padding-top:10px; border-top:1px dashed var(--border); font-size:11.5px; color:var(--sq-muted); }
+
+/* narrow (the side panel, ~560px) */
+.sq[data-layout="narrow"] .sq-picker { width:100%; }
+.sq[data-layout="narrow"] .sq-actions-top { margin-left:0; }
+.sq[data-layout="narrow"] .sq-doctor em { display:none; }
+.sq[data-layout="narrow"] .sq-need { grid-template-columns:auto minmax(0,1fr); padding:16px 18px; }
+.sq[data-layout="narrow"] .sq-need-text, .sq[data-layout="narrow"] .sq-need-actions { grid-column:1 / -1; }
+.sq[data-layout="narrow"] .sq-row { grid-template-columns:auto minmax(0,1fr); }
+.sq[data-layout="narrow"] .sq-row-actions { grid-column:2; }
+.sq[data-layout="narrow"] .sq-station-label .sq-long { display:none; }
+.sq[data-layout="narrow"] .sq-station-label .sq-short { display:inline; }
+.sq[data-layout="narrow"] .sq-station-chev { right:4px; }
+
+/* reduced motion: still frames, no CSS motion */
+.reduced .sq *, .reduced .sq *::before { animation:none !important; transition:none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="cb" role="region" aria-label="Comp controls">
+    <div class="cb-title"><strong>PROTOTYPE · Bolder board</strong><span>Throwaway comp. All data is synthetic.</span></div>
+    <div class="cb-group"><span>Theme</span><div class="seg" data-key="theme"><button data-v="dark">Dark</button><button data-v="light">Light</button></div></div>
+    <div class="cb-group"><span>Width</span><div class="seg" data-key="layout"><button data-v="wide">Full page</button><button data-v="panel">Side panel</button><button data-v="both">Both</button></div></div>
+    <div class="cb-group"><span>Motion</span><div class="seg" data-key="motion"><button data-v="live">Live</button><button data-v="reduced">Reduced</button></div></div>
+    <div class="cb-group"><span>Simulate</span><div class="seg" id="sim">
+      <button data-sim="start">Start</button><button data-sim="need">Needs you</button><button data-sim="stop">Stop</button><button data-sim="branch">Ticket to branch</button><button data-sim="agents">Agent +1</button><button data-sim="land">Land</button><button data-sim="empty">Empty</button><button data-sim="reset">Reset</button>
+    </div></div>
+    <p class="cb-state" id="state" aria-live="polite"></p>
+  </div>
+  <main class="stage" id="stage"></main>
+  <div class="vbar" role="group" aria-label="Variant">
+    <button id="vprev" aria-label="Previous variant">‹</button>
+    <span id="vlabel"></span>
+    <button id="vnext" aria-label="Next variant">›</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+// ======================================================================
+// Pixel font: a port of lib/pixels.ts
+// ======================================================================
+const G = (r) => r;
+const GLYPHS = {
+  A:G([" ### ","#   #","#   #","#####","#   #","#   #","#   #"]), B:G(["#### ","#   #","#   #","#### ","#   #","#   #","#### "]),
+  C:G([" ### ","#   #","#    ","#    ","#    ","#   #"," ### "]), D:G(["#### ","#   #","#   #","#   #","#   #","#   #","#### "]),
+  E:G(["#####","#    ","#    ","#### ","#    ","#    ","#####"]), F:G(["#####","#    ","#    ","#### ","#    ","#    ","#    "]),
+  G:G([" ### ","#   #","#    ","# ###","#   #","#   #"," ####"]), H:G(["#   #","#   #","#   #","#####","#   #","#   #","#   #"]),
+  I:G(["###"," # "," # "," # "," # "," # ","###"]), J:G(["  ###","   # ","   # ","   # ","   # ","#  # "," ##  "]),
+  K:G(["#   #","#  # ","# #  ","##   ","# #  ","#  # ","#   #"]), L:G(["#    ","#    ","#    ","#    ","#    ","#    ","#####"]),
+  M:G(["#   #","## ##","# # #","# # #","#   #","#   #","#   #"]), N:G(["#   #","#   #","##  #","# # #","#  ##","#   #","#   #"]),
+  O:G([" ### ","#   #","#   #","#   #","#   #","#   #"," ### "]), P:G(["#### ","#   #","#   #","#### ","#    ","#    ","#    "]),
+  Q:G([" ### ","#   #","#   #","#   #","# # #","#  # "," ## #"]), R:G(["#### ","#   #","#   #","#### ","# #  ","#  # ","#   #"]),
+  S:G([" ####","#    ","#    "," ### ","    #","    #","#### "]), T:G(["#####","  #  ","  #  ","  #  ","  #  ","  #  ","  #  "]),
+  U:G(["#   #","#   #","#   #","#   #","#   #","#   #"," ### "]), V:G(["#   #","#   #","#   #","#   #","#   #"," # # ","  #  "]),
+  W:G(["#   #","#   #","#   #","# # #","# # #","# # #"," # # "]), X:G(["#   #","#   #"," # # ","  #  "," # # ","#   #","#   #"]),
+  Y:G(["#   #","#   #"," # # ","  #  ","  #  ","  #  ","  #  "]), Z:G(["#####","    #","   # ","  #  "," #   ","#    ","#####"]),
+  "0":G([" ### ","#   #","#  ##","# # #","##  #","#   #"," ### "]), "1":G([" # ","## "," # "," # "," # "," # ","###"]),
+  "2":G([" ### ","#   #","    #","   # ","  #  "," #   ","#####"]), "3":G(["#####","   # ","  #  ","   # ","    #","#   #"," ### "]),
+  "4":G(["   # ","  ## "," # # ","#  # ","#####","   # ","   # "]), "5":G(["#####","#    ","#### ","    #","    #","#   #"," ### "]),
+  "6":G(["  ## "," #   ","#    ","#### ","#   #","#   #"," ### "]), "7":G(["#####","    #","   # ","  #  "," #   "," #   "," #   "]),
+  "8":G([" ### ","#   #","#   #"," ### ","#   #","#   #"," ### "]), "9":G([" ### ","#   #","#   #"," ####","    #","   # "," ##  "]),
+  "-":G(["   ","   ","   ","###","   ","   ","   "]), " ":G(["  ","  ","  ","  ","  ","  ","  "]),
+};
+function layoutPixels(text) {
+  const cells = []; let x = 0;
+  for (const ch of text.toUpperCase()) {
+    const g = GLYPHS[ch] || GLYPHS[" "]; const w = g[0].length;
+    g.forEach((row, y) => { for (let i = 0; i < w; i++) if (row[i] === "#") cells.push([x + i, y]); });
+    x += w + 1;
+  }
+  return { cells, width: Math.max(0, x - 1), height: 7 };
+}
+function pxSize(text, cell, gap) { const r = layoutPixels(text); const p = cell + gap; return { w: r.width * p - gap, h: 7 * p - gap }; }
+function px(text, cell = 2, gap = 0, cls = "") {
+  const r = layoutPixels(text); const p = cell + gap; const w = r.width * p - gap, h = 7 * p - gap;
+  return `<span class="${cls}"><svg class="px" aria-hidden="true" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges">${
+    r.cells.map(([x, y]) => `<rect x="${x * p}" y="${y * p}" width="${cell}" height="${cell}"/>`).join("")}</svg><span class="sq-sr">${text}</span></span>`;
+}
+const chev = `<svg class="sq-station-chev" aria-hidden="true" width="6" height="10" viewBox="0 0 6 10" shape-rendering="crispEdges">${[[0,0],[2,2],[4,4],[2,6],[0,8]].map(([x,y])=>`<rect x="${x}" y="${y}" width="2" height="2"/>`).join("")}</svg>`;
+
+// ======================================================================
+// Dither engine: a port of lib/dither.ts (Bayer 8x8, one cell per device pixel)
+// ======================================================================
+const BAYER = new Float32Array(64);
+{ const b2 = [[0,2],[3,1]]; let m = b2;
+  for (let n = 2; n < 8; n *= 2) { const nx = []; for (let y = 0; y < n*2; y++) { const row = []; for (let x = 0; x < n*2; x++) row.push(4*m[y%n][x%n] + b2[Math.floor(y/n)][Math.floor(x/n)]); nx.push(row); } m = nx; }
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) BAYER[y*8+x] = (m[y][x] + 0.5) / 64; }
+const PERM = new Uint8Array(512);
+{ const p = Array.from({ length: 256 }, (_, i) => i); let seed = 948;
+  for (let i = 255; i > 0; i--) { seed = (seed * 16807) % 2147483647; const j = seed % (i + 1); [p[i], p[j]] = [p[j], p[i]]; }
+  for (let i = 0; i < 512; i++) PERM[i] = p[i & 255]; }
+const fade = (t) => t * t * (3 - 2 * t);
+function noise(x, y) { const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, X = xi & 255, Y = yi & 255;
+  const a = PERM[PERM[X]+Y]/255, b = PERM[PERM[X+1]+Y]/255, c = PERM[PERM[X]+Y+1]/255, d = PERM[PERM[X+1]+Y+1]/255;
+  const u = fade(xf), v = fade(yf); return a + (b-a)*u + (c-a)*v + (a-b-c+d)*u*v; }
+const fbm = (x, y) => noise(x, y) * 0.65 + noise(x * 2.1 + 17.3, y * 2.1 + 5.1) * 0.35;
+
+function surface(cssW, cssH, dpr) { cssW = Math.max(1, Math.round(cssW)); cssH = Math.max(1, Math.round(cssH));
+  const w = Math.round(cssW * dpr), h = Math.round(cssH * dpr); return { buf: new Uint32Array(w * h), w, h, dpr, cssW, cssH }; }
+/** field(), limited to a box and sampled every `step` CSS px (clouds are low frequency). */
+function field(s, ink, fn, box, step = 1) {
+  const { w, h, dpr, cssW, cssH, buf } = s;
+  const bx0 = Math.max(0, Math.floor(box ? box[0] : 0)), by0 = Math.max(0, Math.floor(box ? box[1] : 0));
+  const bx1 = Math.min(cssW, Math.ceil(box ? box[2] : cssW)), by1 = Math.min(cssH, Math.ceil(box ? box[3] : cssH));
+  if (bx1 <= bx0 || by1 <= by0) return;
+  const row = new Float32Array(cssW); let last = -1;
+  for (let y = Math.round(by0 * dpr); y < Math.min(h, Math.round(by1 * dpr)); y++) {
+    const cy = Math.min(cssH - 1, Math.floor(y / dpr)); const sy = cy - (cy % step);
+    if (sy !== last) { let v = 0; for (let cx = bx0; cx < bx1; cx++) { if ((cx - bx0) % step === 0) v = fn(cx, sy); row[cx] = v; } last = sy; }
+    const by = (y & 7) * 8, o = y * w;
+    for (let x = Math.round(bx0 * dpr); x < Math.min(w, Math.round(bx1 * dpr)); x++) { const v = row[Math.min(cssW - 1, Math.floor(x / dpr))]; if (v > BAYER[by + (x & 7)]) buf[o + x] = ink; }
+  }
+}
+function rect(s, ink, x, y, w, h, level = 1) { const d = s.dpr;
+  const x0 = Math.max(0, Math.round(x*d)), y0 = Math.max(0, Math.round(y*d)), x1 = Math.min(s.w, Math.round((x+w)*d)), y1 = Math.min(s.h, Math.round((y+h)*d));
+  for (let yy = y0; yy < y1; yy++) { if (level >= 1) { s.buf.fill(ink, yy*s.w + x0, yy*s.w + x1); continue; }
+    const by = (yy & 7) * 8; for (let xx = x0; xx < x1; xx++) if (level > BAYER[by + (xx & 7)]) s.buf[yy*s.w + xx] = ink; } }
+
+// ---------- sprites ----------
+/** The banner plane: 16x9 cells from above, nose right, wings swept back, a T tail. */
+const BIG = ["     ###        ","      ###       ","#      ###      ","##    #######   ","################","##    #######   ","#      ###      ","      ###       ","     ###        "];
+/** The shipped formation plane (lib/dither.ts), used small at the head of a lane's contrail. */
+const SMALL = ["  ##    ","#  ##   ","########","#  ##   ","  ##    "];
+function sprite(s, rows, ink, x, y, cell, level = 1, skip) { rows.forEach((r, ry) => { for (let rx = 0; rx < r.length; rx++) if (r[rx] === "#" && !(skip && skip(x + rx*cell + cell/2, y + ry*cell + cell/2))) rect(s, ink, x + rx*cell, y + ry*cell, cell, cell, level); }); }
+/** An empty slot: the same plane as a dotted outline, one 2px dot per cell, so it never reads as cloud. */
+function ghost(s, rows, ink, x, y, cell) { const d = 2, o = Math.floor((cell - d) / 2); rows.forEach((r, ry) => { for (let rx = 0; rx < r.length; rx++) if (r[rx] === "#") rect(s, ink, x + rx*cell + o, y + ry*cell + o, d, d, 1); }); }
+
+// ======================================================================
+// Inks: resolved from the board's own CSS, so a theme change redraws the art
+// ======================================================================
+const inkCache = new Map();
+const probeCanvas = document.createElement("canvas"); probeCanvas.width = probeCanvas.height = 1;
+const probeCtx = probeCanvas.getContext("2d", { willReadFrequently: true });
+function ink(root, expr) {
+  const key = S.theme + "|" + expr; if (inkCache.has(key)) return inkCache.get(key);
+  const el = document.createElement("span"); el.style.color = expr; root.appendChild(el);
+  const c = getComputedStyle(el).color; el.remove();
+  probeCtx.clearRect(0, 0, 1, 1); probeCtx.fillStyle = "#000"; probeCtx.fillStyle = c; probeCtx.fillRect(0, 0, 1, 1);
+  const [r, g, b] = probeCtx.getImageData(0, 0, 1, 1).data;
+  const v = ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0; inkCache.set(key, v); return v;
+}
+const INKS = (root) => ({
+  sky: ink(root, "var(--sq-sky)"), amber: ink(root, "var(--sq-amber)"), red: ink(root, "var(--sq-red)"), green: ink(root, "var(--sq-green)"),
+  cloud: ink(root, "color-mix(in oklab, var(--foreground) 34%, var(--background))"),
+  ghost: ink(root, "color-mix(in oklab, var(--foreground) 52%, var(--background))"),
+  tarmac: ink(root, "color-mix(in oklab, var(--foreground) 7%, var(--background))"),
+  rule: ink(root, "color-mix(in oklab, var(--foreground) 30%, var(--background))"),
+  tarmacLine: ink(root, "color-mix(in oklab, var(--foreground) 42%, var(--background))"),
+});
+
+// ======================================================================
+// Synthetic data and comp state
+// ======================================================================
+const LIMIT = 4;
+function seed() {
+  return {
+    lanes: [
+      { id: "SQD-904", title: "Contrail progress on lane rows", total: 7, done: 3, working: 2, minutes: 74, slot: 0, state: "flying", need: false,
+        lead: "Opus 5.5 · high", step: "Running the board tests", tickets: [
+          { id: "SQD-911", t: "Paint the contrail head", s: "working", step: "Editing lib/dither.ts · 6m" },
+          { id: "SQD-912", t: "Reverse the wind", s: "working", step: "Agent message · 2m" } ] },
+      { id: "SQD-907", title: "Doctor checks the lane limit", total: 4, done: 1, working: 1, minutes: 38, slot: 1, state: "flying", need: true,
+        question: "SQD-915 asks: should the project's lane limit or House rules win when they differ?",
+        lead: "Sonnet 5.5 · med", step: "Waiting on your answer", tickets: [
+          { id: "SQD-915", t: "Pick which lane limit wins", s: "need", step: "Asked you a question · 4m" },
+          { id: "SQD-916", t: "Doctor row for the lane limit", s: "working", step: "Writing tests · 9m" } ] },
+    ],
+    ready: [
+      { id: "SQD-920", title: "Beacon planes link to Needs you", tickets: 5, can: 3 },
+      { id: "SQD-923", title: "Quiet hangar empty state", tickets: 3, can: 3 },
+    ],
+    shaping: [ { id: "SQD-926", title: "Weather follows working agents", missing: "No tickets yet", tickets: 0 } ],
+    open: [
+      { id: "SQD-931", title: "Lane times jump after the laptop sleeps", meta: "Bug · High" },
+      { id: "SQD-934", title: "Picker list overflows in the side panel", meta: "Bug" },
+      { id: "SQD-937", title: "Doctor reads stale House rules after an edit", meta: "Improvement" },
+    ],
+    landed: [
+      { id: "SQD-901", title: "Plain words on the board", pr: 9, when: "2h ago", flew: "3h 10m" },
+      { id: "SQD-899", title: "Quiet test output", pr: 10, when: "5h ago", flew: "1h 42m" },
+      { id: "SQD-893", title: "Skip held tickets inside a lane", pr: 8, when: "yesterday", flew: "2h 05m" },
+    ],
+  };
+}
+const params = new URLSearchParams(location.search);
+const prefersReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const S = Object.assign(seed(), {
+  variant: ["A", "B"].includes(params.get("variant")) ? params.get("variant") : "A",
+  theme: params.get("theme") === "light" ? "light" : "dark",
+  layout: ["wide", "panel", "both"].includes(params.get("layout")) ? params.get("layout") : "both",
+  motion: params.get("motion") === "reduced" || (prefersReduced && params.get("motion") !== "live") ? "reduced" : "live",
+  ev: { takeoff: {}, depart: [], flypast: null, flip: null, burst: {}, ping: null, arrived: null },
+  milestoneDone: false, log: "Opened the comp",
+});
+const VARIANTS = { A: "Tall sky", B: "Runway" };
+const now = () => performance.now() / 1000;
+const reduced = () => S.motion === "reduced";
+const flyingLanes = () => S.lanes.filter((l) => !l.landing);
+const agents = () => flyingLanes().filter((l) => l.state === "flying").reduce((n, l) => n + l.working, 0);
+/** Cloud drift in px/s: still with nobody working, faster per working agent (truthful, never faked). */
+const cloudSpeed = () => { const a = agents(); return a === 0 ? 0 : 6 + 5 * Math.min(a, 6); };
+const freeSlot = () => { const used = new Set(S.lanes.map((l) => l.slot)); for (let i = 0; i < LIMIT; i++) if (!used.has(i)) return i; return -1; };
+const needsYou = () => {
+  const items = [];
+  for (const l of S.lanes) {
+    if (l.landing) continue;
+    if (l.state === "stopped") items.push({ kind: "Stopped", lane: l, id: l.id, text: `${l.title}: the Lead stopped after two failed attempts on a ticket.`, act: "resume" });
+    if (l.need) items.push({ kind: "Question", lane: l, id: l.id, text: l.question, act: "answer" });
+  }
+  return items;
+};
+
+// ======================================================================
+// Banner geometry: shared by the painter and the clickable plane buttons
+// ======================================================================
+function bannerGeo(variant, narrow, W) {
+  const cell = narrow ? 3 : 4, PW = 16 * cell, PH = 9 * cell;
+  if (variant === "A") {
+    const H = narrow ? 168 : 216;
+    const tc = narrow ? 3 : 5, tg = 1, ts = pxSize("SQUADRON", tc, tg);
+    const title = { x: narrow ? 16 : 30, y: narrow ? 22 : 34, w: ts.w, h: ts.h, cell: tc, gap: tg };
+    const sub = { x: title.x, y: title.y + ts.h + (narrow ? 8 : 12) };
+    const clear = [title.x - 16, title.y - 16, title.x + Math.max(ts.w, 150) + 18, sub.y + 30];
+    const runway = H - (narrow ? 16 : 22);
+    const lead = W - PW - (narrow ? 22 : Math.max(60, W * 0.12));
+    // A V flying right: each rank steps back and out by more than a plane's height,
+    // so no contrail runs through the plane behind it. The whole V is centred in the sky.
+    const first = PH + (narrow ? 6 : 10), step = PH + (narrow ? 4 : 6);
+    const offs = Array.from({ length: LIMIT }, (_, i) => { const rank = Math.ceil(i / 2), side = i === 0 ? 0 : i % 2 === 1 ? -1 : 1;
+      return { rank, dy: rank === 0 ? 0 : side * (first + (rank - 1) * step) }; });
+    const lo = Math.min(...offs.map((o) => o.dy)), hi = Math.max(...offs.map((o) => o.dy));
+    const mid = (H - (hi - lo) - PH) / 2 - lo - (narrow ? 2 : 6);
+    const slots = Array.from({ length: LIMIT }, (_, i) => {
+      const { rank, dy } = offs[i];
+      const air = { x: lead - rank * (PW + (narrow ? 14 : 22)), y: mid + dy };
+      const park = { x: W - (narrow ? 18 : 40) - (i + 1) * (PW + (narrow ? 10 : 18)), y: runway - PH - 2 };
+      return { air, park };
+    });
+    return { H, cell, PW, PH, title, sub, clear, runway, slots, trail: narrow ? 150 : 280 };
+  }
+  // B: a shorter banner; planes stand on a runway with the title stencilled on it.
+  const H = narrow ? 140 : 164, RH = narrow ? 42 : 52, ry = H - RH - 2;
+  const keys = narrow ? 22 : 34;
+  const tc = narrow ? 3 : 4, tg = narrow ? 0 : 1, ts = pxSize("SQUADRON", tc, tg);
+  const title = { x: (narrow ? 14 : 30) + keys + (narrow ? 10 : 16), y: ry + (RH - ts.h) / 2, w: ts.w, h: ts.h, cell: tc, gap: tg };
+  const sub = narrow ? null : { x: title.x + ts.w + 18, y: ry + RH / 2 - 9 };
+  const clear = [0, ry - 6, W, H];
+  const slots = Array.from({ length: LIMIT }, (_, i) => {
+    const x = W - (narrow ? 34 : 50) - PW - i * (PW + (narrow ? 14 : 26)); // room for a holding ring at the edge
+    return { park: { x, y: ry + (RH - PH) / 2 }, air: { x: x + (narrow ? 8 : 14), y: ry - PH - (narrow ? 12 : 18) - (i % 2) * (narrow ? 14 : 22) } };
+  });
+  return { H, RH, ry, keys, cell, PW, PH, title, sub, clear, slots, trail: PW + (narrow ? 14 : 26) - 10 };
+}
+
+// ---------- the banner painter ----------
+const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+const easeInOut = (p) => p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+const TAKEOFF = 1.5, DEPART = 1.6, FLYPAST = 3.4;
+
+function bannerPainter(frame) {
+  return (s, t, I) => {
+    const W = s.cssW, g = bannerGeo(S.variant, frame.narrow, W), still = reduced();
+    const T = still ? 0 : t;
+    const [cx0, cy0, cx1, cy1] = g.clear;
+    const inClear = (x, y) => x > cx0 && x < cx1 && y > cy0 && y < cy1;
+    const clearFade = (x, y) => { // a soft margin outside the clear zone so no grain crowds the title
+      const dx = Math.max(cx0 - x, 0, x - cx1), dy = Math.max(cy0 - y, 0, y - cy1);
+      return Math.min(1, Math.hypot(dx, dy) / 26);
+    };
+    // weather: light dithered clouds drifting right to left
+    const speed = still ? 0 : cloudSpeed();
+    const skyBottom = S.variant === "B" ? g.ry - 4 : g.H;
+    field(s, I.cloud, (x, y) => {
+      if (inClear(x, y)) return 0;
+      const u = (x + T * speed) / 120, v = y / 34;
+      const n = fbm(u, v) * 0.7 + fbm(u * 2.6 + 9, v * 2.2) * 0.3;
+      const c = Math.max(0, (n - 0.54) / 0.2);
+      const band = S.variant === "B" ? Math.min(1, (skyBottom - y) / 18) : 1;
+      return Math.min(1, c) * 0.42 * clearFade(x, y) * band;
+    }, [0, 0, W, skyBottom], 2);
+
+    // runway
+    const hangar = flyingLanes().length === 0 && !S.ev.depart.length;
+    if (S.variant === "B") {
+      rect(s, I.tarmac, 0, g.ry, W, g.RH, 1);
+      rect(s, I.rule, 0, g.ry, W, 2, 1); rect(s, I.rule, 0, g.ry + g.RH - 2, W, 2, 1);
+      const kx = frame.narrow ? 14 : 30; // threshold bars
+      for (let k = 0; k < 4; k++) rect(s, I.tarmacLine, kx + k * (frame.narrow ? 6 : 9), g.ry + 9, frame.narrow ? 3 : 4, g.RH - 18, 1);
+      const cl = g.ry + g.RH / 2 - 1, from = g.title.x + g.title.w + (g.sub ? 200 : 16), to = g.slots[LIMIT - 1].park.x - 14;
+      for (let x = from; x + 12 < to; x += 22) rect(s, I.tarmacLine, x, cl, 12, 3, 1);
+    } else if (hangar) {
+      for (let x = Math.max(cx1 + 20, W * 0.3); x < W - 10; x += 6) rect(s, I.rule, x, g.runway, 2, 2, 1);
+    }
+
+    const lanesBySlot = new Map(S.lanes.map((l) => [l.slot, l]));
+    const fly = S.ev.flypast && !still ? (t - S.ev.flypast) / FLYPAST : null;
+    const planes = []; // { x, y, ink, trail, level, mark }
+    if (fly !== null && fly >= 0 && fly < 1) {
+      // One pass of the whole formation, lit, from off the left edge to off the right.
+      const xs = g.slots.map((sl) => sl.air.x), maxX = Math.max(...xs), minX = Math.min(...xs);
+      const d0 = -maxX - g.PW - 30, d1 = W + 30 - minX;
+      const dx = d0 + easeInOut(fly) * (d1 - d0);
+      g.slots.forEach((sl) => planes.push({ x: sl.air.x + dx, y: sl.air.y, ink: I.sky, trail: g.trail }));
+    } else {
+      g.slots.forEach((sl, i) => {
+        const lane = lanesBySlot.get(i);
+        const dep = S.ev.depart.find((d) => d.slot === i);
+        if (dep && !still) {
+          const p = Math.min(1, (t - dep.t0) / DEPART), e = p * p;
+          const endY = S.variant === "B" ? sl.park.y : sl.air.y + 70;
+          if (p < 1) planes.push({ x: sl.air.x + e * (W - sl.air.x + 80), y: sl.air.y + (endY - sl.air.y) * easeOut(p), ink: I.sky, trail: g.trail * (1 - p) });
+          if (p > 0.5) planes.push({ x: (S.variant === "B" ? sl.park.x : sl.air.x), y: S.variant === "B" ? sl.park.y : sl.air.y, ink: I.ghost, ghost: true });
+          return;
+        }
+        if (!lane || lane.landing) {
+          const pos = S.variant === "B" || hangar ? sl.park : sl.air;
+          planes.push({ x: pos.x, y: pos.y, ink: I.ghost, ghost: true });
+          return;
+        }
+        // a lit slot
+        const k0 = S.ev.takeoff[lane.id];
+        const p = k0 && !still ? Math.min(1, (t - k0) / TAKEOFF) : 1;
+        let x = sl.air.x, y = sl.air.y;
+        if (p < 1) {
+          if (S.variant === "B") { // roll along the runway, then lift
+            const roll = Math.min(1, p / 0.35), lift = Math.max(0, (p - 0.35) / 0.65);
+            x = sl.park.x + (sl.air.x - sl.park.x) * roll + 0 * lift; y = sl.park.y + (sl.air.y - sl.park.y) * easeOut(lift);
+          } else {
+            const from = { x: sl.air.x - 150, y: g.H + 10 };
+            x = from.x + (sl.air.x - from.x) * easeOut(p); y = from.y + (sl.air.y - from.y) * easeOut(p);
+          }
+        }
+        const i0 = i * 1.7;
+        const bob = still || lane.state === "stopped" ? 0 : Math.sin(t * 1.3 + i0) * 1.2;
+        const drift = still || lane.state === "stopped" ? 0 : Math.sin(t * 0.7 + i0) * 0.8;
+        if (lane.state === "stopped") {
+          const a = still ? -Math.PI / 4 : t * (Math.PI * 2 / 4.5); const r = g.cell * 2;
+          planes.push({ x: x + Math.cos(a) * r, y: y + Math.sin(a) * r, ink: I.red, trail: 0, ring: { cx: x + g.PW / 2, cy: y + g.PH / 2, r: g.PW * 0.62 + r } });
+        } else if (lane.need) {
+          const blink = still ? 1 : (Math.sin(t * Math.PI * 2 / 2.4) > -0.35 ? 1 : 0.42);
+          planes.push({ x: x + drift, y: y + bob, ink: I.amber, level: blink, trail: g.trail * p, brackets: true });
+        } else {
+          planes.push({ x: x + drift, y: y + bob, ink: I.sky, trail: (p < 1 ? (S.variant === "B" ? Math.max(0, p - 0.35) / 0.65 : p) * 0.5 : 1) * g.trail * Math.min(1, 0.55 + 0.15 * lane.working) });
+        }
+      });
+    }
+    // contrails first (twin trails from the tail), wind right to left
+    const wind = still ? 0 : 18 + 10 * Math.min(agents(), 6);
+    planes.forEach((pl, i) => {
+      if (!pl.trail || pl.trail < 2) return;
+      const L = pl.trail, tx = pl.x + g.cell, ys = [pl.y + 2.5 * g.cell, pl.y + 6.5 * g.cell];
+      field(s, I.sky, (x, y) => {
+        const behind = tx - x; if (behind < 0 || behind > L) return 0;
+        if (inClear(x, y)) return 0;
+        let v = 0;
+        for (const yy of ys) {
+          const sp = (y - yy) / (1 + behind * 0.035);
+          const flow = fbm((x + T * wind) / 11, i * 5.3 + y / 4);
+          v = Math.max(v, Math.exp(-sp * sp) * Math.pow(1 - behind / L, 1.3) * (0.3 + 0.7 * flow));
+        }
+        return v * clearFade(x, y);
+      }, [tx - L, pl.y - 6, tx + 1, pl.y + g.PH + 6]);
+    });
+    // marks around planes: holding ring, beacon brackets
+    planes.forEach((pl) => {
+      if (pl.ring) { const { cx, cy, r } = pl.ring; for (let a = 0; a < 360; a += 9) { const rad = a * Math.PI / 180; rect(s, I.red, cx + Math.cos(rad) * r - 1, cy + Math.sin(rad) * r * 0.7 - 1, 2, 2, 1); } }
+      if (pl.brackets) { const m = 7, x0 = pl.x - m, y0 = pl.y - m, x1 = pl.x + g.PW + m, y1 = pl.y + g.PH + m, a = 9;
+        for (const [x, y, sx, sy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]]) {
+          rect(s, I.amber, sx > 0 ? x : x - a, sy > 0 ? y : y - 2, a, 2); rect(s, I.amber, sx > 0 ? x : x - 2, sy > 0 ? y : y - a, 2, a); } }
+    });
+    // planes pass behind the title's clear window, never over the type
+    planes.forEach((pl) => pl.ghost ? ghost(s, BIG, pl.ink, pl.x, pl.y, g.cell) : sprite(s, BIG, pl.ink, pl.x, pl.y, g.cell, pl.level ?? 1, S.variant === "A" ? inClear : null));
+  };
+}
+
+// ---------- lane contrail: the progress bar, wind right to left ----------
+function contrailPainter(lane) {
+  return (s, t, I) => {
+    const still = reduced() || lane.state === "stopped";
+    const T = still ? 0 : t;
+    const speed = 14 + 12 * Math.min(lane.working, 4);
+    const W = s.cssW, mid = Math.round(s.cssH / 2) - 1, cell = 2, pw = 8 * cell, ph = 5 * cell;
+    const frac = lane.done / lane.total, head = Math.round(frac * (W - pw - 6));
+    // unfilled: a dotted guide
+    for (let x = head + pw + 6; x < W - 2; x += 6) rect(s, I.rule, x, mid, 2, 2, 1);
+    if (head > 0) {
+      const inkC = lane.state === "stopped" ? I.red : I.sky;
+      rect(s, inkC, 0, mid, head, 2, 1); // the solid core says how far, at a glance
+      field(s, inkC, (x, y) => {
+        if (x > head) return 0;
+        const age = 1 - x / head, dy = (y - mid - 1) / (1.2 + age * 4.5);
+        const flow = fbm((x + T * speed) / 9, y / 3.5 + lane.slot * 3);
+        return Math.exp(-dy * dy) * (0.25 + 0.75 * flow) * (0.45 + 0.55 * (1 - age));
+      }, [0, 0, head + 1, s.cssH]);
+    }
+    const planeInk = lane.state === "stopped" ? I.red : lane.need ? I.amber : I.sky;
+    sprite(s, SMALL, planeInk, head + 2, mid + 1 - ph / 2, cell);
+  };
+}
+
+// ---------- the landing burst (as shipped) ----------
+const BURST = 1.6;
+function burstPainter(t0) {
+  const bits = Array.from({ length: 110 }, (_, i) => { const r = (k) => ((Math.sin((i + 1) * 12.9898 * k + 939) * 43758.5453) % 1 + 1) % 1;
+    return { lane: r(1) * 2 - 1, reach: 0.35 + r(2) * 0.65, size: r(3) < 0.25 ? 3 : r(3) < 0.6 ? 2 : 1, delay: r(4) * 0.28, wobble: r(5) * 6.28 }; });
+  const ease = (p) => 1 - Math.pow(1 - p, 4);
+  return (s, now_, I) => {
+    const t = now_ - t0; if (t > BURST) return;
+    const mid = s.cssH / 2, head = ease(Math.min(1, t / 0.95)), fo = Math.max(0, 1 - Math.max(0, t - 0.6) / 0.8);
+    if (fo > 0) field(s, I.green, (x, y) => { const p = x / s.cssW; if (p > head) return 0; const dy = (y - mid) / Math.min(18, s.cssH * 0.3);
+      return Math.exp(-dy * dy) * (1 - (head - p)) * 0.38 * fo * (0.6 + 0.4 * noise(x / 7 - t * 30, y / 3)); });
+    for (const b of bits) { const p = ease(Math.max(0, Math.min(1, (t - b.delay) / 0.9))); if (p <= 0 || t - b.delay > 1.3) continue;
+      rect(s, I.green, p * b.reach * s.cssW, mid + b.lane * Math.min(s.cssH * 0.45, 40) * (0.4 + 0.6 * p) + Math.sin(b.wobble + t * 9) * 1.5, b.size, b.size); }
+  };
+}
+
+// ---------- needs you: a heavier breathing amber edge ----------
+function needsPainter() {
+  return (s, t, I) => {
+    const T = reduced() ? 0.9 : t;
+    const breath = 0.5 + 0.5 * Math.sin((T * Math.PI * 2) / 3.6), depth = 10 + 4 * breath;
+    field(s, I.amber, (x, y) => {
+      const e = Math.min(y, s.cssH - 1 - y, x * 1.15, (s.cssW - 1 - x) * 1.15);
+      if (e > depth + 2) return 0;
+      const n = fbm((x - T * 14) / 40, y / 9 + T * 0.08), f = Math.max(0, 1 - e / depth);
+      return f * f * (0.36 + 0.3 * breath + 0.4 * (n - 0.4));
+    }, null);
+  };
+}
+// ---------- landed stamp: still green edge grain, a clean centre ----------
+function stampPainter() {
+  return (s, t, I) => field(s, I.green, (x, y) => {
+    const e = Math.min(y, s.cssH - 1 - y, x, s.cssW - 1 - x); const f = Math.max(0, 1 - e / 7);
+    return f * f * 0.85;
+  });
+}
+
+// ======================================================================
+// Render
+// ======================================================================
+const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const mins = (m) => m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m` : `${m}m`;
+
+function stationCount(n, narrow, landed) {
+  const cell = narrow ? 2 : 3, text = String(n);
+  const flip = landed && S.ev.flip && !reduced() && now() - S.ev.flip.t0 < 0.9 ? S.ev.flip : null;
+  if (!flip) return px(text, cell, 0, "sq-digit");
+  const before = String(flip.from).padStart(text.length, " ");
+  return [...text].map((d, i) => before[i] === d ? px(d, cell, 0, "sq-digit")
+    : px(d, cell, 0, "sq-digit flip").replace('class="px"', `class="px" style="animation-delay:${(text.length - 1 - i) * 110}ms"`)).join("");
+}
+
+function boardHTML(narrow) {
+  const lanes = S.lanes, needs = needsYou(), lit = flyingLanes().length;
+  const g = bannerGeo(S.variant, narrow, narrow ? 560 : 1200);
+  const sub = `<b>${lit}</b> of ${LIMIT} lanes flying`;
+  const title = px("SQUADRON", g.title.cell, g.title.gap, "sq-banner-title");
+  const stations = [
+    ["open", "Open issues", "Open", S.open.length], ["shaping", "Shaping", "Shaping", S.shaping.length], ["ready", "Ready", "Ready", S.ready.length],
+    ["flying", "Flying", "Flying", lit], ["landed", "Landed", "Landed", S.landed.length],
+  ];
+  const label = (text, count, amber) => `<div class="sq-label"><h2>${px(text, 2, 0)}</h2>${count === null ? "" : amber && count ? `<span class="sq-count-amber sq-num">${count}</span>` : `<span class="sq-count sq-num">${count}</span>`}</div>`;
+  const laneHTML = (l) => {
+    const stopped = l.state === "stopped";
+    const fresh = l.landing;
+    return `<article class="sq-lane${fresh ? " leaving" : ""}" id="lane-${narrow ? "n" : "w"}-${l.id}" data-lane="${l.state}" data-need="${l.need}" aria-label="${l.id}, ${esc(l.title)}">
+      <div class="sq-lane-row">
+        <div class="sq-lane-top">${px(l.id, 2, 0)}<h3 class="sq-lane-title">${esc(l.title)}</h3><span class="sq-time sq-num">${mins(l.minutes)}</span></div>
+        <div class="sq-lane-foot">
+          <span class="sq-lead">Lead · ${esc(l.lead)} <span>· ${esc(stopped ? "Stopped after two strikes" : l.step)}</span></span>
+          <span class="sq-progress-n sq-num"><b>${l.done}/${l.total}</b> in branch</span>
+          ${!stopped && l.working ? `<span class="sq-pace sq-num"><i aria-hidden="true"></i>${l.working} working</span>` : ""}
+          ${stopped ? `<span class="sq-lane-state" data-s="stopped">Stopped</span><button class="sq-btn" data-tone="primary" data-act="resume" data-id="${l.id}">Resume</button>`
+            : l.need ? `<span class="sq-lane-state" data-s="need">Needs you</span>` : ""}
+        </div>
+        <span class="sq-contrail" aria-hidden="true"><canvas data-fx="${l.landing ? "burst" : "contrail"}" data-id="${l.id}"></canvas></span>
+      </div>
+      <div class="sq-tickets">${l.tickets.filter((k) => k.s !== "done").map((k) => `<div class="sq-ticket" data-s="${stopped ? "stopped" : k.s}"><span class="id">${k.id}</span><span class="t" title="${esc(k.t)}">${esc(k.t)}</span><span class="st">${stopped ? "Stopped" : k.s === "need" ? "Needs you" : "Working"}</span><span class="step">${esc(k.step)}</span></div>`).join("")}</div>
+    </article>`;
+  };
+  const hangarLine = `<div class="sq-empty"><p class="sq-clear">Nothing is flying. Plan the next spec with New spec.</p><button class="sq-btn">New spec</button></div>`;
+  return `
+  <div class="sq-banner" data-variant="${S.variant}" style="height:${g.H}px">
+    <canvas data-fx="banner" aria-hidden="true"></canvas>
+    ${title}
+    ${g.sub ? `<span class="sq-banner-sub" style="left:${g.sub.x}px;top:${g.sub.y}px">${sub}</span>` : ""}
+    <span class="sq-sr">${lit} of ${LIMIT} lanes flying</span>
+    <div class="sq-hits"></div>
+  </div>
+  <div class="sq-page">
+    <div class="sq-bar">
+      <button class="sq-picker" aria-haspopup="listbox"><span class="sq-picker-name">BB Squadron</span><span class="sq-picker-meta">Linear · ${S.ready.length} ready · ${lit} flying</span>
+        <svg width="8" height="6" viewBox="0 0 8 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="2" height="2"/><rect x="2" y="2" width="2" height="2"/><rect x="4" y="2" width="2" height="2"/><rect x="6" y="0" width="2" height="2"/><rect x="3" y="4" width="2" height="2"/></svg></button>
+      <span class="sq-tag" data-tone="amber">Synthetic data</span>
+      <div class="sq-actions-top">
+        <button class="sq-btn">How it works</button>
+        <button class="sq-btn sq-doctor"><i aria-hidden="true"></i>Doctor <em>Start ready</em></button>
+        <button class="sq-btn">Helper</button>
+        <button class="sq-btn" data-tone="primary">New spec</button>
+      </div>
+    </div>
+    <div class="sq-tracker"><span class="sq-tag">Linear</span><span><b>Squadron · BB Squadron</b> · read 1 min ago</span></div>
+    <nav class="sq-path" aria-label="The path">${stations.map(([k, long, short, n], i) => `<button class="sq-station" data-st="${k}" data-zero="${n === 0}" data-hot="${k === "flying" && n > 0}" data-go="${k}">
+      <span class="sq-station-label"><span class="sq-long">${long}</span><span class="sq-short">${short}</span></span>
+      <span class="sq-station-count">${stationCount(n, narrow, k === "landed")}</span>${i < 4 ? chev : ""}</button>`).join("")}</nav>
+
+    <section class="sq-section" data-sec="needs">${label("Needs you", needs.length, true)}
+      ${needs.length ? `<ul class="sq-needs">${needs.map((n) => `<li class="sq-need" id="need-${narrow ? "n" : "w"}-${n.lane.id}-${n.kind}" data-lane-id="${n.lane.id}"><canvas data-fx="needs" aria-hidden="true"></canvas>
+        <span class="sq-need-kind">${n.kind}</span>${px(n.id, 2, 0, "sq-need-id")}<span class="sq-need-text">${esc(n.text)}</span>
+        <span class="sq-need-actions">${n.act === "answer" ? `<button class="sq-btn" data-tone="amber" data-act="answer" data-id="${n.lane.id}">Answer in thread</button>`
+          : `<button class="sq-btn" data-tone="amber" data-act="resume" data-id="${n.lane.id}">Resume</button>`}</span></li>`).join("")}</ul>`
+        : `<p class="sq-clear">Nothing needs you. Every lane is flying on its own.</p>`}
+    </section>
+
+    <section class="sq-section" data-sec="flying">${label("Flying", lanes.length, false)}
+      ${lanes.length ? `<div class="sq-lanes">${lanes.map(laneHTML).join("")}</div>` : hangarLine}
+    </section>
+
+    <section class="sq-section" data-sec="ready">${label("Ready", S.ready.length, false)}
+      ${S.ready.length ? `<ul class="sq-rows">${S.ready.map((r) => `<li class="sq-row"><span class="sq-plate">${px(r.id, 2, 0)}</span>
+        <div><div class="sq-row-title">${esc(r.title)}</div><div class="sq-row-meta"><span class="sq-num"><b>${r.tickets}</b> tickets</span><span class="can">${r.can} can start</span></div></div>
+        <div class="sq-row-actions"><button class="sq-btn" data-tone="primary" data-act="start" data-id="${r.id}">Start</button></div></li>`).join("")}</ul>`
+        : `<p class="sq-clear">Nothing is ready. A spec lands here once its tickets are planned.</p>`}
+    </section>
+
+    <section class="sq-section" data-sec="shaping">${label("Shaping", S.shaping.length, false)}
+      ${S.shaping.length ? `<ul class="sq-rows">${S.shaping.map((r) => `<li class="sq-row"><span class="sq-plate">${px(r.id, 2, 0)}</span>
+        <div><div class="sq-row-title">${esc(r.title)}</div><div class="sq-row-meta"><span class="miss">${esc(r.missing)}</span></div></div>
+        <div class="sq-row-actions"><button class="sq-btn" data-tone="primary">Plan tickets</button></div></li>`).join("")}</ul>`
+        : `<div class="sq-empty"><p class="sq-clear">No spec is being shaped. New spec starts one.</p><button class="sq-btn">New spec</button></div>`}
+    </section>
+
+    <section class="sq-section sq-open" data-sec="open">${label("Open issues", S.open.length, false)}
+      <ul class="sq-rows">${S.open.map((r) => `<li class="sq-row"><span class="sq-mono">${r.id}</span><div><div class="sq-row-title">${esc(r.title)}</div><div class="sq-row-meta">${esc(r.meta)}</div></div>
+        <div class="sq-row-actions"><button class="sq-btn">Plan</button></div></li>`).join("")}</ul>
+    </section>
+
+    <section class="sq-section sq-landed" data-sec="landed">${label("Landed", S.landed.length, false)}
+      <ul class="sq-rows">${S.landed.map((r, i) => `<li class="sq-row${i === 0 && S.ev.arrived && now() - S.ev.arrived < 1 ? " fresh" : ""}"><span class="sq-stamp"><canvas data-fx="stamp" aria-hidden="true"></canvas>${px(r.id, 2, 0)}</span>
+        <div><div class="sq-row-title">${esc(r.title)}</div><div class="sq-row-meta"><span>PR #${r.pr} merged</span><span>Landed ${r.when}</span><span>Flew ${r.flew}</span></div></div><span></span></li>`).join("")}</ul>
+    </section>
+    <p class="sq-foot">Synthetic data: every spec, ticket, model and time on this comp is made up to show the board's states.</p>
+  </div>`;
+}
+
+let frames = [];
+function render() {
+  document.documentElement.className = `theme-${S.theme}${reduced() ? " reduced" : ""}`;
+  const stage = document.getElementById("stage");
+  stage.dataset.layout = S.layout;
+  const wide = S.layout !== "panel", panel = S.layout !== "wide";
+  stage.innerHTML = `${wide ? `<div class="frame-wide"><div class="sq" data-layout="wide">${boardHTML(false)}</div></div>` : ""}${panel ? `<div class="frame-panel"><div class="ptabs"><span class="tab">Thread</span><span class="tab" aria-current="page">Squadron</span><span class="who">Side panel · 560px</span></div><div class="sq" data-layout="narrow">${boardHTML(true)}</div></div>` : ""}`;
+  frames = [...stage.querySelectorAll(".sq")].map((root) => ({ root, narrow: root.dataset.layout === "narrow" }));
+  canvases = [];
+  for (const f of frames) {
+    for (const c of f.root.querySelectorAll("canvas[data-fx]")) {
+      const fx = c.dataset.fx, lane = S.lanes.find((l) => l.id === c.dataset.id);
+      const paint = fx === "banner" ? bannerPainter(f) : fx === "contrail" ? contrailPainter(lane) : fx === "burst" ? burstPainter(S.ev.burst[lane.id] ?? now())
+        : fx === "needs" ? needsPainter() : stampPainter();
+      canvases.push({ c, f, fx, paint, s: null, done: false });
+    }
+  }
+  placeBanner();
+  syncChrome();
+}
+
+/** Positions the title and the plane buttons from the same geometry the painter uses. */
+function placeBanner() {
+  for (const f of frames) {
+    const b = f.root.querySelector(".sq-banner"); const W = b.clientWidth; const g = bannerGeo(S.variant, f.narrow, W);
+    const t = b.querySelector(".sq-banner-title"); t.style.left = g.title.x + "px"; t.style.top = g.title.y + "px";
+    const hits = b.querySelector(".sq-hits"); hits.innerHTML = "";
+    for (const l of S.lanes) {
+      if (l.landing) continue;
+      const sl = g.slots[l.slot]; const pos = sl.air; const pad = 10;
+      const what = l.state === "stopped" ? "stopped, holding" : l.need ? "needs you" : `flying, ${l.done} of ${l.total} in branch`;
+      const btn = document.createElement("button"); btn.className = "sq-hit"; btn.title = `${l.id}: ${what}`;
+      btn.setAttribute("aria-label", `${l.id}, ${l.title}: ${what}. ${l.need || l.state === "stopped" ? "Go to its Needs you row" : "Go to its lane"}.`);
+      Object.assign(btn.style, { left: pos.x - pad + "px", top: pos.y - pad + "px", width: g.PW + pad * 2 + "px", height: g.PH + pad * 2 + "px" });
+      btn.onclick = () => goToLane(f, l);
+      hits.appendChild(btn);
+    }
+  }
+}
+function goToLane(f, l) {
+  const key = f.narrow ? "n" : "w";
+  const row = (l.need || l.state === "stopped") ? f.root.querySelector(`.sq-need[data-lane-id="${l.id}"]`) : f.root.querySelector(`#lane-${key}-${l.id}`);
+  if (!row) return;
+  row.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "center" });
+  if (row.classList.contains("sq-need")) { row.classList.remove("ping"); void row.offsetWidth; row.classList.add("ping"); row.querySelector("button")?.focus({ preventScroll: true }); }
+  S.log = `Clicked ${l.id}'s plane: scrolled to its ${row.classList.contains("sq-need") ? "Needs you row" : "lane"}`; syncChrome();
+}
+
+// ======================================================================
+// One animation loop for every canvas; still frames under reduced motion
+// ======================================================================
+let canvases = [];
+function frame() {
+  const t = now(), dpr = Math.min(2, window.devicePixelRatio || 1);
+  for (const k of canvases) {
+    if (!k.c.isConnected) continue;
+    const cw = k.c.clientWidth, ch = k.c.clientHeight; if (!cw || !ch) continue;
+    const animated = !reduced() && (k.fx !== "stamp");
+    if (k.done && !animated && k.s && k.s.cssW === cw && k.s.cssH === ch) continue;
+    if (!k.s || k.s.cssW !== Math.round(cw) || k.s.cssH !== Math.round(ch)) { k.s = surface(cw, ch, dpr); k.c.width = k.s.w; k.c.height = k.s.h; k.ctx = k.c.getContext("2d"); k.img = k.ctx.createImageData(k.s.w, k.s.h); }
+    k.s.buf.fill(0);
+    k.paint(k.s, t, INKS(k.f.root));
+    new Uint32Array(k.img.data.buffer).set(k.s.buf); k.ctx.putImageData(k.img, 0, 0);
+    k.done = true;
+  }
+  requestAnimationFrame(frame);
+}
+
+// ======================================================================
+// Simulate: synthetic events, each tied to what it would be on the real board
+// ======================================================================
+function sim(kind, id) {
+  const t = now();
+  const live = flyingLanes();
+  if (kind === "start") {
+    const r = id ? S.ready.find((x) => x.id === id) : S.ready[0]; const slot = freeSlot();
+    if (!r || slot < 0) return;
+    S.ready = S.ready.filter((x) => x !== r);
+    S.lanes.push({ id: r.id, title: r.title, total: r.tickets, done: 0, working: 1, minutes: 0, slot, state: "flying", need: false, lead: "Opus 5.5 · high", step: "Reading the spec",
+      tickets: [{ id: r.id.replace(/\d+$/, (n) => +n + 1), t: "First ticket of " + r.title.toLowerCase(), s: "working", step: "Starting · 0m" }] });
+    S.ev.takeoff[r.id] = t; S.log = `Started ${r.id}: its slot lights and the plane takes off`;
+  } else if (kind === "need") {
+    const l = live.find((x) => !x.need && x.state === "flying"); if (!l) return;
+    l.need = true; l.question = `${l.tickets[0].id} asks: is the narrow layout's 560px the right side-panel width to test against?`;
+    l.tickets[0].s = "need"; l.tickets[0].step = "Asked you a question · 0m"; l.working = Math.max(0, l.working - 1);
+    S.log = `${l.id} needs you: its plane beacons amber; click it to reach the row`;
+  } else if (kind === "answer") {
+    const l = S.lanes.find((x) => x.id === id); l.need = false; l.working += 1; l.tickets.forEach((k) => { if (k.s === "need") { k.s = "working"; k.step = "Back to work · 0m"; } });
+    S.log = `Answered ${l.id}: its plane goes back to sky`;
+  } else if (kind === "stop") {
+    const l = live.find((x) => x.state === "flying"); if (!l) return;
+    l.state = "stopped"; l.need = false; S.log = `${l.id} stopped: its plane turns red and holds; Resume is in Needs you and on the lane`;
+  } else if (kind === "resume") {
+    const l = S.lanes.find((x) => x.id === id); l.state = "flying"; S.log = `Resumed ${l.id}: back in formation`;
+  } else if (kind === "branch") {
+    const l = live.find((x) => x.state === "flying" && x.done < x.total); if (!l) return;
+    l.done += 1; l.minutes += 7; S.log = `A ${l.id} ticket reached the branch: its contrail grows to ${l.done}/${l.total}`;
+  } else if (kind === "agents") {
+    const l = live.find((x) => x.state === "flying"); if (!l) return;
+    l.working = l.working >= 4 ? 1 : l.working + 1; S.log = `${l.id} has ${l.working} working: clouds and its contrail wind change speed`;
+  } else if (kind === "land") {
+    const l = [...live].filter((x) => x.state === "flying").sort((a, b) => b.done / b.total - a.done / a.total)[0]; if (!l) return;
+    l.done = l.total; l.need = false; l.landing = true; S.ev.burst[l.id] = t;
+    const last = S.ready.length === 0 && live.length === 1 && !S.milestoneDone;
+    const finish = () => {
+      const from = S.landed.length;
+      S.lanes = S.lanes.filter((x) => x !== l);
+      S.landed.unshift({ id: l.id, title: l.title, pr: 12 + S.landed.length, when: "just now", flew: mins(Math.max(l.minutes, 24)) });
+      S.ev.flip = { from, t0: now() }; S.ev.arrived = now();
+      if (!reduced()) S.ev.depart.push({ slot: l.slot, t0: now() });
+      setTimeout(() => { S.ev.depart = S.ev.depart.filter((d) => now() - d.t0 < DEPART); }, DEPART * 1000 + 50);
+      if (last) { S.milestoneDone = true; if (!reduced()) S.ev.flypast = now() + DEPART; S.log = `${l.id} landed, the last Ready spec: one fly-past of the formation, once`; }
+      render();
+    };
+    S.log = `${l.id} landed: green burst, its plane glides out, Landed flips`;
+    if (reduced()) { finish(); return; }
+    setTimeout(finish, BURST * 1000);
+  } else if (kind === "empty") {
+    S.lanes = []; S.ready = []; S.shaping = []; S.ev.depart = []; S.log = "Empty: a quiet hangar, planes parked on the runway";
+  } else if (kind === "reset") {
+    Object.assign(S, seed(), { ev: { takeoff: {}, depart: [], flypast: null, flip: null, burst: {}, ping: null, arrived: null }, milestoneDone: false, log: "Reset" });
+  }
+  render();
+}
+
+// ======================================================================
+// Comp chrome
+// ======================================================================
+function syncChrome() {
+  for (const seg of document.querySelectorAll(".seg[data-key]")) for (const b of seg.querySelectorAll("button")) b.setAttribute("aria-pressed", String(S[seg.dataset.key] === b.dataset.v));
+  const live = flyingLanes(), slot = freeSlot();
+  const dis = { start: !S.ready.length || slot < 0, need: !live.some((l) => !l.need && l.state === "flying"), stop: !live.some((l) => l.state === "flying"),
+    branch: !live.some((l) => l.state === "flying" && l.done < l.total), agents: !live.some((l) => l.state === "flying"), land: !live.some((l) => l.state === "flying") };
+  for (const b of document.querySelectorAll("#sim button")) { b.disabled = !!dis[b.dataset.sim]; b.title = b.disabled ? "Nothing to do this to right now" : ""; }
+  const sp = cloudSpeed();
+  document.getElementById("state").innerHTML = `Variant <b>${S.variant} · ${VARIANTS[S.variant]}</b> · Flying <b>${live.length} of ${LIMIT}</b> · Working agents <b>${agents()}</b> · Clouds <b>${sp ? sp + " px/s, right to left" : "still (nobody working)"}</b> · Needs you <b>${needsYou().length}</b> · Ready <b>${S.ready.length}</b> · Landed <b>${S.landed.length}</b> · Motion <b>${S.motion}</b> · Last: ${esc(S.log)}${S.milestoneDone ? "" : " · The fly-past plays once, when the last Ready spec lands"}`;
+  document.getElementById("vlabel").innerHTML = `${S.variant} <i>(${VARIANTS[S.variant]})</i>`;
+  const q = new URLSearchParams({ variant: S.variant, theme: S.theme, layout: S.layout, motion: S.motion });
+  history.replaceState(null, "", "?" + q);
+}
+document.querySelectorAll(".seg[data-key]").forEach((seg) => seg.addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return; S[seg.dataset.key] = b.dataset.v; inkCache.clear(); render();
+}));
+document.getElementById("sim").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) sim(b.dataset.sim); });
+document.getElementById("stage").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-act]"); if (b) return sim(b.dataset.act, b.dataset.id);
+  const st = e.target.closest("[data-go]"); if (st) st.closest(".sq").querySelector(`[data-sec="${st.dataset.go === "open" ? "open" : st.dataset.go}"]`)?.scrollIntoView({ behavior: reduced() ? "auto" : "smooth", block: "start" });
+});
+const cycle = (d) => { const ks = Object.keys(VARIANTS); S.variant = ks[(ks.indexOf(S.variant) + d + ks.length) % ks.length]; render(); };
+document.getElementById("vprev").onclick = () => cycle(-1);
+document.getElementById("vnext").onclick = () => cycle(1);
+addEventListener("keydown", (e) => { if (e.target.closest("input, textarea, [contenteditable]")) return; if (e.key === "ArrowLeft") cycle(-1); if (e.key === "ArrowRight") cycle(1); });
+addEventListener("resize", () => placeBanner());
+
+render();
+requestAnimationFrame(frame);
+// ?sim=a,b,c runs simulate steps 400ms apart (for checking states by URL).
+(params.get("sim") || "").split(",").filter(Boolean).forEach((k, i) => setTimeout(() => sim(k), 300 + i * 400));
+</script>
+</body>
+</html>

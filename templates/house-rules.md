@@ -1,8 +1,6 @@
-# Playbook
+# House rules
 
-Keep this private file at `~/.bb-squadron/playbook.md`. Both families read it.
-
-This layer holds the owner's preferences across projects. Its Never and Held entries beat every other rule. Only record a permanent ruling when the owner explicitly asks for one. Date it and use the owner's words.
+Keep your lasting preferences, Never rules, Held actions and dated rulings in this private file at `~/.bb-squadron/house-rules.md`. Both Claude and Codex read it across projects. Its Never and Held entries beat every other rule. Add a permanent ruling only when you ask for one, dated and in your words.
 
 Repo rules belong in the repo's `AGENTS.md` and `docs/agents/`. Project settings belong in `docs/agents/squadron.md`. Devices, tools, identities and machine-specific project notes belong in the machine profile. Secrets stay in BB's secret settings or the owner's credential tools, never in these files.
 

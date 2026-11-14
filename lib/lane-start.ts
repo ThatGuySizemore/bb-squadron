@@ -59,7 +59,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
       prompt: ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
         ...(snapshot.kind === "linear" ? [] : ["Read docs/agents/issue-tracker.md and update the spec and its tickets as that file describes. Tell workers to do the same."]),
         "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
-        `Playbook: ${ownerPath("playbook") ?? "~/.bb-squadron/playbook.md"}`,
+        `House rules: ${ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md"}`,
         `Machine profile: ${ownerPath("machine-profile") ?? "~/.bb-squadron/machine.md"}`,
         `Held tickets carry one of these labels or Status lines: ${holdLabels.join(", ")}.${holdLabels.some((label) => label.endsWith("*")) ? " A trailing * matches a prefix." : ""}`,
       ].join("\n"),

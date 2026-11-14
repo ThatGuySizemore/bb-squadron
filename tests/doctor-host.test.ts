@@ -36,7 +36,7 @@ test("machine Doctor checks setup and owner-file existence and rejects a symlink
   const host = experimental_createHostEntryHarness(createDoctorHost(async () => ({ authenticated: true }), () => owner));
   try {
     assert.deepEqual(await host.experimental_call("inspectFiles", { checkoutPath: repo, skillPaths: [skill, join(plugin, "linked/SKILL.md"), join(plugin, "missing/SKILL.md")] }), {
-      homePath: owner, repoRulesExists: true, playbookExists: true, machineProfileExists: false,
+      homePath: owner, repoRulesExists: true, houseRulesExists: false, playbookExists: true, machineProfileExists: false,
       setupFiles: ["docs/agents/issue-tracker.md"], regularSkillFiles: [skill],
     });
   } finally { await host.experimental_dispose(); }

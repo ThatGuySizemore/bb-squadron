@@ -23,7 +23,7 @@ export const doctorHostContract = {
   inspectFiles: {
     input: z.object({ checkoutPath: z.string(), skillPaths: z.array(z.string()) }),
     output: z.object({
-      homePath: z.string(), repoRulesExists: z.boolean(), playbookExists: z.boolean(), machineProfileExists: z.boolean(),
+      homePath: z.string(), repoRulesExists: z.boolean(), houseRulesExists: z.boolean().default(false), playbookExists: z.boolean(), machineProfileExists: z.boolean(),
       setupFiles: z.array(z.string()), regularSkillFiles: z.array(z.string()),
     }),
     experimental_retryable: true,

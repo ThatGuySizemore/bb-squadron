@@ -1,6 +1,11 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
+import { createDoctorHost } from "../host.js";
+import { mkdtemp, mkdir, writeFile, readFile, readdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
 import type { Board } from "../lib/board-model.js";
@@ -12,7 +17,7 @@ function nativeThreads() {
   return { count: 0, threads: new Map<string, ReturnType<typeof makeThreadResponse>>(),
     metadata: new Map<string, Record<string, unknown>>(), routes: new Map<string, { model: string; reasoningLevel: string }>() };
 }
-function host(native = nativeThreads()) {
+function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>) {
   const { threads, metadata, routes } = native;
   return { native, ...createFakePluginHost({
     pluginId: "squadron", experimental_hostEntry: true,
@@ -51,15 +56,16 @@ function host(native = nativeThreads()) {
     },
     experimental_callHostRpc: async ({ method, input }) => method === "githubLogin" ? { authenticated: true } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
+      ...(ownerHost ? await ownerHost.experimental_call("inspectFiles", { checkoutPath: "/repo", skillPaths: [] }) as Record<string, unknown> : {}),
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
       regularSkillFiles: (input as { skillPaths: string[] }).skillPaths,
     },
   }) };
 }
-async function setup(t: import("node:test").TestContext, issues?: () => Response) {
+async function setup(t: import("node:test").TestContext, issues?: () => Response, ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>) {
   const linear = workspace({ issues });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
-  const { bb, harness, native } = host();
+  const { bb, harness, native } = host(undefined, ownerHost);
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
@@ -86,7 +92,7 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
   assert.equal(args.prompt, [
     "Use the squadron-lead skill for this spec.", "", "Spec: https://linear.app/fixture/issue/FIX-5",
     "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
-    "Playbook: /owner/.bb-squadron/playbook.md", "Machine profile: /owner/.bb-squadron/machine.md",
+    "House rules: /owner/.bb-squadron/house-rules.md", "Machine profile: /owner/.bb-squadron/machine.md",
     "Held tickets carry one of these labels or Status lines: hold, needs-triage, needs-info, ready-for-human, wontfix.",
   ].join("\n"));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
@@ -429,4 +435,48 @@ test("Merge on the board says which PR merged or why it didn't, and refreshes th
   await run(async () => { throw new Error("PR #7 can merge once its checks pass."); });
   assert.deepEqual(notes, ["Squash-merged PR #7 for FIX-5. The lane lands when BB sees the merge.", "PR #7 can merge once its checks pass."]);
   assert.equal(refreshed, 2);
+});
+
+async function houseRulesCase(t: import("node:test").TestContext, files: string[], status: string, message: string, selected: string) {
+  const owner = await mkdtemp(join(tmpdir(), "squadron-house-rules-"));
+  const directory = join(owner, ".bb-squadron");
+  await mkdir(directory);
+  for (const file of files) await writeFile(join(directory, file), `Private fixture ${file}`);
+  const ownerHost = experimental_createHostEntryHarness(createDoctorHost(undefined, () => owner));
+  t.after(() => ownerHost.experimental_dispose());
+  const { harness } = await setup(t, undefined, ownerHost);
+  const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+  assert.equal(report.ready, true, "House rules warnings never block Start");
+  const check = report.checks.find((check) => check.name === "House rules");
+  assert.equal(check?.status, status);
+  assert.equal(check?.message, message.replace("{directory}", directory));
+  const file = report.configurationFiles.find((file) => file.name === "House rules");
+  assert.equal(file?.path, join(directory, selected));
+  assert.equal(file?.exists, files.includes(selected));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string };
+  assert.ok(args.prompt.includes(`House rules: ${join(directory, selected)}`));
+  assert.ok(!JSON.stringify(report).includes("Private fixture"));
+  assert.ok(!args.prompt.includes("Private fixture"));
+  assert.deepEqual(await readdir(directory), [...files].sort(), "inspection never renames or creates owner files");
+  for (const file of files) assert.equal(await readFile(join(directory, file), "utf8"), `Private fixture ${file}`);
+}
+
+test("Doctor and Start use House rules when only house-rules.md exists", async (t) => {
+  await houseRulesCase(t, ["house-rules.md"], "pass", "House rules is present.", "house-rules.md");
+});
+
+test("Doctor warns to rename playbook.md and Start still points at the existing file", async (t) => {
+  await houseRulesCase(t, ["playbook.md"], "warning", "Rename playbook.md to house-rules.md", "playbook.md");
+});
+
+test("Doctor warns when both rule files exist and Start prefers house-rules.md", async (t) => {
+  await houseRulesCase(t, ["house-rules.md", "playbook.md"], "warning",
+    "Both house-rules.md and playbook.md are present. Squadron reads house-rules.md.", "house-rules.md");
+});
+
+
+test("missing House rules warn without blocking Start or creating an owner file", async (t) => {
+  await houseRulesCase(t, [], "warning",
+    "Optional: create {directory}/house-rules.md from the bundled starter template. This file doesn't block Start.", "house-rules.md");
 });

@@ -150,12 +150,13 @@ test("Open issues lists every open issue that isn't a spec or a ticket, each rea
     issue("FIX-4", { title: "Done idea", done: true }),
     issue("FIX-5", { title: "Only closed children" }),
     issue("FIX-6", { parent: "FIX-5", done: true }),
+    { ...issue("FIX-7", { title: "Duplicate idea" }), state: { id: "state-duplicate", name: "Duplicate", type: "duplicate" } },
     issue("OUT-1", { outside: true }),
   ])));
   assert.deepEqual(board.openIssues.map(({ id, title, labels }) => ({ id, title, labels })), [
     { id: "FIX-3", title: "Idea", labels: ["bug"] },
     { id: "FIX-5", title: "Only closed children", labels: [] },
-  ]);
+  ], "a Duplicate issue is closed, like a Done one");
   assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1"]);
   assert.deepEqual(board.shaping, []);
 });

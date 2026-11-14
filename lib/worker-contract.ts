@@ -20,6 +20,9 @@ export const spawnWorkerSchema = z.object({ ticketId: z.string().min(1).max(256)
 export const reportSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("done"), commit: commitSchema, summary: z.string().min(1).max(16_000) }).strict(),
   z.object({ type: z.literal("integrated"), ticketId: z.string().min(1), commit: commitSchema }).strict(),
+  z.object({ type: z.literal("progress"), summary: z.string().trim().min(1).max(16_000) }).strict(),
+  z.object({ type: z.literal("stuck"), ticketId: z.string().min(1).max(256).optional(), eventId: z.string().min(1).max(256), summary: z.string().trim().min(1).max(16_000) }).strict(),
+  z.object({ type: z.literal("failure"), ticketId: z.string().min(1).max(256), eventId: z.string().min(1).max(256), kind: z.literal("quick-check"), commit: commitSchema, summary: z.string().trim().min(1).max(16_000) }).strict(),
   /** A worker asks the owner. It shows in Needs you; only the owner's own message in the worker thread clears it. */
   z.object({ type: z.literal("question"), text: z.string().trim().min(1).max(4_000) }).strict(),
 ]);

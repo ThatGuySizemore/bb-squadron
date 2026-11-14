@@ -1,4 +1,5 @@
 // Worker dispatch and reports. Only saved service bindings grant role tools.
+import type { LaneSafety } from "./lane-safety.js";
 import { bindingSchedule, releaseBoundPrompt } from "./bound-thread.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -19,6 +20,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
   lanes: LaneService, options: { now?: () => number } = {}) {
   const now = options.now ?? Date.now;
   const startedAt = now();
+  let safety: LaneSafety | undefined;
   const host = bb.hosts.experimental_client({ contract: workerHostContract });
   const queues = new Map<string, Promise<unknown>>();
   const lifetime = new AbortController();
@@ -45,6 +47,10 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
     const bound = binding(projectId, threadId);
     if (!bound) return [];
     return bound.role === "Lead" ? ["squadron_spawn_worker", "squadron_report", "squadron_status"] : ["squadron_report", "squadron_status"];
+  }
+  function skillsForThread(projectId: string, threadId: string): string[] {
+    const bound = binding(projectId, threadId);
+    return bound ? [bound.role === "Lead" ? "squadron-lead" : "squadron-worker"] : [];
   }
   function canDispatch(projectId: string, threadId: string): boolean {
     const bound = binding(projectId, threadId);
@@ -188,6 +194,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       // Slow provisioning preserves the known child; report/status can recheck it.
       try { await environment(run, worker); } catch (error) { bb.log.warn(`Lane ${run.id} worker ${worker.id} provisioning: ${diagnostic(error)}`); }
       await queueWrites(run, worker, "started", snapshot);
+      safety?.actionInLane(context.projectId, run.id, context.threadId);
       return { workerId: worker.id, threadId: worker.threadId, branch: worker.branch, ...(worker.writeError ? { message: worker.writeError } : {}) };
     });
   }
@@ -202,6 +209,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       if (worker.question && worker.question.text !== text) throw new Error("Your earlier question is still open. Wait for the owner's answer in this thread.");
       worker.question ??= { id: randomUUID(), text, askedAt: now() };
       saveWorkers(run);
+      safety?.actionInLane(context.projectId, run.id, context.threadId);
       return { state: "question", question: worker.question.text,
         message: "Your question is in the owner's Needs you. Finish your turn now; the owner answers in this thread. The rest of the lane keeps going." };
     });
@@ -231,8 +239,30 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       ownerMessage(thread.projectId, entry.threadId, entry);
     } catch (error) { if (!lifetime.signal.aborted) bb.log.warn(`Owner answer: ${diagnostic(error)}`); }
   });
+  async function safetyReport(input: Extract<z.infer<typeof reportSchema>, { type: "stuck" | "failure" | "progress" }>, context: PluginAgentToolContext) {
+    const bound = await authorize(context);
+    return serialize(bound.lane.id, async () => {
+      await authorize(context);
+      const run = current(context.projectId, bound.lane.id);
+      if (run.state !== "flying") throw new Error("Progress reports require a flying lane.");
+      if (!safety) throw new Error("Lane safety is unavailable.");
+      if (input.type === "progress") {
+        if (bound.worker && bound.worker.state !== "working") throw new Error("Only a working worker may report progress.");
+        safety.actionInLane(context.projectId, run.id, context.threadId);
+        return { state: "progress", summary: input.summary };
+      }
+      if (input.type === "failure" && bound.role !== "Lead") throw new Error("Only the bound Lead reports a failed quick check.");
+      const ticketId = input.type === "stuck" && bound.worker ? bound.worker.ticketId : input.ticketId;
+      if (!ticketId || (bound.worker && input.ticketId && input.ticketId !== bound.worker.ticketId)) throw new Error("Report only your bound ticket.");
+      if (bound.worker && bound.worker.state !== "working") throw new Error("Only a working worker may report stuck.");
+      safety.actionInLane(context.projectId, run.id, context.threadId);
+      return safety.strikeInLane(run, { ticketId, eventId: input.eventId, kind: input.type === "stuck" ? "stuck" : input.kind,
+        ...(input.type === "failure" ? { commit: input.commit } : {}), summary: input.summary });
+    });
+  }
   async function report(input: z.infer<typeof reportSchema>, context: PluginAgentToolContext) {
     if (input.type === "question") return ask(input.text, context);
+    if (input.type === "stuck" || input.type === "failure" || input.type === "progress") return safetyReport(input, context);
     const bound = await authorize(context);
     return serialize(bound.lane.id, async () => {
       await authorize(context);
@@ -272,12 +302,13 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
         if (!worker.writes?.started) await queueWrites(run, worker, "started", snapshot);
         if (worker.writes?.started) await queueWrites(run, worker, "integrated", snapshot);
       }
+      safety?.actionInLane(context.projectId, run.id, context.threadId);
       return { state: worker.state, commit: worker.commit, ...(worker.writeError ? { message: worker.writeError } : {}) };
     });
   }
   bb.agents.registerTool({ name: "squadron_spawn_worker", description: "Start one frontier ticket as a child worker, within this Lead's bound lane and worker cap.",
     parameters: spawnWorkerSchema, execute: async ({ ticketId }, context) => JSON.stringify(await spawn(ticketId, context)) });
-  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests, or ask the owner a question that waits in Needs you. The bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
+  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests, progress after a time nudge, truly stuck with no way forward, or an owner question. The Lead reports quick-check failure of a done commit with a stable eventId and summary. The bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
     parameters: reportSchema, execute: async (input, context) => JSON.stringify(await report(input, context)) });
   bb.agents.registerTool({ name: "squadron_status", description: "Read this thread's trusted Squadron lane, workers and frontier. No Linear write.", parameters: z.object({}).strict(),
     execute: async (_input, context) => {
@@ -286,6 +317,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       const result = helperCore({ snapshot: sources.mirror.getSnapshot(context.projectId), connection: await sources.connection(), settings: checkout?.settings ?? null,
         writes: null, now: now(), startedAt, lanes: [bound.lane] });
       return JSON.stringify({ laneId: bound.lane.id, role: bound.role, lane: result.board.lanes[0],
+        safety: bound.lane.safety,
         reports: (bound.lane.workers ?? []).filter((worker) => bound.role === "Lead" || worker.threadId === context.threadId)
           .map(({ ticketId, state, commit, summary, integration, writes, writeError }) => ({ ticketId, state,
             ...(commit ? { commit } : {}), ...(summary ? { summary } : {}), ...(integration ? { integration } : {}),
@@ -308,7 +340,8 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       (latest.routeOverrides ??= {})[ticket.id] = route; saveWorkers(latest); return { route };
     });
   } });
-  return { toolsForThread, canDispatch, ownerMessage,
+  return { toolsForThread, skillsForThread, canDispatch, ownerMessage,
+    setSafety: (value: LaneSafety) => { safety = value; },
     /** The per-lane command queue. Lifecycle, review and recovery commands share it. */
     withLane: serialize };
 }

@@ -345,6 +345,10 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       try { await delay(15_000, undefined, { signal: stop }); } catch { return; }
     }
   } });
-  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile, settleStartWrites };
+  /** Projects with durable lanes, including stopped lanes after reload. */
+  function projects(): string[] {
+    return (db.prepare(`SELECT DISTINCT bb_project_id FROM squadron_lanes`).all() as { bb_project_id: string }[]).map((row) => row.bb_project_id);
+  }
+  return { start: startOnce, list, save, projects, onChange, reconcileStart, autoStart, reconcile, settleStartWrites };
 }
 export type LaneService = ReturnType<typeof registerLanes>;

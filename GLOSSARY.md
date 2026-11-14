@@ -46,7 +46,12 @@ _Avoid_: builder, implementer, subagent
 
 **Route**: A row in the repo's AI table that maps a ticket label to a family, model and effort. The table lives in `docs/agents/squadron.md`.
 
-**Two strikes**: A failure gets two fix attempts. After that the lane stops and asks the owner.
+**Two strikes**: A ticket gets two strikes, then the lane stops with the Lead's summary. A strike is counted only in two cases:
+
+- A worker reports done, and its work then fails the quick check or its review.
+- A worker is truly stuck, meaning it has no way forward.
+
+Red tests and compile errors while building are normal `tdd` work and are never strikes.
 
 **Stop list**: The project's list of problems that block a merge. Anything else becomes a follow-up.
 

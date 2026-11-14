@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { laneSafetySchema } from "./lane-safety-contract.js";
 import type { Route } from "./board-model.js";
 import { workerRunSchema } from "./worker-contract.js";
 import { routeSchema } from "./board-model.js";
@@ -18,6 +19,7 @@ export const laneRunSchema = z.object({
   startWrites: z.object({ status: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
   workers: z.array(workerRunSchema).optional(),
+  safety: laneSafetySchema.optional(),
   routeOverrides: z.record(z.string(), routeSchema).optional(),
 });
 export type LaneRun = z.infer<typeof laneRunSchema>;

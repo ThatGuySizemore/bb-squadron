@@ -4,7 +4,7 @@ import { mock } from "node:test";
 import { readFileSync } from "node:fs";
 import { createFakePluginHost, makeQueueEntry, makeThreadResponse, makeMessageDispatchHookContext } from "@get-bb/plugin-sdk/testing";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import plugin from "../../server.js";
+import { registerSquadron } from "../../server.js";
 import type { Board } from "../../lib/board-model.js";
 import { binding, workspace, workspaceIssues } from "./board-workspace.js";
 import { end, ready } from "./linear-mirror.js";
@@ -15,7 +15,7 @@ const head = "b".repeat(40);
 
 export interface Push { title: string; body?: string; threadId?: string }
 
-export async function laneHost(t: import("node:test").TestContext, options: { pushFails?: boolean; leadSpawnFails?: boolean; leadEnvironmentGate?: Promise<void>;
+export async function laneHost(t: import("node:test").TestContext, options: { queueNudges?: boolean; now?: () => number; pushFails?: boolean; leadSpawnFails?: boolean; leadEnvironmentGate?: Promise<void>;
   /** Holds the first write's identity check after the Lead's worktree is ready: the start status enqueue, in flight. */
   holdStartWrite?: Promise<void> } = {}) {
   const nodes = structuredClone(workspaceIssues.data.issues.nodes);
@@ -39,11 +39,12 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
   });
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const queued = new Map<string, number>();
+  const nudgeRows: ReturnType<typeof makeQueueEntry>[] = [];
   const sends: Array<{ threadId: string; text: string }> = [];
   const pushes: Push[] = [];
   const levels: Array<{ threadId: string; level: string }> = [];
   let count = 0;
-  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-lane-key" },
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", agentSkillIds: ["squadron-planner", "squadron-lead", "squadron-worker"], settings: { linearApiKey: "fake-lane-key" },
     experimental_callHostRpc: async (request) => request.method === "verifyWorkerCommit" ? { verified: true, head } : { authenticated: true },
     sdk: {
       projects: { get: async ({ projectId }) => ({ id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
@@ -72,6 +73,11 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
         },
         send: async (args) => {
           sends.push({ threadId: args.threadId, text: args.input.map((part) => "text" in part ? part.text : "").join("") });
+          if (options.queueNudges && args.input.some((part) => "text" in part && part.text.includes("Act at once"))) {
+            const entry = makeQueueEntry({ id: `nudge-${nudgeRows.length}`, threadId: args.threadId });
+            nudgeRows.push(entry);
+            return { ok: true as const, delivery: "queued" as const, queuedMessage: entry };
+          }
           return { ok: true as const, delivery: "sent" as const };
         },
         stop: async ({ threadId }) => ({ threadId, stopped: true }),
@@ -95,7 +101,7 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
     },
   });
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
-  await plugin(bb); await harness.behavior.callRpc("linear.bind", binding);
+  const { safety } = await registerSquadron(bb, { now: options.now }); await harness.behavior.callRpc("linear.bind", binding);
   const lead = { threadId: "thr_lead", projectId: "proj-one" };
   const call = async (name: string, input: unknown, context = lead) => JSON.parse(String(await harness.behavior.callAgentTool(name, input, context)));
   const board = async () => await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
@@ -105,5 +111,5 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
     await harness.inspection.registrations.hooks["message.dispatch"]!(makeMessageDispatchHookContext({ thread: { id: threadId }, project: { id: "proj-one" },
       initiator: from.initiator, senderThreadId: from.senderThreadId ?? null, ...(from.originPluginId ? { originPluginId: from.originPluginId } : {}) }));
   const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 2)); };
-  return { startWriteHeld, bb: bb as BbPluginApi, harness, call, board, rpc, dispatch, settle, mutations, threads, queued, sends, pushes, levels };
+  return { nudgeRows, safety, startWriteHeld, bb: bb as BbPluginApi, harness, call, board, rpc, dispatch, settle, mutations, threads, queued, sends, pushes, levels };
 }

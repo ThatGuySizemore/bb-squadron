@@ -35,7 +35,7 @@ async function setup(t: import("node:test").TestContext, options: { verify?: boo
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   let count = 0;
   const firstConfigurations: Array<[string, string[]]> = [];
-  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-worker-key" },
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", agentSkillIds: ["squadron-planner", "squadron-lead", "squadron-worker"], settings: { linearApiKey: "fake-worker-key" },
     experimental_callHostRpc: async (request) => request.method === "verifyWorkerCommit"
       ? { verified: options.verify ?? true, head: options.verify === false ? null : head } : { authenticated: true },
     sdk: {

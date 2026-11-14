@@ -10,21 +10,25 @@ import { registerWorkers } from "./lib/worker-service.js";
 import { registerLanes } from "./lib/lane-service.js";
 import { registerSignedCommentAvatars } from "./lib/linear-avatar.js";
 import { registerNeedsYouNotifications } from "./lib/needs-you-notifier.js";
+import { registerLaneSafety } from "./lib/lane-safety.js";
 import { registerLifecycle } from "./lib/lane-lifecycle.js";
 
-export default async function plugin(bb: BbPluginApi) {
+export async function registerSquadron(bb: BbPluginApi, options: { now?: () => number } = {}) {
   registerSignedCommentAvatars(bb);
   const linear = registerLinearAuth(bb);
   const outbox = registerLinearOutbox(bb, linear);
   const mirror = registerLinearMirror(bb, linear);
   const doctor = registerDoctor(bb, () => linear.getConnection());
-  const lanes = registerLanes(bb, { connection: () => linear.getConnection(), mirror, doctor, outbox });
-  const workers = registerWorkers(bb, { connection: () => linear.getConnection(), mirror, outbox }, lanes);
-  registerLifecycle(bb, { mirror, outbox }, lanes, workers);
+  const lanes = registerLanes(bb, { connection: () => linear.getConnection(), mirror, doctor, outbox }, options);
+  const workers = registerWorkers(bb, { connection: () => linear.getConnection(), mirror, outbox }, lanes, options);
+  const lifecycle = registerLifecycle(bb, { mirror, outbox }, lanes, workers, options);
+  const safety = registerLaneSafety(bb, lanes, workers, lifecycle, options);
+  workers.setSafety(safety);
   const planning = registerPlanning(bb, { connection: () => linear.getConnection(), mirror, outbox });
   bb.agents.configure((context) => ({
     tools: [...outbox.toolsForThread(context.project.id, context.thread.id), ...workers.toolsForThread(context.project.id, context.thread.id)],
-    skills: planning.isBound(context.project.id, context.thread.id) ? ["squadron-planner"] : [],
+    skills: [...workers.skillsForThread(context.project.id, context.thread.id),
+      ...(planning.isBound(context.project.id, context.thread.id) ? ["squadron-planner"] : [])],
   }));
   const needsYou = registerNeedsYouNotifications(bb, lanes);
   registerBoard(bb, { connection: () => linear.getConnection(), mirror, writes: (id) => outbox.getHealth(id), lanes, needsYou });
@@ -35,4 +39,9 @@ export default async function plugin(bb: BbPluginApi) {
       ? { action: "proceed" } : { action: "reject", message: "Squadron couldn't confirm this thread's active service binding. Check its lane or planning thread before resuming." };
   });
   bb.log.info("loaded");
+  return { safety };
+}
+
+export default async function plugin(bb: BbPluginApi): Promise<void> {
+  await registerSquadron(bb);
 }

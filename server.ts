@@ -8,13 +8,15 @@ import { registerPlanning } from "./lib/planning.js";
 import { registerLaneStart } from "./lib/lane-start.js";
 import { readLeadThreads } from "./lib/lead-threads.js";
 import { readPullRequests } from "./lib/pull-requests.js";
+import { registerTracker } from "./lib/tracker-service.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
   const mirror = registerLinearReader(bb, linear, {
     laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId) });
   const doctor = registerDoctor(bb, () => linear.getConnection());
-  registerBoard(bb, { connection: () => linear.getConnection(), mirror, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
+  const tracker = registerTracker(bb, mirror);
+  registerBoard(bb, { connection: () => linear.getConnection(), tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal) });
   registerPlanning(bb, { mirror });
   registerLaneStart(bb, { mirror, doctor: doctor.read });

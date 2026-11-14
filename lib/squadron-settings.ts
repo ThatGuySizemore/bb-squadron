@@ -1,4 +1,5 @@
 import type { Route } from "./board-model.js";
+import { detectTracker, type TrackerKind } from "./tracker-detection.js";
 
 export interface SquadronRoute extends Route {
   /** null is the required fallback row. */
@@ -47,10 +48,11 @@ function table(body: string): string[][] {
 }
 
 /** Read the repo-owned Markdown without executing its quick check. */
-export function parseSquadronSettings(markdown: string): SettingsResult {
+export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind = detectTracker(null, markdown).kind ?? "linear"): SettingsResult {
   const parts = sections(markdown);
   const issues: SettingsIssue[] = [];
   for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping"] as const) {
+    if (section === "Status mapping" && trackerKind !== "linear") continue;
     if (!parts.has(section)) issues.push({ section, message: `Add the ${section} section to docs/agents/squadron.md.` });
   }
   if (issues.length) return { ok: false, issues };
@@ -94,7 +96,7 @@ export function parseSquadronSettings(markdown: string): SettingsResult {
   else issues.push({ section: "Final review", message: "Set Final review to other or same." });
 
   const mapping = (parts.get("Status mapping") ?? "").trim();
-  if (!/^default\.?$/i.test(mapping)) {
+  if (trackerKind === "linear" && !/^default\.?$/i.test(mapping)) {
     const rows = table(mapping);
     const expected = ["Ready", "Flying", "In review", "Landed", "Waiting", "Working", "In branch", "Done"];
     if (rows.length !== expected.length || expected.some((state) => rows.filter(([name, status]) => name === state && status).length !== 1)

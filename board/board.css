@@ -104,12 +104,14 @@
   font-weight: 650;
   letter-spacing: -0.02em;
 }
-/* The formation mark: drawn by the dither renderer, one chevron per lane flying. */
+/* The formation mark: drawn by the dither renderer, one plane slot per lane in
+   the lane limit. The lead plane's fuselage sits on the title's baseline; the
+   negative margins keep the 80px canvas from heightening the header row. */
 .sq-formation {
   flex: none;
-  width: 92px;
-  height: 40px;
-  margin: -6px 0;
+  width: 184px;
+  height: 80px;
+  margin: -10px 0 -22px;
 }
 .sq-head-actions {
   display: flex;
@@ -555,7 +557,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  padding: 11px 12px 10px;
+  padding: 11px 12px 18px;
   background: var(--sq-band);
   border-top: 2px solid var(--sq-rule);
 }
@@ -935,6 +937,28 @@ button.sq-peg:hover {
   font-size: 12.5px;
   line-height: 1.3;
 }
+.sq-live-step {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sq-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+}
+.sq-live-step[data-status="error"] .sq-live-status {
+  color: var(--sq-red-ink);
+}
+.sq-live-step[data-status="waiting-for-host"] .sq-live-status {
+  color: var(--sq-amber-ink);
+}
+.sq-lead .sq-live-step {
+  margin-top: 4px;
+  max-width: 100%;
+}
 .sq-peg-foot {
   display: flex;
   align-items: center;
@@ -1194,37 +1218,165 @@ button.sq-peg:hover {
   margin-left: auto;
 }
 
-/* ---------- the side panel: the comp's narrow sortie line ---------- */
+/* ---------- the narrow layout: a side panel, or a board 900px wide and under ---------- */
 
 .sq[data-layout="narrow"] .sq-line {
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
-  padding: 12px 0;
+  gap: 8px;
+  padding: 10px 0;
 }
-.sq[data-layout="narrow"] .sq-tail {
-  gap: 5px;
-}
-/* The airstream on its pixel rule, without the pegs a side panel has no room for. */
-.sq-air-band {
+/* One compact row per lane: band fill, a 2px top edge in the lane's state ink,
+   and the pace line along the bottom edge. */
+.sq-lane-row {
   position: relative;
-  height: 26px;
+  display: grid;
+  gap: 5px;
+  padding: 8px 10px 16px;
+  background: var(--sq-band);
+  border-top: 2px solid var(--sq-rule);
 }
-.sq-air-band::before {
-  content: "";
+.sq-line[data-lane="stopped"] .sq-lane-row {
+  border-top-color: var(--sq-red);
+}
+.sq-line[data-lane="merge-waits"] .sq-lane-row {
+  border-top-color: var(--sq-amber);
+}
+.sq-line[data-lane="landed"] .sq-lane-row {
+  border-top-color: var(--sq-green);
+}
+/* The tail number and time sit on the title's first line; a long title takes a second line. */
+.sq-lane-row-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+}
+.sq-lane-row-top .sq-tail-number {
+  flex: none;
+  margin-top: 2px;
+}
+.sq-lane-row .sq-line-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+}
+.sq-lane-row-top .sq-time {
+  flex: none;
+  margin-left: auto;
+  line-height: 18px;
+}
+.sq-lane-row-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  min-width: 0;
+}
+/* The Lead chip and its step share one line; the step gives way first. */
+.sq-lane-row .sq-lead {
+  display: flex;
+  flex: 1 1 150px;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  text-align: start;
+}
+.sq-lane-row .sq-lead .sq-ai {
+  flex: none;
+  align-self: center;
+}
+.sq-lane-row .sq-lead .sq-live-step {
+  flex: 1 1 auto;
+  margin-top: 0;
+}
+.sq-lane-row-end {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+.sq-lane-row .sq-actions {
+  flex-wrap: wrap;
+  min-width: 0;
+  margin-top: 0;
+}
+.sq-lane-row .sq-readonly {
+  margin: 0;
+}
+/* The pace line: the airstream in an 8px strip on the row's bottom edge. */
+.sq-pace-line {
   position: absolute;
   left: 0;
   right: 0;
-  top: 50%;
-  height: 2px;
-  margin-top: -1px;
-  background: var(--sq-pixel-rule);
+  bottom: 0;
+  height: 8px;
+  pointer-events: none;
 }
 .sq-active {
   display: grid;
-  gap: 6px;
 }
-.sq-active .sq-peg {
+.sq-ticket-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 2px 8px;
   width: 100%;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--background);
+  color: var(--foreground);
+  text-align: left;
+}
+button.sq-ticket-row {
+  cursor: pointer;
+}
+button.sq-ticket-row:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, var(--background));
+}
+.sq-ticket-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.sq-ticket-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  line-height: 1.3;
+}
+.sq-ticket-state {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.sq-ticket-row[data-state="working"] .sq-ticket-state,
+.sq-ticket-row[data-state="review"] .sq-ticket-state {
+  color: var(--sq-sky-ink);
+}
+.sq-ticket-row[data-state="question"] .sq-ticket-state {
+  color: var(--sq-amber-ink);
+}
+.sq-ticket-row[data-state="failed"] .sq-ticket-state {
+  color: var(--sq-red-ink);
+}
+.sq-ticket-time {
+  grid-column: 2;
+  justify-self: end;
+  color: var(--sq-muted);
+  font-size: 11px;
 }
 .sq-all summary {
   width: fit-content;
@@ -1236,6 +1388,9 @@ button.sq-peg:hover {
 }
 .sq-all summary:hover {
   color: var(--foreground);
+}
+.sq-all-count {
+  font-weight: 400;
 }
 .sq-all ol {
   margin: 6px 0 0;
@@ -1252,6 +1407,13 @@ button.sq-peg:hover {
 }
 .sq-all li > span:nth-child(2) {
   overflow-wrap: anywhere;
+}
+.sq-all-branch {
+  margin: 0;
+  padding: 6px 0 0;
+  border-top: 1px solid var(--sq-rule);
+  font-size: 12px;
+  color: var(--sq-muted);
 }
 .sq-all .sq-id {
   font-family: var(--sq-mono);

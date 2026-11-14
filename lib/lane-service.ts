@@ -137,8 +137,12 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
   // Start reconciliation owns the lane fields and preserves that progress.
   function saveStart(run: LaneRun) {
     const latest = list(run.bbProjectId).find((item) => item.id === run.id);
+    // The owner's Stop or Cancel during a start pass wins over that pass.
+    const owner = latest && (latest.state === "canceled" || (latest.state === "stopped" && latest.stoppedAt !== undefined && latest.stoppedAt !== run.stoppedAt));
     save({ ...run, ...(latest?.workers ? { workers: latest.workers } : {}),
-      ...(latest?.routeOverrides ? { routeOverrides: latest.routeOverrides } : {}) });
+      ...(latest?.routeOverrides ? { routeOverrides: latest.routeOverrides } : {}),
+      ...(owner ? { state: latest.state, stopReason: latest.stopReason, stoppedAt: latest.stoppedAt, canceledAt: latest.canceledAt } : {}) });
+    if (owner) Object.assign(run, { state: latest.state });
   }
 
   async function queueStartWrites(run: LaneRun): Promise<LaneRun> {
@@ -202,7 +206,7 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       }
       try { await bb.sdk.threads.stop({ threadId: run.leadThreadId }); }
       catch (stopError) { warn(run, "stop-after-environment-failure", stopError); }
-      run.state = "stopped";
+      run.state = "stopped"; run.stoppedAt = now();
       run.stopReason = "Lane start didn't finish. Inspect the Lead and Linear writes before resuming.";
       saveStart(run);
       throw new Error(run.stopReason);
@@ -274,7 +278,7 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     } catch (error) {
       if (lifetime.signal.aborted) throw error;
       warn(run, "spawn", error);
-      run.state = "stopped";
+      run.state = "stopped"; run.stoppedAt = now();
       run.stopReason = run.leadThreadId ? "The Lead is linked, but its first prompt couldn't be released. Check its queue before resuming; the lane's slot stays reserved."
         : "The Lead spawn result is unknown. Check BB threads before resuming; this lane's slot stays reserved.";
       saveStart(run);

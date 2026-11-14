@@ -11,6 +11,8 @@ export const workerRunSchema = z.object({
   integration: z.object({ commit: commitSchema, head: commitSchema, verifiedAt: z.number() }).optional(),
   writes: z.object({ started: z.string().optional(), integrated: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
+  /** An open question for the owner. Only the owner's own message in the worker thread clears it. */
+  question: z.object({ id: z.string(), text: z.string(), askedAt: z.number() }).optional(),
 });
 export type WorkerRun = z.infer<typeof workerRunSchema>;
 export type SpawnWorkerCommand = { type: "spawn-worker"; laneId: string; ticketIssueId: string; ticketId: string; route: Route };
@@ -18,6 +20,8 @@ export const spawnWorkerSchema = z.object({ ticketId: z.string().min(1).max(256)
 export const reportSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("done"), commit: commitSchema, summary: z.string().min(1).max(16_000) }).strict(),
   z.object({ type: z.literal("integrated"), ticketId: z.string().min(1), commit: commitSchema }).strict(),
+  /** A worker asks the owner. It shows in Needs you; only the owner's own message in the worker thread clears it. */
+  z.object({ type: z.literal("question"), text: z.string().trim().min(1).max(4_000) }).strict(),
 ]);
 export const workerContract = {
   "workers.route": {

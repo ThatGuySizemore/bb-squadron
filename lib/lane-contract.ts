@@ -8,7 +8,9 @@ export const laneRunSchema = z.object({
   id: z.string(), bbProjectId: z.string(), workspaceId: z.string(),
   specIssueId: z.string(), specId: z.string(), title: z.string(),
   route: routeSchema,
-  state: z.enum(["starting", "flying", "stopped", "landed"]), startedAt: z.number(),
+  state: z.enum(["starting", "flying", "stopped", "landed", "canceled"]), startedAt: z.number(),
+  /** Each stop is its own Needs-you item; canceled lanes keep their branch and records. */
+  stoppedAt: z.number().optional(), canceledAt: z.number().optional(),
   leadThreadId: z.string().nullable(), environmentId: z.string().nullable(), branch: z.string().nullable(),
   acceptOwner: z.boolean(), stopReason: z.string().optional(),
   hostId: z.string().optional(), startStateId: z.string().optional(),
@@ -38,4 +40,13 @@ export const laneContract = {
     input: z.object({ projectId: z.string().min(1).max(256), specId: z.string().min(1).max(256) }).strict(),
     output: laneStartedSchema,
   },
+} as const;
+
+const laneControl = { input: z.object({ projectId: z.string().min(1).max(256), specId: z.string().min(1).max(256) }).strict(),
+  output: z.object({ state: laneRunSchema.shape.state }) };
+/** The owner's lane controls. Client-only, like Start. */
+export const laneLifecycleContract = {
+  "lanes.stop": laneControl,
+  "lanes.resume": laneControl,
+  "lanes.cancel": laneControl,
 } as const;

@@ -8,6 +8,7 @@ export const workerRunSchema = z.object({
   threadId: z.string().nullable(), environmentId: z.string().nullable(), branch: z.string().nullable(),
   notifiedCommit: commitSchema.optional(),
   commit: commitSchema.optional(), summary: z.string().optional(), failure: z.string().optional(),
+  quickCheckFix: z.object({ fromCommit: commitSchema, startedAt: z.number(), state: z.enum(["working", "reported"]) }).optional(),
   integration: z.object({ commit: commitSchema, head: commitSchema, verifiedAt: z.number() }).optional(),
   writes: z.object({ started: z.string().optional(), integrated: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
@@ -20,6 +21,7 @@ export const spawnWorkerSchema = z.object({ ticketId: z.string().min(1).max(256)
 export const reportSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("done"), commit: commitSchema, summary: z.string().min(1).max(16_000) }).strict(),
   z.object({ type: z.literal("integrated"), ticketId: z.string().min(1), commit: commitSchema }).strict(),
+  z.object({ type: z.literal("fix-check"), ticketId: z.string().min(1).max(256) }).strict(),
   z.object({ type: z.literal("progress"), summary: z.string().trim().min(1).max(16_000) }).strict(),
   z.object({ type: z.literal("stuck"), ticketId: z.string().min(1).max(256).optional(), eventId: z.string().min(1).max(256), summary: z.string().trim().min(1).max(16_000) }).strict(),
   z.object({ type: z.literal("failure"), ticketId: z.string().min(1).max(256), eventId: z.string().min(1).max(256), kind: z.enum(["quick-check", "review"]), commit: commitSchema, summary: z.string().trim().min(1).max(16_000) }).strict(),

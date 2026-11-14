@@ -22,6 +22,7 @@ test("trusted role skills and strike reports use saved bindings; two strikes sto
   await host.rpc("lanes.stop"); await host.rpc("lanes.resume");
   const next = await host.harness.lifecycle.reload(async (api) => { await (await import("../server.js")).default(api); });
   const fixedCommit = "c".repeat(40);
+  await next.harness.behavior.callAgentTool("squadron_report", { type: "fix-check", ticketId: "FIX-6" }, { projectId: "proj-one", threadId: "thr_lead" });
   await next.harness.behavior.callAgentTool("squadron_report", { type: "done", commit: fixedCommit, summary: "Fixed head." }, context);
   const result = JSON.parse(String(await next.harness.behavior.callAgentTool("squadron_report", { ...failure, eventId: "check-c", commit: fixedCommit, summary: "Lead: second deliverable failed after the fix." }, { projectId: "proj-one", threadId: "thr_lead" })));
   assert.equal(result.count, 2);
@@ -100,4 +101,36 @@ test("a Lead cannot invent a review strike without the saved changes verdict", a
   await host.call("squadron_report", { type: "done", commit, summary: "Built." }, { projectId: "proj-one", threadId: worker.threadId });
   await assert.rejects(host.call("squadron_report", { type: "failure", ticketId: "FIX-6", kind: "review", commit, eventId: "invented", summary: "Invented review failure." }), /saved changes verdict/);
   assert.equal((await host.call("squadron_status", {})).safety?.strikes?.length ?? 0, 0);
+});
+
+test("a first quick-check strike reserves a worker slot for exactly one repair before review", async (t) => {
+  const host = await laneHost(t); await host.rpc("lanes.start");
+  const worker = await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  const context = { projectId: "proj-one", threadId: worker.threadId };
+  await host.call("squadron_report", { type: "done", commit, summary: "Done." }, context);
+  await assert.rejects(host.call("squadron_report", { type: "fix-check", ticketId: "FIX-6" }), /quick.check strike/);
+  await host.call("squadron_report", { type: "failure", ticketId: "FIX-6", kind: "quick-check", commit, eventId: "bad-check", summary: "Lead: this completed deliverable fails check." });
+  const fixed = "c".repeat(40);
+  await assert.rejects(host.call("squadron_report", { type: "done", commit: fixed, summary: "Unreserved fix." }, context), /repair/);
+  await assert.rejects(host.call("squadron_report", { type: "fix-check", ticketId: "FIX-6" }, context), /Lead/);
+  const result = await host.call("squadron_report", { type: "fix-check", ticketId: "FIX-6" });
+  assert.equal(result.state, "working");
+  await assert.rejects(host.call("squadron_report", { type: "fix-check", ticketId: "FIX-6" }), /one repair/);
+  assert.equal((await host.board()).lanes[0].tickets.find((item) => item.id === "FIX-6")?.state, "working");
+  await host.call("squadron_report", { type: "done", commit: fixed, summary: "Fixed and checked." }, context);
+  assert.equal((await host.call("squadron_status", {})).safety.strikes.length, 1);
+  const second = await host.call("squadron_report", { type: "failure", ticketId: "FIX-6", kind: "quick-check", commit: fixed, eventId: "bad-fix", summary: "Lead: the repaired deliverable still fails check." });
+  assert.equal(second.count, 2); assert.equal(second.stopped, true);
+});
+
+test("quick-check repairs respect the same worker cap as initial and review starts", async (t) => {
+  const host = await laneHost(t); await host.rpc("lanes.start");
+  const first = await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  await host.call("squadron_report", { type: "done", commit, summary: "Done." }, { projectId: "proj-one", threadId: first.threadId });
+  await host.call("squadron_report", { type: "failure", ticketId: "FIX-6", kind: "quick-check", commit, eventId: "cap-check", summary: "Lead: failed quick check." });
+  const second = await host.call("squadron_spawn_worker", { ticketId: "FIX-7" });
+  await host.call("squadron_spawn_worker", { ticketId: "FIX-8" });
+  await assert.rejects(host.call("squadron_report", { type: "fix-check", ticketId: "FIX-6" }), /slots are full/);
+  await host.call("squadron_report", { type: "done", commit, summary: "Done." }, { projectId: "proj-one", threadId: second.threadId });
+  assert.equal((await host.call("squadron_report", { type: "fix-check", ticketId: "FIX-6" })).state, "working");
 });

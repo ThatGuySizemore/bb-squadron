@@ -284,7 +284,42 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
         ...(input.type === "failure" ? { commit: input.commit } : {}), summary: input.summary });
     });
   }
+  async function repairQuickCheck(ticketId: string, context: PluginAgentToolContext) {
+    const bound = await authorize(context);
+    if (bound.role !== "Lead") throw new Error("Only the bound Lead may request a quick-check repair.");
+    return serialize(bound.lane.id, async () => {
+      await authorize(context);
+      const run = current(context.projectId, bound.lane.id);
+      const worker = run.workers?.find((item) => item.ticketId === ticketId);
+      if (run.state !== "flying" || !worker?.commit || !worker.threadId) throw new Error("A quick-check repair requires a reported worker in a flying lane.");
+      if (worker.quickCheckFix) throw new Error("Only one repair is allowed for a quick-check strike.");
+      if ("review" in worker && worker.review) throw new Error("This ticket already has a review. Keep its existing one fix round and scoped second look.");
+      const strikes = run.safety?.strikes.filter((item) => item.ticketId === ticketId) ?? [];
+      if (worker.state !== "reported" || strikes.length !== 1 || strikes[0].kind !== "quick-check" || strikes[0].commit !== worker.commit) {
+        throw new Error("A first quick-check strike against this done commit is required.");
+      }
+      const checkout = await readProjectCheckout(bb, context.projectId, context.signal);
+      if (!checkout?.settings?.ok) throw new Error("Fix Squadron settings before resuming the worker.");
+      if ((run.workers ?? []).filter((item) => !["reported", "integrated"].includes(item.state)).length >= checkout.settings.settings.limits.workersPerLane) throw new Error("All worker slots are full.");
+      const thread = await bb.sdk.threads.get({ threadId: worker.threadId, signal: context.signal });
+      if (!isActiveProjectThread(thread, worker.threadId, run.bbProjectId) || thread.parentThreadId !== run.leadThreadId ||
+        thread.environmentId !== worker.environmentId || thread.runtime.displayStatus !== "idle") throw new Error("The original worker must be linked and idle before its repair starts.");
+      worker.state = "working"; worker.quickCheckFix = { fromCommit: worker.commit, startedAt: now(), state: "working" };
+      saveWorkers(run); // Reserve the cap before any send; ambiguity keeps this slot.
+      try {
+        await bb.sdk.threads.send({ threadId: worker.threadId, senderThreadId: run.leadThreadId!, mode: "steer-if-active",
+          input: [{ type: "text", mentions: [], text: "Squadron authorizes one repair of your reported deliverable's failed quick check. Preserve assertions/timeouts, fix it in your branch, run checks, commit and report the corrected SHA. A second completed failure stops the lane. Quoted Lead summary:\n" + JSON.stringify(strikes[0]) }] });
+      } catch (error) {
+        worker.failure = "Quick-check repair delivery is unconfirmed. Its worker slot stays reserved; check the linked thread before recovery.";
+        saveWorkers(run); bb.log.warn(`Lane ${run.id} worker ${worker.id} repair: ${diagnostic(error)}`);
+        throw new Error(worker.failure);
+      }
+      safety?.actionInLane(context.projectId, run.id, context.threadId);
+      return { state: worker.state, threadId: worker.threadId };
+    });
+  }
   async function report(input: z.infer<typeof reportSchema>, context: PluginAgentToolContext) {
+    if (input.type === "fix-check") return repairQuickCheck(input.ticketId, context);
     if (input.type === "question") return ask(input.text, context);
     if (input.type === "stuck" || input.type === "failure" || input.type === "progress") return safetyReport(input, context);
     const bound = await authorize(context);
@@ -295,6 +330,10 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       const worker = input.type === "done" ? run.workers?.find((item) => item.threadId === context.threadId)
         : run.workers?.find((item) => item.ticketId === input.ticketId);
       if (!worker || (input.type === "done" ? bound.role !== "Worker" : bound.role !== "Lead")) throw new Error("This report is not authorized for this role or ticket.");
+      if (input.type === "done" && worker.commit && input.commit !== worker.commit &&
+        run.safety?.strikes.some((item) => item.ticketId === worker.ticketId && item.kind === "quick-check" && item.commit === worker.commit) &&
+        (worker.state !== "working" || worker.quickCheckFix?.state !== "working")) throw new Error("A changed done commit after a quick-check strike requires the reserved repair.");
+      if (input.type === "done" && worker.quickCheckFix?.state === "working" && input.commit === worker.quickCheckFix.fromCommit) throw new Error("Report the corrected commit for the quick-check repair.");
       if (input.type === "done" && worker.question) throw new Error("Your question is still open. Wait for the owner's answer in this thread before reporting done.");
       const env = await environment(run, worker);
       if (!env || !worker.branch) throw new Error("The worker's worktree is still provisioning. Retry this report when it is ready.");
@@ -307,6 +346,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       if (input.type === "done") {
         if (worker.state === "integrated") return { state: worker.state, commit: worker.commit };
         worker.commit = input.commit; worker.summary = input.summary; worker.state = "reported";
+        if (worker.quickCheckFix?.state === "working") worker.quickCheckFix.state = "reported";
         saveWorkers(run);
         if (!worker.writes?.started || worker.writeError) await queueWrites(run, worker, "started", snapshot);
         if (worker.notifiedCommit !== worker.commit) {
@@ -332,7 +372,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
   }
   bb.agents.registerTool({ name: "squadron_spawn_worker", description: "Start one frontier ticket as a child worker, within this Lead's bound lane and worker cap.",
     parameters: spawnWorkerSchema, execute: async ({ ticketId }, context) => JSON.stringify(await spawn(ticketId, context)) });
-  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests, progress after a time nudge, truly stuck with no way forward, or an owner question. The Lead reports quick-check or saved review failure of a done commit with a stable eventId and its summary; worker stuck reports go to the Lead for its summary. The bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
+  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests, progress after a time nudge, truly stuck with no way forward, or an owner question. The Lead reports quick-check or saved review failure of a done commit with a stable eventId and its summary; worker stuck reports go to the Lead for its summary. Lead fix-check reserves one pre-review quick-check repair; the bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
     parameters: reportSchema, execute: async (input, context) => JSON.stringify(await report(input, context)) });
   bb.agents.registerTool({ name: "squadron_status", description: "Read this thread's trusted Squadron lane, workers and frontier. No Linear write.", parameters: z.object({}).strict(),
     execute: async (_input, context) => {

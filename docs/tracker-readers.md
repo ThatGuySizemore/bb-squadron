@@ -17,6 +17,12 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 `TrackerReader.getSnapshot(bbProjectId)` may return a snapshot or a promise. `onChange(listener)` announces changes by BB project ID and returns an unsubscribe function. It exposes no tracker writes.
 
+`TrackerReader.refresh(bbProjectId)` is optional. It returns a fresh read for a project no poller keeps current: the picker's counts, or a board that starts showing a project. A reader that reads on every `getSnapshot` call can omit it.
+
+## Polling
+
+Only the project a board page shows is polled. The page reads its board every 30 s while visible, and `registerBoard` treats a project as shown for 75 s after its last board read. The board watcher refreshes only shown projects. The Linear mirror's poller reads only bound projects that `isShown` reports. Other readers add no background poller of their own. `board.projectCounts` reads every project once, when the picker opens.
+
 `tracker.snapshot` exposes the same schema through RPC. `registerTracker` in [`lib/tracker-service.ts`](../lib/tracker-service.ts) selects the reader. SIZE-949 supplies Linear through `linearTrackerSnapshot` in [`lib/tracker-snapshot.ts`](../lib/tracker-snapshot.ts). GitHub and local readers are the next tickets; until installed they return an explicit unavailable-reader error without requesting Linear setup.
 
 ## Detection and binding

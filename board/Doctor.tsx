@@ -29,8 +29,9 @@ export function DoctorChecks({ report }: { report: DoctorReport }) {
   );
 }
 
-export function DoctorPanel({ open, id }: { open: boolean; id: string }) {
-  const { projectId } = useBbContext();
+export function DoctorPanel({ open, id, projectId: chosen }: { open: boolean; id: string; projectId?: string | null }) {
+  const context = useBbContext().projectId;
+  const projectId = chosen === undefined ? context : chosen;
   const query = useRpcQuery({
     contract: doctorContract, method: "doctor", input: { projectId: projectId ?? "" },
     enabled: open && projectId !== null,

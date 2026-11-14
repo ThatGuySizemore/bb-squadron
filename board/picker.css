@@ -1,0 +1,145 @@
+/* ---------- project picker (SIZE-953, today's look) ---------- */
+
+/* The header's project name is a quiet control beside the page title. */
+.sq-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  max-width: 280px;
+  padding: 0 10px;
+  border: 1px solid var(--sq-rule);
+  border-radius: 2px;
+  color: var(--foreground);
+  background: var(--background);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 620;
+  cursor: pointer;
+  transition: background-color 120ms;
+}
+.sq-picker-button:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, var(--background));
+}
+.sq-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sq-picker-chevron {
+  flex: none;
+  fill: var(--sq-muted);
+}
+
+/* The open picker sits in the page flow under the header, flat, like Doctor. */
+.sq-picker {
+  margin-top: 16px;
+  padding: 4px 12px;
+  border: 1px solid var(--sq-rule);
+  background: var(--background);
+  font-size: 13px;
+}
+.sq-picker .sq-clear {
+  margin: 8px 0;
+}
+.sq-picker-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sq-picker-list li + li {
+  border-top: 1px solid var(--sq-rule);
+}
+.sq-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 118px minmax(150px, 40%);
+  align-items: baseline;
+  gap: 12px;
+  width: calc(100% + 24px);
+  margin: 0 -12px;
+  padding: 9px 12px;
+  border: 0;
+  color: var(--foreground);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 120ms;
+}
+.sq-picker-row:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, var(--background));
+}
+.sq-picker-row[aria-current="true"] {
+  background: var(--sq-band);
+}
+.sq-picker-row-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sq-picker-row[aria-current="true"] .sq-picker-row-name::after {
+  content: " · showing";
+  font-weight: 400;
+  color: var(--sq-muted);
+}
+.sq-picker-row .sq-tag {
+  justify-self: start;
+}
+.sq-picker-counts {
+  justify-self: end;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sq-picker-counts[data-unknown="true"] {
+  font-weight: 400;
+  color: var(--sq-muted);
+}
+.sq-picker-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--sq-red-ink);
+}
+
+/* Doctor's verdict rides in its header button, so status shows without opening it. */
+.sq-doctor-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.sq-doctor-status {
+  padding: 0 5px;
+  border: 1px solid var(--sq-rule);
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+.sq-doctor-status[data-status="pass"] {
+  color: var(--sq-green-ink);
+}
+.sq-doctor-status[data-status="fix"] {
+  border-style: dashed;
+  border-color: var(--sq-amber);
+  color: var(--sq-amber-ink);
+}
+
+/* A realtime update the board couldn't use: visible, plain, never the payload. */
+.sq-signal {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--sq-red-ink);
+}
+
+@container (max-width: 650px) {
+  .sq-picker-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .sq-picker-counts {
+    grid-column: 1 / -1;
+    justify-self: start;
+    text-align: left;
+  }
+}

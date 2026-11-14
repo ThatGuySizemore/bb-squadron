@@ -23,6 +23,8 @@ export interface DoctorInput {
   settingsMarkdown: string | null;
   issueTrackerMarkdown: string | null;
   linearConnected: boolean;
+  /** A connection note, including a temporary wait for Linear's request budget. */
+  linearMessage?: string;
   /** Why the Linear reader couldn't resolve the Scope, such as a name that matches nothing. */
   linearScopeProblem?: string | null;
   ghAuthenticated: boolean;
@@ -71,7 +73,7 @@ export function doctor(input: DoctorInput): DoctorReport {
     },
     ...((tracker.kind === "linear" ? [{
       id: "linear", name: "Linear key", status: input.linearConnected ? "pass" : "fix",
-      message: input.linearConnected ? "The Linear key works." : "Set a working Linear personal API key in BB's secret settings.",
+      message: input.linearConnected ? input.linearMessage ?? "The Linear key works." : "Set a working Linear personal API key in BB's secret settings.",
     }] : []) as DoctorCheck[]),
     {
       id: "github", name: "GitHub login", status: input.ghRequired === false || input.ghAuthenticated ? "pass" : "fix",

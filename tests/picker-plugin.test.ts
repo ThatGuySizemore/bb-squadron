@@ -153,8 +153,16 @@ test("the Linear poller keeps every discovered project current without an open b
   await settleWatchers();
   t.mock.timers.tick(30_000);
   await settleWatchers();
-  assert.equal(await synced("proj-squadron"), 1_030_000, "the first project keeps polling");
-  assert.equal(await synced("proj-wordwell"), 1_030_000, "the second project keeps polling");
+  assert.equal(await synced("proj-squadron"), 1_000_000, "the first background project does not read at 30 seconds");
+  assert.equal(await synced("proj-wordwell"), 1_000_000, "the second background project does not read at 30 seconds");
+  t.mock.timers.tick(269_999);
+  await settleWatchers();
+  assert.equal(await synced("proj-squadron"), 1_000_000, "the first project waits the full five minutes");
+  assert.equal(await synced("proj-wordwell"), 1_000_000, "the second project waits the full five minutes");
+  t.mock.timers.tick(1);
+  await settleWatchers();
+  assert.equal(await synced("proj-squadron"), 1_300_000, "the first project keeps polling");
+  assert.equal(await synced("proj-wordwell"), 1_300_000, "the second project keeps polling");
 });
 
 test("the board watcher refreshes all projects, including projects no page has ever shown", async (t) => {

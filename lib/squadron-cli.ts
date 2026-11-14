@@ -1,5 +1,7 @@
 import { cliCommand, defineCli, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { needsYou, type Board, type NeedsYouItem, type NeedsYouKind } from "./board-model.js";
+import { helperCommands } from "./helper-cli.js";
+import type { registerHelper } from "./helper.js";
 
 const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 const unreadable = "Couldn't read this project. Make sure its machine is online.";
@@ -20,7 +22,7 @@ function openNeeds(board: Board): NeedsYouItem[] {
 const incomplete = (board: Board | null) => !board || board.tracker?.state !== "current";
 
 /** Register once; later Helper and lane commands belong in this same command table. */
-export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }) {
+export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, helper: ReturnType<typeof registerHelper>) {
   const options = { project: { type: "string", description: "Narrow to a project ID or unique name; otherwise show all projects." } } as const;
   async function projects(selected?: string) {
     const all = await bb.sdk.projects.list();
@@ -41,6 +43,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
   bb.cli.register(defineCli({
     name: "squadron", summary: "See your projects and what needs you.",
     commands: {
+      ...helperCommands(helper),
       needs: cliCommand({
         summary: "Show what needs you, with links.",
         options,

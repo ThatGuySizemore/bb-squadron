@@ -6,10 +6,10 @@ import type { KeyboardEvent, ReactNode } from "react";
 import { Term } from "./Term.js";
 import "./how.css";
 
-type Stop = { key: string; name: ReactNode; who: string; you?: ReactNode };
+type Stop = { key: string; name: ReactNode; who: ReactNode; you?: ReactNode };
 
 const STOPS: Stop[] = [
-  { key: "plan", name: "Plan", who: "You and an agent", you: "You plan it" },
+  { key: "plan", name: "Plan", who: <>You and the <Term text="Helper" /></>, you: "You plan it" },
   { key: "spec", name: <Term text="Spec" />, who: "The agent splits it into tickets" },
   { key: "ready", name: <Term text="Ready" />, who: "Squadron shows it once a ticket can start" },
   { key: "lane", name: <Term text="Lane" />, who: "A Lead and its workers build it", you: "You answer questions" },

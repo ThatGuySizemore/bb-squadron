@@ -213,7 +213,8 @@ test("CLI help, usage errors and an empty install stay short and don't run lane 
   assert.equal(help.exitCode, 0);
   assert.match(help.stdout, /bb squadron status/);
   assert.match(help.stdout, /bb squadron needs/);
-  assert.doesNotMatch(help.stdout, /bb squadron (helper|start|stop|resume|merge)/);
+  assert.match(help.stdout, /bb squadron helper use/);
+  assert.doesNotMatch(help.stdout, /bb squadron (start|stop|resume|merge)/);
   assert.deepEqual(await harness.behavior.runCli(["status"]), { exitCode: 0, stdout: "No projects.\n", stderr: "" });
   for (const args of [["needs", "--project"], ["status", "--unknown"], ["helper", "use"], ["start", "FIX-5"]]) {
     assert.equal((await harness.behavior.runCli(args)).exitCode, 1);

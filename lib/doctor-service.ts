@@ -64,12 +64,15 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     ];
     if (inspection) {
       configurationFiles.push(
-        { id: "playbook", name: "House rules", path: joinHostPath({ rootPath: inspection.homePath, relativePath: ".bb-squadron/playbook.md" })!, hostId, exists: inspection.playbookExists },
+        { id: "playbook", name: "House rules", path: joinHostPath({ rootPath: inspection.homePath,
+          relativePath: inspection.houseRulesExists || !inspection.playbookExists ? ".bb-squadron/house-rules.md" : ".bb-squadron/playbook.md" })!,
+          hostId, exists: inspection.houseRulesExists || inspection.playbookExists },
         { id: "machine-profile", name: "This machine", path: joinHostPath({ rootPath: inspection.homePath, relativePath: ".bb-squadron/machine.md" })!, hostId, exists: inspection.machineProfileExists },
       );
     }
     const report = doctor({
       skills: installed, setupFiles: inspection?.setupFiles ?? [], configurationFiles,
+      legacyHouseRulesExists: inspection?.playbookExists,
       settingsMarkdown: config.settingsMarkdown, issueTrackerMarkdown: config.issueTrackerMarkdown,
       linearConnected: linear.status === "fulfilled" && linear.value.status === "connected",
       linearScopeProblem: config.tracker.kind === "linear" ? linearScopeProblem(projectId) : null,

@@ -71,7 +71,7 @@ test("Doctor reads the selected checkout on its machine and exposes checks and f
     ]);
     assert.deepEqual(report.configurationFiles.map(({ path, hostId, exists }) => [path, hostId, exists]), [
       ["/repo/AGENTS.md", "repo-machine", true], ["/repo/docs/agents/squadron.md", "repo-machine", true],
-      ["/owner/.bb-squadron/playbook.md", "repo-machine", false], ["/owner/.bb-squadron/machine.md", "repo-machine", false],
+      ["/owner/.bb-squadron/house-rules.md", "repo-machine", false], ["/owner/.bb-squadron/machine.md", "repo-machine", false],
     ]);
   } finally { await harness.lifecycle.dispose(); }
 });

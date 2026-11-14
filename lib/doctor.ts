@@ -30,6 +30,8 @@ export interface DoctorInput {
   /** False only for a verified no-remote local tracker checkout. */
   ghRequired?: boolean;
   configurationFiles: ConfigurationFile[];
+  /** The host found the legacy name as well as the selected House rules file. */
+  legacyHouseRulesExists?: boolean;
 }
 
 export const requiredSkills = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
@@ -80,8 +82,14 @@ export function doctor(input: DoctorInput): DoctorReport {
     ...(["playbook", "machine-profile"] as const).map((id): DoctorCheck => {
       const file = input.configurationFiles.find((file) => file.id === id);
       const name = id === "playbook" ? "House rules" : "This machine";
+      if (id === "playbook" && file?.exists && /(?:^|[\\/])playbook\.md$/.test(file.path)) {
+        return { id, name, status: "warning", message: "Rename playbook.md to house-rules.md" };
+      }
+      if (id === "playbook" && file?.exists && input.legacyHouseRulesExists) {
+        return { id, name, status: "warning", message: "Both house-rules.md and playbook.md are present. Squadron reads house-rules.md." };
+      }
       return { id, name, status: file?.exists ? "pass" : "warning",
-        message: file?.exists ? `${name} is present.` : `Optional: create ${file?.path ?? (id === "playbook" ? "~/.bb-squadron/playbook.md" : "~/.bb-squadron/machine.md")} from the bundled starter template. This file doesn't block Start.` };
+        message: file?.exists ? `${name} is present.` : `Optional: create ${file?.path ?? (id === "playbook" ? "~/.bb-squadron/house-rules.md" : "~/.bb-squadron/machine.md")} from the bundled starter template. This file doesn't block Start.` };
     }),
     { id: "tracker", name: tracker.kind ? `Tracker: ${trackerName(tracker.kind)}` : "Tracker", status: tracker.kind ? "pass" : "fix", message: tracker.reason },
   ];

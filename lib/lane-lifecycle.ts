@@ -75,9 +75,10 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
         saveLifecycle(resumed, { state: "stopped", stoppedAt: now(), stopReason: "Resume couldn't reach the Lead. Open its thread, then resume again." });
         throw new Error("Resume couldn't reach the Lead. The lane stays stopped; open its thread, then resume again.");
       }
-      // Failed worker records stay reserved for recovery; a reported worker waits for its review.
+      // Only working workers resume. Failed records stay reserved for recovery;
+      // reported and integrated workers restart only through review's cap reservation.
       for (const worker of resumed.workers ?? []) {
-        if (!worker.threadId || (worker.state !== "working" && worker.state !== "spawning")) continue;
+        if (!worker.threadId || worker.state !== "working") continue;
         try { await wake(worker.threadId, RESUMED_WORKER); }
         catch (error) { bb.log.warn(`Lane ${current.id} worker ${worker.id} resume: ${diagnostic(error)}`); }
       }

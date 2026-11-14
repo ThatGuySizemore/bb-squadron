@@ -74,6 +74,8 @@ test("Stop parks the lane in Needs you with one push; Resume clears it and wakes
   const host = await laneHost(t);
   await host.rpc("lanes.start");
   const worker = await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  const reported = await host.call("squadron_spawn_worker", { ticketId: "FIX-7" });
+  await host.call("squadron_report", { type: "done", commit, summary: "Built with tests." }, { threadId: reported.threadId, projectId: "proj-one" });
   await host.rpc("lanes.stop");
   let board = await host.board(); await host.settle();
   assert.equal(board.lanes[0].state, "stopped");
@@ -81,7 +83,7 @@ test("Stop parks the lane in Needs you with one push; Resume clears it and wakes
     kind: "stopped", specId: "FIX-5", threadId: "thr_lead",
     text: "You stopped this lane. Its threads, worktrees and branch are kept. Resume, re-plan or cancel it.",
   }]);
-  assert.deepEqual(host.harness.inspection.sdk.callsTo("threads.stop").map(([args]) => (args as { threadId: string }).threadId).sort(), ["thr_lead", worker.threadId].sort());
+  assert.deepEqual(host.harness.inspection.sdk.callsTo("threads.stop").map(([args]) => (args as { threadId: string }).threadId).sort(), ["thr_lead", worker.threadId, reported.threadId].sort());
   assert.equal(host.harness.inspection.sdk.callsTo("threads.delete").length + host.harness.inspection.sdk.callsTo("threads.archive").length, 0);
   assert.deepEqual(host.pushes, [{ title: "FIX-5 stopped", body: "You stopped this lane. Its threads, worktrees and branch are kept. Resume, re-plan or cancel it.", threadId: "thr_lead" }]);
   assert.equal((await host.dispatch("thr_lead", { initiator: "agent", originPluginId: "squadron" })).action, "reject", "nothing Squadron sends wakes a stopped lane");
@@ -94,6 +96,7 @@ test("Stop parks the lane in Needs you with one push; Resume clears it and wakes
   assert.equal(board.lanes[0].stopReason, undefined);
   assert.deepEqual(needsYou(board), []);
   assert.deepEqual(host.sends.filter((send) => /resumed/.test(send.text)).map((send) => send.threadId).sort(), ["thr_lead", worker.threadId].sort());
+  assert.ok(!host.sends.some((send) => send.threadId === reported.threadId && /resumed/.test(send.text)), "a reported worker waits for its review");
   assert.ok(host.sends.every((send) => !/resumed/.test(send.text) || /grants no other approval/.test(send.text)));
   assert.equal(host.pushes.length, 1, "resuming pushes nothing");
   await assert.rejects(host.rpc("lanes.resume"), /Only a stopped lane can resume/);

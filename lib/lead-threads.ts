@@ -18,9 +18,13 @@ export interface LeadThread {
   branch: string;
   /** The Lead's child threads that aren't archived or deleted. */
   workers?: WorkerThread[];
+  /** A thread Squadron didn't start that names the spec: an Outside lane. Squadron never steers it. */
+  outside?: true;
+  /** Branches that may be the lane's integration branch, most likely first. The first readable one wins. */
+  branchCandidates?: string[];
 }
 
-async function readWorkers(bb: BbPluginApi, projectId: string, leadId: string): Promise<WorkerThread[]> {
+export async function readWorkers(bb: BbPluginApi, projectId: string, leadId: string): Promise<WorkerThread[]> {
   const workers: WorkerThread[] = [];
   for (let offset = 0; ; offset += 200) {
     const threads = await bb.sdk.threads.list({ projectId, parentThreadId: leadId, archived: false, includeHidden: true, limit: 200, offset });

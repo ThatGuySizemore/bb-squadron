@@ -12,8 +12,9 @@ import type { SettingsResult } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
-import type { TrackerReader } from "./tracker-contract.js";
+import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import { readLaneProgress } from "./lane-progress.js";
+import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
@@ -24,6 +25,8 @@ export interface BoardSources {
   /** Rows from BB's pull-request plugin for the Leads' environments. */
   pullRequests?(environmentIds: string[], signal?: AbortSignal): Promise<Record<string, PullRequestRow>>;
   tracker: TrackerReader;
+  /** Lanes started outside Squadron, shown read-only. */
+  outside?: OutsideLaneReader;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -58,6 +61,18 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return entry;
   };
 
+  /** Squadron's Leads, then the outside lanes flying the specs no Squadron Lead or planning thread has. */
+  async function lanesOf(projectId: string, snapshot: TrackerSnapshot, planning: PlanningThread[] = []): Promise<LeadThread[]> {
+    const leads = await sources.leads?.(projectId) ?? [];
+    if (!sources.outside) return leads;
+    try { return [...leads, ...await sources.outside(projectId, outsideLaneSpecs(snapshot, leads, planning))]; }
+    catch (error) {
+      // Outside lanes are only shown; failing to read them never hides Squadron's own lanes.
+      bb.log.warn(`outside lanes unavailable: ${error instanceof Error ? error.name : "unknown"}`);
+      return leads;
+    }
+  }
+
   async function readSettings(projectId: string, signal: AbortSignal): Promise<SettingsResult | null> {
     try { return (await readProjectCheckout(bb, projectId, signal))?.settings ?? null; }
     catch { return null; }
@@ -78,10 +93,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (snapshot.kind === "linear" && (fresh || !entry.connection || at - entry.connection.at > REUSE_MS)) entry.connection = { at, value: await connection() };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
-    const leads = await sources.leads?.(projectId);
-    const progress = await readLaneProgress(bb, snapshot, leads ?? [], lifetime.signal);
     const planning = await sources.planning?.(projectId);
-    const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
+    const leads = await lanesOf(projectId, snapshot, planning);
+    const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
+    const environments = leads.flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
     const { board } = deriveBoard({
       snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
@@ -148,8 +163,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const note = snapshot.error ?? (snapshot.kind === "linear" && !snapshot.project ? "Choose its Linear project on its board."
         : snapshot.syncedAt === null ? "Not read yet." : null);
       if (note) return { id: projectId, tracker: snapshot.kind, ready: null, flying: null, note };
-      const leads = await sources.leads?.(projectId);
-      const progress = await readLaneProgress(bb, snapshot, leads ?? [], lifetime.signal);
+      const leads = await lanesOf(projectId, snapshot, await sources.planning?.(projectId));
+      const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
       const { board } = deriveBoard({ snapshot, connection: { status: "connected", message: "" }, settings: null, now: now(),
         leads, ...progress });
       return { id: projectId, tracker: snapshot.kind, ready: board.ready.length,

@@ -272,7 +272,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
             lane.title
           )}
         </h3>
-        <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, `the Lead thread for ${lane.specId}`)}>
+        <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, lane.outside ? `the thread flying ${lane.specId}` : `the Lead thread for ${lane.specId}`)}>
           <AiChip route={lane.lead} prefix="Lead" />
         </button>
         <div className="sq-tail-status">
@@ -297,8 +297,11 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
             <span className="sq-pr-checks">{PR_CHECKS[lane.pr.checks]}</span>
           </button>
         ) : null}
+        {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
         <span className="sq-branch">{lane.branch}</span>
-        {lane.state !== "landed" ? (
+        {lane.outside ? (
+          <p className="sq-readonly">Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge.</p>
+        ) : lane.state !== "landed" ? (
           <div className="sq-actions">
             {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} localMerge={lane.localMerge} /> : null}
             {stopped ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}

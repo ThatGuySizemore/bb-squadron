@@ -16,3 +16,7 @@ Spec A also requires persistent state that a Linear catch-up cannot rebuild:
 - Receipts retain pending, blocked and delivered results and the minimum delivery evidence needed for dedupe and recovery. A pending receipt does not establish a change in Linear.
 
 These are the state required to deliver and prove a write, not a second tracker or custody ledger. Linear remains authoritative for delivered work. The board derives its rows and Needs you from the mirror and delivery health rather than storing another set of decisions. See [Linear writes](../linear-outbox.md) for the outbox, grants, receipts and recovery boundaries.
+
+## Spec B clarification
+
+Spec B SIZE-872 also retains each BB project's auto-start choice as durable owner state. It defaults off and cannot be rebuilt from Linear or discarded with the mirror.

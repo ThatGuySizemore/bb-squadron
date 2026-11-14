@@ -195,7 +195,8 @@
 .sq-btn[data-tone="danger"]:hover {
   background: color-mix(in oklab, var(--sq-red) 9%, transparent);
 }
-.sq-btn:disabled {
+.sq-btn:disabled,
+.sq-switch:disabled {
   opacity: 0.42;
   cursor: not-allowed;
 }

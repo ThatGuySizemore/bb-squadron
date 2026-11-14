@@ -11,7 +11,7 @@ import { end, ready } from "./fixtures/linear-mirror.js";
 const settings = readFileSync("tests/fixtures/squadron.md", "utf8");
 const commit = "a".repeat(40);
 const head = "b".repeat(40);
-async function setup(t: import("node:test").TestContext, options: { verify?: boolean; spawnFails?: boolean; provisioning?: boolean; releaseFails?: "lead" | "worker"; reviewName?: string } = {}) {
+async function setup(t: import("node:test").TestContext, options: { verify?: boolean; spawnFails?: boolean; provisioning?: boolean; releaseFails?: "lead" | "worker"; reviewName?: string; workerReleaseGate?: Promise<void> } = {}) {
   const nodes = structuredClone(workspaceIssues.data.issues.nodes);
   const original = nodes.find((issue) => issue.id === "fix-6")!;
   for (const i of [7, 8, 10, 11]) nodes.push({ ...structuredClone(original), id: `fix-${i}`, identifier: `FIX-${i}`, title: `Ticket ${i}` });
@@ -51,6 +51,7 @@ async function setup(t: import("node:test").TestContext, options: { verify?: boo
             const config = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: threadId }, project: { id: "proj-one" } }));
             firstConfigurations.push([threadId, config.tools.map((tool) => tool.name).sort()]);
             if (options.releaseFails === (threadId === "thr_lead" ? "lead" : "worker")) throw new Error("fake-private-release-error");
+            if (threadId !== "thr_lead" && options.workerReleaseGate) await options.workerReleaseGate;
             const value = threads.get(threadId)!;
             threads.set(threadId, { ...value, environmentId: `env-${threadId}` });
             return { ok: true as const, delivery: "sent" as const };
@@ -262,4 +263,30 @@ test("the manual lane's Waiting to Merge vocabulary represents In Review without
   const worker = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
   await call("squadron_report", { type: "done", commit, summary: "Tests pass." }, { threadId: worker.threadId, projectId: "proj-one" });
   assert.equal((await call("squadron_report", { type: "integrated", ticketId: "FIX-6", commit })).state, "integrated");
+});
+
+test("auto-start's concurrent timer preserves a bound worker waiting on its first prompt without duplicate Leads or workers", async (t) => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const { start, call, board, harness, firstConfigurations } = await setup(t, { workerReleaseGate: gate });
+  await start();
+  const spawning = call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  try {
+    for (let i = 0; i < 200 && firstConfigurations.length < 2; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(firstConfigurations.length, 2, "the saved child binding was visible before release");
+    await harness.behavior.callRpc("lanes.setAutoStart", { projectId: "proj-one", enabled: true });
+    const timer = harness.behavior.runService("lane-starts"); t.after(() => timer.controller.abort());
+    const waiting = await board();
+    assert.equal(waiting.autoStart, true);
+    assert.equal(waiting.lanes.length, 1);
+    assert.equal(waiting.lanes[0].tickets.find((ticket) => ticket.id === "FIX-6")?.threadId, "thr_worker_2");
+    assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 2);
+  } finally { release(); }
+  const worker = await spawning;
+  await call("squadron_report", { type: "done", commit, summary: "Combined source checks." }, { threadId: worker.threadId, projectId: "proj-one" });
+  await call("squadron_report", { type: "integrated", ticketId: "FIX-6", commit });
+  const result = await board();
+  assert.equal(result.lanes[0].tickets.find((ticket) => ticket.id === "FIX-6")?.state, "branch");
+  assert.equal(result.lanes[0].tickets.find((ticket) => ticket.id === "FIX-7")?.state, "ready");
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 2);
 });

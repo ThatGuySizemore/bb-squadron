@@ -14,10 +14,15 @@ import { readProjectCheckout } from "./project-checkout.js";
 import { signedCommentAvatarUrl } from "./linear-avatar.js";
 import { LinearRequestError } from "./linear-auth.js";
 import { ACCEPT_OWNER } from "./linear-issues.js";
+import type { SettingsResult } from "./squadron-settings.js";
 
 export interface LaneSources {
   connection(): Promise<LinearConnectionState>;
-  mirror: { getSnapshot(projectId: string): MirrorSnapshot; sync(projectId: string): Promise<MirrorSnapshot> };
+  mirror: {
+    getSnapshot(projectId: string): MirrorSnapshot;
+    sync(projectId: string): Promise<MirrorSnapshot>;
+    onChange?(listener: (projectId: string) => void): () => void;
+  };
   doctor: { check(projectId: string, environmentId?: string, signal?: AbortSignal): Promise<DoctorReport> };
   outbox: Pick<ReturnType<typeof registerLinearOutbox>, "enqueue">;
 }
@@ -30,6 +35,19 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
   bb.onDispose(() => { lifetime.abort(); listeners.clear(); });
   const db = bb.storage.database();
   db.exec(`CREATE TABLE IF NOT EXISTS squadron_lanes (id TEXT PRIMARY KEY, bb_project_id TEXT NOT NULL, run_json TEXT NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS squadron_lane_settings (bb_project_id TEXT PRIMARY KEY, auto_start INTEGER NOT NULL DEFAULT 0)`);
+
+  function autoStart(projectId: string): boolean {
+    const row = db.prepare(`SELECT auto_start FROM squadron_lane_settings WHERE bb_project_id=?`).get(projectId) as { auto_start: number } | undefined;
+    return row?.auto_start === 1;
+  }
+  function setAutoStart(projectId: string, enabled: boolean) {
+    db.prepare(`INSERT INTO squadron_lane_settings (bb_project_id, auto_start) VALUES (?, ?)
+      ON CONFLICT(bb_project_id) DO UPDATE SET auto_start=excluded.auto_start`).run(projectId, enabled ? 1 : 0);
+    for (const listener of listeners) listener(projectId);
+    schedule(projectId);
+    return { enabled: autoStart(projectId) };
+  }
 
   function list(projectId: string): LaneRun[] {
     return (db.prepare(`SELECT run_json FROM squadron_lanes WHERE bb_project_id=? ORDER BY rowid`).all(projectId) as { run_json: string }[])
@@ -41,11 +59,62 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     db.prepare(`INSERT INTO squadron_lanes (id, bb_project_id, run_json) VALUES (?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET run_json=excluded.run_json`).run(value.id, value.bbProjectId, JSON.stringify(value));
     for (const listener of listeners) listener(run.bbProjectId);
+    schedule(run.bbProjectId);
   }
   const onChange = (listener: (projectId: string) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   // Serialize each project's starts across different specs; share duplicate clicks.
   const queues = new Map<string, Promise<unknown>>();
   const starting = new Map<string, Promise<LaneStarted>>();
+  const reconciling = new Map<string, Promise<void>>();
+  const cachedSettings = new Map<string, { at: number; value: SettingsResult | null }>();
+
+  async function hasAutoStartCandidate(projectId: string): Promise<boolean> {
+    if (!autoStart(projectId)) return false;
+    const snapshot = sources.mirror.getSnapshot(projectId);
+    // Recovery and restart catch-up belong to the mirror's poller, including
+    // its quiet backoff and rate-limit budget. Automatic no-ops never sync it.
+    if (!snapshot.binding || snapshot.error || snapshot.syncedAt === null || snapshot.syncedAt < startedAt) return false;
+    let settings = cachedSettings.get(projectId);
+    if (!settings || now() - settings.at >= 60_000) {
+      const checkout = await readProjectCheckout(bb, projectId, lifetime.signal);
+      cachedSettings.set(projectId, settings = { at: now(), value: checkout?.settings ?? null });
+    }
+    const result = helperCore({ snapshot, settings: settings.value, lanes: list(projectId),
+      // This local screen grants no dispatch. Doctor and a fresh connection,
+      // settings and mirror recheck still gate every candidate below.
+      connection: { status: "connected", message: "" }, writes: null,
+      now: now(), startedAt, autoStart: autoStart(projectId), action: { type: "reconcile" } });
+    return result.commands.some((command) => command.type === "start-lead");
+  }
+
+  function serialize<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = queues.get(projectId) ?? Promise.resolve();
+    const running = previous.catch(() => undefined).then(operation);
+    queues.set(projectId, running);
+    void running.finally(() => {
+      if (queues.get(projectId) === running) queues.delete(projectId);
+    }).catch(() => undefined);
+    return running;
+  }
+
+  /** Mirror and lifecycle changes use the same queue as the board's Start. */
+  function reconcile(projectId: string): Promise<void> {
+    const existing = reconciling.get(projectId);
+    if (existing) return existing;
+    const running = serialize(projectId, async () => {
+      // Each iteration refreshes Doctor, settings, blockers and reservations.
+      while (!lifetime.signal.aborted && autoStart(projectId) && await start(projectId)) { /* fill available slots */ }
+    });
+    reconciling.set(projectId, running);
+    void running.finally(() => { reconciling.delete(projectId); }).catch(() => undefined);
+    return running;
+  }
+  function schedule(projectId: string) {
+    if (lifetime.signal.aborted || !autoStart(projectId)) return;
+    void reconcile(projectId).catch((error) => {
+      if (!lifetime.signal.aborted) bb.log.warn(`Auto-start ${projectId}: ${diagnostic(error)}`);
+    });
+  }
 
   function avatarUrl(): string | undefined {
     return signedCommentAvatarUrl(bb.server.experimental_appUrl, bb.pluginId, "Lead") ?? undefined;
@@ -156,19 +225,28 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     return running;
   }
 
-  async function start(projectId: string, specId: string): Promise<LaneStarted> {
+  async function start(projectId: string, specId: string): Promise<LaneStarted>;
+  async function start(projectId: string): Promise<LaneStarted | null>;
+  async function start(projectId: string, specId?: string): Promise<LaneStarted | null> {
     const signal = lifetime.signal;
+    if (specId === undefined && !await hasAutoStartCandidate(projectId)) return null;
     const report = await sources.doctor.check(projectId, undefined, signal);
     if (!report.ready) throw new Error(`Open Doctor before starting: ${report.checks.filter((check) => check.status === "fix").map((check) => check.message).join(" ")}`);
     // Refresh the mirror before making a dispatch decision, including cross-spec blockers.
     const snapshot = await sources.mirror.sync(projectId);
     const connection = await sources.connection();
     const checkout = await readProjectCheckout(bb, projectId, signal);
+    cachedSettings.set(projectId, { at: now(), value: checkout?.settings ?? null });
     const result = helperCore({ snapshot, connection, settings: checkout?.settings ?? null, writes: null,
-      now: now(), startedAt, lanes: list(projectId), action: { type: "start", specId } });
-    if (!result.start?.allowed) throw new Error(result.start && !result.start.allowed ? result.start.reason : "This spec can't start.");
+      now: now(), startedAt, lanes: list(projectId), autoStart: autoStart(projectId),
+      action: specId === undefined ? { type: "reconcile" } : { type: "start", specId } });
+    if (!result.start?.allowed) {
+      if (specId === undefined) return null;
+      throw new Error(result.start && !result.start.allowed ? result.start.reason : "This spec can't start.");
+    }
     const command = result.commands.find((command) => command.type === "start-lead");
     if (!command || !checkout || !connection.workspace || !connection.mode || !snapshot.binding) throw new Error("The lane's project context is unavailable. Refresh the board.");
+    specId = command.specId;
     const spec = snapshot.issues.find((issue) => issue.id === command.specIssueId)!;
     const states = snapshot.states.filter((state) => state.type === "started");
     const progress = states.find((state) => state.name.toLowerCase() === "in progress") ?? (states.length === 1 ? states[0] : null);
@@ -219,32 +297,39 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     const key = JSON.stringify([projectId, specId]);
     const existing = starting.get(key);
     if (existing) return existing;
-    const previous = queues.get(projectId) ?? Promise.resolve();
-    const running = previous.catch(() => undefined).then(() => start(projectId, specId));
-    queues.set(projectId, running);
+    const running = serialize(projectId, () => start(projectId, specId));
     starting.set(key, running);
     void running.finally(() => {
       starting.delete(key);
-      if (queues.get(projectId) === running) queues.delete(projectId);
     }).catch(() => undefined);
     return running;
   }
-  bb.rpc.register(laneContract, { "lanes.start": async ({ projectId, specId }, context) => {
-    if (context.experimental_caller.kind !== "client") throw new Error("Start lanes from the Squadron board.");
-    return startOnce(projectId, specId);
-  } });
+  bb.rpc.register(laneContract, {
+    "lanes.setAutoStart": async ({ projectId, enabled }, context) => {
+      if (context.experimental_caller.kind !== "client") throw new Error("Change auto-start from the Squadron board.");
+      return setAutoStart(projectId, enabled);
+    },
+    "lanes.start": async ({ projectId, specId }, context) => {
+      if (context.experimental_caller.kind !== "client") throw new Error("Start lanes from the Squadron board.");
+      return startOnce(projectId, specId);
+    },
+  });
+  if (sources.mirror.onChange) bb.onDispose(sources.mirror.onChange(schedule));
   bb.background.service("lane-starts", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);
     while (!stop.aborted) {
       const rows = db.prepare(`SELECT run_json FROM squadron_lanes`).all() as { run_json: string }[];
-      for (const row of rows) {
-        if (stop.aborted) return;
-        const run = laneRunSchema.parse(JSON.parse(row.run_json));
-        if (run.state === "starting" && run.leadThreadId) await reconcileStart(run.id).catch(() => undefined);
-      }
+      const starting = rows.map((row) => laneRunSchema.parse(JSON.parse(row.run_json)))
+        .filter((run) => run.state === "starting" && run.leadThreadId);
+      const enabled = db.prepare(`SELECT bb_project_id FROM squadron_lane_settings WHERE auto_start=1`).all() as { bb_project_id: string }[];
+      if (stop.aborted) return;
+      await Promise.allSettled([
+        ...starting.map((run) => reconcileStart(run.id)),
+        ...enabled.map((row) => reconcile(row.bb_project_id)),
+      ]);
       try { await delay(15_000, undefined, { signal: stop }); } catch { return; }
     }
   } });
-  return { start: startOnce, list, save, onChange, reconcileStart };
+  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile };
 }
 export type LaneService = ReturnType<typeof registerLanes>;

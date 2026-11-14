@@ -39,6 +39,8 @@ export const workerRunSchema = z.object({
   writes: z.object({ started: z.string().optional(), integrated: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
   review: reviewRunSchema.optional(),
+  /** An open question for the owner. Only the owner's own message in the worker thread clears it. */
+  question: z.object({ id: z.string(), text: z.string(), askedAt: z.number() }).optional(),
 });
 export type WorkerRun = z.infer<typeof workerRunSchema>;
 export type ReviewRun = z.infer<typeof reviewRunSchema>;
@@ -64,6 +66,8 @@ export const reportSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("defect"), ticketId: z.string().min(1).max(256), findingId: z.string().min(1).max(128),
     title: z.string().min(1).max(500), description: z.string().min(1).max(16_000), dedupeKey: z.string().min(1).max(128),
     dedupeEvidence: z.string().min(1).max(4_000), existingIssueId: z.string().min(1).max(256).optional() }).strict(),
+  /** A worker asks the owner. It shows in Needs you; only the owner's own message in the worker thread clears it. */
+  z.object({ type: z.literal("question"), text: z.string().trim().min(1).max(4_000) }).strict(),
 ]);
 export const workerContract = {
   "workers.route": {

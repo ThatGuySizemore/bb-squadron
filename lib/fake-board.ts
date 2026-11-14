@@ -260,6 +260,7 @@ export type BoardAction =
   | { type: "stop"; specId: string }
   | { type: "cancel"; specId: string }
   | { type: "merge"; specId: string }
+  | { type: "replan"; specId: string }
   | { type: "autoStart"; on: boolean };
 
 export function apply(prev: Board, action: BoardAction): Board {

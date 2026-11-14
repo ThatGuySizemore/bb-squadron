@@ -11,7 +11,7 @@ import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
 import type { workerContract } from "../lib/worker-contract.js";
 import type { ReviewState } from "../lib/review-state.js";
-import type { LaneStarted, laneContract } from "../lib/lane-contract.js";
+import type { LaneStarted, laneContract, laneLifecycleContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
@@ -298,7 +298,7 @@ function useOverflow<T extends HTMLElement>() {
   return [ref, overflow] as const;
 }
 
-function SortieLine({ lane, dispatch, landing, onRoute }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; onRoute?: RouteChange }) {
+function SortieLine({ lane, dispatch, landing, onRoute, controlling = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; onRoute?: RouteChange; controlling?: Controlling }) {
   const open = useOpen();
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
@@ -335,16 +335,19 @@ function SortieLine({ lane, dispatch, landing, onRoute }: { lane: Lane; dispatch
               </Btn>
             ) : null}
             {lane.state === "stopped" ? (
-              <Btn tone="primary" onClick={() => dispatch({ type: "resume", specId: lane.specId })}>
-                Resume
+              <Btn tone={lane.leadThreadId ? "primary" : "plain"} disabled={controlling !== null || !lane.leadThreadId}
+                title={lane.leadThreadId ? `Resume ${lane.specId}` : UNCONFIRMED_LEAD} onClick={() => dispatch({ type: "resume", specId: lane.specId })}>
+                {controlling?.specId === lane.specId && controlling.action === "resume" ? CONTROL_PENDING.resume : "Resume"}
               </Btn>
             ) : null}
-            {lane.state === "flying" ? <Btn onClick={() => dispatch({ type: "stop", specId: lane.specId })}>Stop</Btn> : null}
+            {lane.state === "flying" ? <Btn disabled={controlling !== null} onClick={() => dispatch({ type: "stop", specId: lane.specId })}>
+              {controlling?.specId === lane.specId && controlling.action === "stop" ? CONTROL_PENDING.stop : "Stop"}
+            </Btn> : null}
             <span className="sq-isolated">
-              <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
-                Cancel
-              </Btn>
+              <CancelLane specId={lane.specId} disabled={controlling !== null}
+                pending={controlling?.specId === lane.specId && controlling.action === "cancel"} dispatch={dispatch} />
             </span>
+            {controlling?.specId === lane.specId ? <span className="sq-plan-why" role="status">{CONTROL_STATUS[controlling.action]} {lane.specId}</span> : null}
           </div>
         ) : null}
       </div>
@@ -385,9 +388,49 @@ function SortieLine({ lane, dispatch, landing, onRoute }: { lane: Lane; dispatch
 
 const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = { setup: "Setup", question: "Question", stopped: "Stopped", write: "Write", merge: "Merge" };
 
-function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
+type LaneControl = "stop" | "resume" | "cancel";
+export type Controlling = { specId: string; action: LaneControl } | null;
+const CONTROL_PENDING: Record<LaneControl, string> = { stop: "Stopping…", resume: "Resuming…", cancel: "Canceling…" };
+const CONTROL_STATUS: Record<LaneControl, string> = { stop: "Stopping", resume: "Resuming", cancel: "Canceling" };
+const UNCONFIRMED_LEAD = "The Lead was never confirmed. Check BB threads, or cancel the lane.";
+
+/** Cancel stops a lane's threads, so it asks once inline; Escape or Keep lane backs out. */
+function CancelLane({ specId, disabled, pending, dispatch }: { specId: string; disabled: boolean; pending: boolean; dispatch: (a: BoardAction) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const backedOut = useRef(false);
+  useEffect(() => {
+    if (confirming) confirmRef.current?.focus();
+    else if (backedOut.current) { backedOut.current = false; cancelRef.current?.focus(); }
+  }, [confirming]);
+  const back = () => { backedOut.current = true; setConfirming(false); };
+  if (!confirming) {
+    return <button ref={cancelRef} type="button" className="sq-btn" data-tone="danger" disabled={disabled} onClick={() => setConfirming(true)}>
+      {pending ? CONTROL_PENDING.cancel : "Cancel"}
+    </button>;
+  }
+  return (
+    <span className="sq-confirm" role="group" aria-label={`Cancel ${specId}?`} onKeyDown={(event) => {
+      // Contain Escape so backing out never also closes the host's surface.
+      if (event.key === "Escape") { event.stopPropagation(); back(); }
+    }}>
+      <span className="sq-confirm-text">Stops its threads. The branch and worktrees stay.</span>
+      <Btn disabled={disabled} onClick={back}>Keep lane</Btn>
+      <button ref={confirmRef} type="button" className="sq-btn" data-tone="danger" disabled={disabled}
+        onClick={() => { setConfirming(false); dispatch({ type: "cancel", specId }); }}>
+        Cancel lane
+      </button>
+    </span>
+  );
+}
+
+function NeedsYouStrip({ items, dispatch, setup, onRetry, controlling = null, planning = null }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
+  controlling?: Controlling;
+  /** The planning thread being opened, if any: an issue or spec id. */
+  planning?: string | null;
   /** Controls for a setup item, such as choosing the Linear project. */
   setup?: ReactNode;
   onRetry?: (writeId: string) => Promise<void>;
@@ -403,10 +446,11 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
         <li key={item.key} className="sq-need" data-kind={item.kind}>
           <Dither levels={[3, 6, 3]} />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
-          {item.issueId ? (
-            <span className="sq-need-issue sq-num">{item.issueId}</span>
-          ) : item.ticketId ?? item.specId ? (
-            <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" />
+          {item.issueId ?? item.ticketId ? (
+            // Ticket ids and write issues use mono; pixel type is for spec numbers only.
+            <span className="sq-need-issue sq-num">{item.issueId ?? item.ticketId}</span>
+          ) : item.specId ? (
+            <PixelText text={item.specId} cell={2} className="sq-need-id" />
           ) : (
             <span />
           )}
@@ -444,10 +488,19 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
             ) : null}
             {item.kind === "stopped" ? (
               <>
-                <Btn tone="amber" onClick={() => dispatch({ type: "resume", specId: item.specId })}>
-                  Resume
+                <Btn tone={item.threadId ? "amber" : "plain"} disabled={controlling !== null || !item.threadId}
+                  title={item.threadId ? `Resume ${item.specId}` : UNCONFIRMED_LEAD}
+                  onClick={() => dispatch({ type: "resume", specId: item.specId })}>
+                  {controlling?.specId === item.specId && controlling.action === "resume" ? CONTROL_PENDING.resume : "Resume"}
                 </Btn>
-                <Btn onClick={() => toast(`Prototype: opens a planning thread on ${item.specId}.`)}>Re-plan</Btn>
+                {planning === item.specId ? <span className="sq-plan-why" role="status">Starting its planning thread</span> : null}
+                <Btn disabled={controlling !== null || planning !== null} title={`Open a planning thread on ${item.specId}`} onClick={() => dispatch({ type: "replan", specId: item.specId })}>
+                  {planning === item.specId ? "Opening…" : "Re-plan"}
+                </Btn>
+                <span className="sq-isolated">
+                  <CancelLane specId={item.specId} disabled={controlling !== null}
+                    pending={controlling?.specId === item.specId && controlling.action === "cancel"} dispatch={dispatch} />
+                </span>
               </>
             ) : null}
             {item.kind === "merge" ? (
@@ -490,7 +543,7 @@ function ReadyRow({ spec, board, dispatch, starting = false }: { spec: ReadySpec
         ))}
       </span>
       {spec.acceptOwner ? <span className="sq-tag">accept:owner</span> : <span />}
-      <span className="sq-ready-why">{blocked ?? ""}</span>
+      <span className="sq-ready-why">{blocked ?? (spec.keptBranch ? <>Kept branch <span className="sq-mono">{spec.keptBranch}</span></> : "")}</span>
       <Btn tone="primary" disabled={starting || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
         {starting ? "Starting…" : "Start"}
       </Btn>
@@ -601,13 +654,15 @@ interface BoardViewProps {
   setup?: ReactNode;
   onRetry?: (writeId: string) => Promise<void>;
   onRoute?: RouteChange;
+  /** The owner's lane control awaiting the Helper, if any. */
+  controlling?: Controlling;
   /** Replaces Ready and Unplanned while the board can't show them. */
   notice?: ReactNode;
   footer?: ReactNode;
 }
 
 /** The board page, fed by the live Helper or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, autoStartSaving = false, autoStartDisabled = false, setup, onRetry, onRoute, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, autoStartSaving = false, autoStartDisabled = false, setup, onRetry, onRoute, controlling = null, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -667,7 +722,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           <h2 id="sq-needs-h">
             Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
           </h2>
-          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} controlling={controlling} planning={planning} />
         </section>
         <DoctorPanel open={doctorOpen} id={doctorId} />
 
@@ -676,7 +731,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           {onLine.length === 0 ? (
             <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
           ) : (
-            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} onRoute={onRoute} />)
+            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} onRoute={onRoute} controlling={controlling} />)
           )}
         </section>
 
@@ -754,7 +809,7 @@ function DemoBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       board={sim.board}
       demo
       modeSwitch={modeSwitch}
-      dispatch={(action) => send({ type: "board", action })}
+      dispatch={(action) => action.type === "replan" ? toast(`Prototype: opens a planning thread on ${action.specId}.`) : send({ type: "board", action })}
       onPlan={(issueId) => toast(issueId ? `Prototype: opens a planning thread on ${issueId}.` : "Prototype: opens a planning thread (grill-with-docs → to-spec → to-tickets).")}
       footer={
         <footer className="sq-sim">
@@ -820,6 +875,17 @@ export async function startLaneFromBoard(deps: {
   await deps.refresh();
 }
 
+/** Stop, resume or cancel a lane, then read back the board even after a refusal. */
+export async function laneControlFromBoard(deps: {
+  call: (method: "lanes.stop" | "lanes.resume" | "lanes.cancel", input: { projectId: string; specId: string }) => Promise<unknown>;
+  refresh: () => Promise<void>;
+  notify: (text: string) => void;
+}, projectId: string, action: LaneControl, specId: string): Promise<void> {
+  try { await deps.call(`lanes.${action}`, { projectId, specId }); }
+  catch (error) { deps.notify(error instanceof Error && error.message ? error.message : "Couldn't change the lane. Refresh the board and try again."); }
+  await deps.refresh();
+}
+
 /** Save the project setting, then read back the board even after a refusal. */
 export async function setAutoStartFromBoard(deps: {
   set: (input: { projectId: string; enabled: boolean }) => Promise<{ enabled: boolean }>;
@@ -834,7 +900,9 @@ export async function setAutoStartFromBoard(deps: {
 /** The real board for the BB project in view, read from the Helper. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract & typeof laneContract & typeof workerContract>();
+  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract & typeof laneContract & typeof laneLifecycleContract & typeof workerContract>();
+  const [controlling, setControlling] = useState<Controlling>(null);
+  const controlRequest = useRef(false);
   const open = useOpen();
   const [planning, setPlanning] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
@@ -923,6 +991,14 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         refresh: load, notify: (text) => { toast(text); } }, projectId, enabled);
     } finally { autoStartRequest.current = false; setAutoStartSaving(false); }
   }, [rpc, projectId, load]);
+  const control = useCallback(async (action: LaneControl, specId: string) => {
+    if (!projectId || controlRequest.current) return;
+    controlRequest.current = true;
+    setControlling({ specId, action });
+    try {
+      await laneControlFromBoard({ call: (method, input) => rpc.call(method, input), refresh: load, notify: (text) => { toast(text); } }, projectId, action, specId);
+    } finally { controlRequest.current = false; setControlling(null); }
+  }, [rpc, projectId, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
@@ -932,7 +1008,11 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       dispatch={(action) => {
         if (action.type === "start") void start(action.specId);
         if (action.type === "autoStart") void setAutoStart(action.on);
+        if (action.type === "stop" || action.type === "resume" || action.type === "cancel") void control(action.type, action.specId);
+        // The owner's own message in the worker thread clears a question; opening it changes nothing.
+        if (action.type === "replan") void plan(action.specId);
       }}
+      controlling={controlling}
       onPlan={(issueId) => void plan(issueId)}
       planning={planning}
       starting={starting}

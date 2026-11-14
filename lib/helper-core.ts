@@ -68,7 +68,10 @@ export function helperCore(input: HelperInput): HelperOutput {
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const binding = snapshot.binding;
   const runs = input.lanes ?? [];
-  const active = runs.filter((run) => run.state !== "landed");
+  const active = runs.filter((run) => run.state !== "landed" && run.state !== "canceled");
+  // The owner's Cancel returns a spec to Ready and keeps its branch. Auto-start
+  // never relaunches it; only the owner's Start does.
+  const canceled = new Map(runs.filter((run) => run.state === "canceled").map((run) => [run.specIssueId, run]));
   /** One resolution rule for Ready, dispatch and cards. Unknown endpoints stay
    * blocked with a public label; relation UUIDs never enter the board. */
   const unresolvedBlockers = (issue: MirrorIssue, run?: LaneRun): Blocker[] => snapshot.relations
@@ -81,7 +84,7 @@ export function helperCore(input: HelperInput): HelperOutput {
       return !isOpenIssue(blocker) || integrated ? [] : [{ id: blocker.identifier, title: blocker.title, url: blocker.url,
         outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id }];
     }).sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
-  const ready: ReadySpec[] = specs.filter((spec) => !runs.some((run) => run.specIssueId === spec.id)).map((spec) => {
+  const ready: ReadySpec[] = specs.filter((spec) => !runs.some((run) => run.specIssueId === spec.id && run.state !== "canceled")).map((spec) => {
     const tickets = open.filter((issue) => issue.parentId === spec.id);
     const specBlockers = unresolvedBlockers(spec);
     const ticketBlockers = tickets.map((ticket) => unresolvedBlockers(ticket));
@@ -108,6 +111,8 @@ export function helperCore(input: HelperInput): HelperOutput {
       routes: settings ? uniqueRoutes(tickets.map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
       acceptOwner: labels(spec).includes(ACCEPT_OWNER),
+      ...(canceled.get(spec.id)?.branch ? { keptBranch: canceled.get(spec.id)!.branch! } : {}),
+      ...(canceled.get(spec.id)?.writeError ? { writeError: canceled.get(spec.id)!.writeError! } : {}),
     };
   });
   // Anything open that isn't a Ready spec or one of its tickets waits here,
@@ -151,7 +156,7 @@ export function helperCore(input: HelperInput): HelperOutput {
   }
   let start: StartDecision | undefined;
   const next = input.action?.type === "reconcile" && input.autoStart
-    ? ready.find((spec) => spec.startReason === null) : undefined;
+    ? ready.find((spec) => spec.startReason === null && !specs.some((item) => item.identifier === spec.id && canceled.has(item.id))) : undefined;
   const action = next ? { type: "start" as const, specId: next.id } : input.action;
   if (action?.type === "start") {
     const row = ready.find((spec) => spec.id === action.specId);
@@ -189,13 +194,14 @@ export function helperCore(input: HelperInput): HelperOutput {
         ticketIssueId: ticket.id, ticketId: ticket.identifier, route: run.routeOverrides?.[ticket.id] ?? resolveRoute(settings, labels(ticket)) });
     }
   }
-  const lanes: Board["lanes"] = runs.flatMap((run) => {
+  const lanes: Board["lanes"] = runs.filter((run) => run.state !== "canceled").flatMap((run) => {
     const spec = byId.get(run.specIssueId);
     const specBlockers = spec ? unresolvedBlockers(spec, run) : [];
     return [{ specId: run.specId, title: run.title, lead: run.route, leadThreadId: run.leadThreadId,
-      branch: run.branch ?? "Preparing integration branch", state: run.state === "starting" ? "flying" : run.state,
+      branch: run.branch ?? "Preparing integration branch", state: run.state === "starting" ? "flying" as const : run.state as "flying" | "stopped" | "landed",
       minutes: Math.max(0, Math.floor((input.now - run.startedAt) / 60_000)), acceptOwner: run.acceptOwner,
       ...(run.stopReason ? { stopReason: run.stopReason } : {}),
+      ...(run.state === "stopped" && run.stoppedAt !== undefined ? { stoppedAt: run.stoppedAt } : {}),
       ...(run.writeError ? { writeError: run.writeError } : {}),
       tickets: snapshot.issues.filter((issue) => issue.parentId === run.specIssueId &&
         (issue.inProject || run.workers?.some((worker) => worker.ticketIssueId === issue.id))).sort(byIdentifier).map((issue) => {
@@ -204,12 +210,13 @@ export function helperCore(input: HelperInput): HelperOutput {
         return { id: issue.identifier, title: issue.title, blockedBy: blockers.map((blocker) => blocker.id),
           route: work?.route ?? run.routeOverrides?.[issue.id] ?? (settings ? resolveRoute(settings, labels(issue)) : run.route),
           ...(!work && settings && run.state === "flying" ? { routeChoices: uniqueRoutes(settings.routes) } : {}),
-          state: issue.state.type === "completed" ? "done" as const : work?.state === "integrated" && hasCurrentApproval(work) ? "branch" as const
+          state: issue.state.type === "completed" ? "done" as const : work?.question ? "question" as const : work?.state === "integrated" && hasCurrentApproval(work) ? "branch" as const
             : work?.state === "reported" || work?.state === "integrated" ? "review" as const : work?.state === "failed" ? "failed" as const
             : work ? "working" as const : blockers.length ? "blocked" as const : "ready" as const,
           ...(work?.state === "reported" && !work.review ? { reportPending: true } : {}),
           ...(work?.review ? { reviewer: { route: work.review.route, threadId: work.review.threadId, state: work.review.state,
             commit: work.review.commit, round: work.review.round } } : {}),
+          ...(work?.question ? { question: work.question.text, questionId: work.question.id } : {}),
           ...(work?.failure ? { failure: work.failure } : {}),
           ...(work?.writeError ? { writeError: work.writeError } : {}),
           ...(work?.threadId ? { threadId: work.threadId } : {}),

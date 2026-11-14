@@ -42,6 +42,7 @@ async function setup(t: import("node:test").TestContext, options: { sendFailure?
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   let count = 0;
   const reviewerEnvironments = new Map<string, string>();
+  const pendingPrompts = new Set<string>();
   const firstConfigurations: Array<[string, string[]]> = [];
   const firstSkills: Array<[string, string[]]> = [];
   const { bb, harness } = createFakePluginHost({ pluginId: "squadron", agentSkillIds: ["squadron-reviewer"], settings: { linearApiKey: "fake-worker-key" },
@@ -56,7 +57,7 @@ async function setup(t: import("node:test").TestContext, options: { sendFailure?
           scope: "shared-project" as const, filePath: `/repo/.agents/skills/${name}/SKILL.md` })) }) },
       threads: {
         queuedMessages: {
-          list: async ({ threadId }) => [makeQueueEntry({ id: `queued-${threadId}`, threadId })],
+          list: async ({ threadId }) => pendingPrompts.has(threadId) ? [makeQueueEntry({ id: `queued-${threadId}`, threadId })] : [],
           send: async ({ threadId }) => {
             const config = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: threadId }, project: { id: "proj-one" } }));
             firstConfigurations.push([threadId, config.tools.map((tool) => tool.name).sort()]);
@@ -65,6 +66,7 @@ async function setup(t: import("node:test").TestContext, options: { sendFailure?
             if (threadId !== "thr_lead" && options.workerReleaseGate) await options.workerReleaseGate;
             const value = threads.get(threadId)!;
             if (!options.deferWorkerEnvironment || threadId === "thr_lead") threads.set(threadId, { ...value, environmentId: reviewerEnvironments.get(threadId) ?? `env-${threadId}` });
+            pendingPrompts.delete(threadId);
             return { ok: true as const, delivery: "sent" as const };
           },
         },
@@ -78,6 +80,7 @@ async function setup(t: import("node:test").TestContext, options: { sendFailure?
         spawn: async (args) => {
           if (options.spawnFails && count) throw new Error("fake-private-spawn-error");
           const id = count++ === 0 ? "thr_lead" : `thr_worker_${count}`;
+          pendingPrompts.add(id);
           if (args.environment.type === "reuse") reviewerEnvironments.set(id, args.environment.environmentId);
           const value = makeThreadResponse({ id, projectId: args.projectId, environmentId: null, parentThreadId: args.parentThreadId ?? null, providerId: args.providerId }); threads.set(id, value); return value;
         },
@@ -442,6 +445,9 @@ test("one fix round returns in-spec findings to the same worker and second look 
   await assert.rejects(call("squadron_report", { type: "fix", ticketId: "FIX-6" }), /one fix round/);
   const corrected = "c".repeat(40);
   await call("squadron_report", { type: "done", commit: corrected, summary: "Fixed S1; tests pass." }, workerContext);
+  const waitingCard = (await board()).lanes[0].tickets.find((ticket) => ticket.id === "FIX-6")!;
+  assert.equal(waitingCard.state, "review");
+  assert.equal(waitingCard.reviewer?.state, "fixing", "corrected work waits for its scoped second look");
   const secondLook = await call("squadron_spawn_reviewer", { ticketId: "FIX-6" });
   assert.equal(secondLook.threadId, reviewer.threadId);
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 3);
@@ -729,4 +735,27 @@ test("fix-round delivery sends only requires-fix findings while preserving other
   const text = (fix.input[0] as { text: string }).text;
   assert.deepEqual(JSON.parse(text.split("\n").at(-1)!).findings, [finding]);
   assert.deepEqual((await call("squadron_status", {})).reports[0].review.firstFindings, findings);
+});
+
+test("B4 Stop/Resume preserves B3 review binding, stops its reviewer and wakes only active review work", async (t) => {
+  const { start, call, harness } = await setup(t); await start();
+  const worker = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  await call("squadron_report", { type: "done", commit, summary: "Tests." }, { threadId: worker.threadId, projectId: "proj-one" });
+  const reviewer = await call("squadron_spawn_reviewer", { ticketId: "FIX-6" });
+  const rpc = (name: string) => harness.behavior.callRpc(name, { projectId: "proj-one", specId: "FIX-5" });
+  await rpc("lanes.stop");
+  assert.ok(harness.inspection.sdk.callsTo("threads.stop").some((args) => (args[0] as { threadId: string }).threadId === reviewer.threadId));
+  const before = harness.inspection.sdk.callsTo("threads.send").length;
+  await rpc("lanes.resume");
+  const woken = harness.inspection.sdk.callsTo("threads.send").slice(before).map((args) => (args[0] as { threadId: string }).threadId);
+  assert.deepEqual(woken, ["thr_lead", reviewer.threadId]);
+  const context = { threadId: reviewer.threadId, projectId: "proj-one" };
+  assert.equal((await call("squadron_status", {}, context)).reports[0].review.commit, commit);
+  await call("squadron_report", { type: "verdict", commit, outcome: "approve", findings: [], resolvedFindingIds: [] }, context);
+  await rpc("lanes.stop");
+  const approvedBefore = harness.inspection.sdk.callsTo("threads.send").length;
+  await rpc("lanes.resume");
+  assert.deepEqual(harness.inspection.sdk.callsTo("threads.send").slice(approvedBefore).map((args) => (args[0] as { threadId: string }).threadId), ["thr_lead"]);
+  await rpc("lanes.cancel");
+  await assert.rejects(call("squadron_status", {}, context), /not authorized/);
 });

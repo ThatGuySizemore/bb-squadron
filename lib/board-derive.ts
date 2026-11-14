@@ -1,5 +1,5 @@
 // Derives the board from a tracker snapshot and project settings.
-import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type OpenIssue } from "./board-model.js";
+import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
@@ -10,8 +10,13 @@ import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
 import type { LaneProgress } from "./lane-progress.js";
 
+/** A planning thread open in BB for one tracker issue, read from its plugin metadata. */
+export interface PlanningThread { issueId: string; threadId: string }
+
 export interface BoardInput extends LaneProgress {
   snapshot: TrackerSnapshot;
+  /** Open (not archived) planning threads in this BB project. */
+  planning?: PlanningThread[];
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
   doctor?: DoctorReport;
@@ -60,7 +65,14 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const settings = input.settings?.ok ? input.settings.settings : null;
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
   const labels = (issue: TrackerIssue) => issue.labels.map((label) => label.name);
-  const specs = open.filter((issue) => issue.parentId === null && labels(issue).includes(READY_FOR_AGENT));
+  /** The `ready-for-agent` label, or a `Status: ready-for-agent` line in trackers without labels. */
+  const readyMarked = (issue: TrackerIssue) => labels(issue).includes(READY_FOR_AGENT)
+    || issue.state.name.trim().toLowerCase() === READY_FOR_AGENT;
+  const planning = new Map((input.planning ?? []).map((thread) => [thread.issueId, thread.threadId]));
+  const ticketsOf = (spec: TrackerIssue) => open.filter((issue) => issue.parentId === spec.id);
+  // A spec is a top-level issue that is marked ready, has tickets, or is being planned.
+  const specs = open.filter((issue) => issue.parentId === null &&
+    (readyMarked(issue) || planning.has(issue.id) || ticketsOf(issue).length > 0));
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const project = snapshot.project;
@@ -68,8 +80,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     project && isActiveProjectThread(thread, thread.id, snapshot.bbProjectId)).map((lead) => [lead.specId, lead]));
   // A spec its Lead closed after the merge keeps its lane, so the lane lands and stays Landed.
   const closedSpecs = snapshot.issues.filter((issue) => issue.parentId === null && issue.state.type === "completed" &&
-    issue.inProject && (labels(issue).includes(READY_FOR_AGENT) || leads.has(issue.id)));
-  const lanes: Lane[] = [...specs, ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
+    issue.inProject && (readyMarked(issue) || leads.has(issue.id)));
+  const lanes: Lane[] = [...specs.filter((spec) => readyMarked(spec) || leads.has(spec.id)), ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
@@ -160,8 +172,26 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       id: blocker.identifier, title: blocker.title, url: blocker.url,
       outside: !blocker.inProject,
     }));
-  const ready: ReadySpec[] = specs.filter((spec) => !leads.has(spec.id)).map((spec) => {
-    const tickets = open.filter((issue) => issue.parentId === spec.id);
+  const ready: ReadySpec[] = [];
+  const shaping: ShapingSpec[] = [];
+  for (const spec of specs.filter((spec) => !leads.has(spec.id))) {
+    const tickets = ticketsOf(spec);
+    const marked = readyMarked(spec);
+    const ticketBlockers = tickets.map(openBlockers);
+    const row = { id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length };
+    // An open planning thread keeps a spec Shaping; Ready needs an open, unblocked ticket.
+    if (planning.has(spec.id)) {
+      shaping.push({ ...row, missing: "Planning is still open in its thread.", action: "resume", threadId: planning.get(spec.id)! });
+    } else if (!tickets.length) {
+      shaping.push({ ...row, missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" });
+    } else if (!marked) {
+      shaping.push({ ...row, missing: `Has ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} but no ready-for-agent label.`, action: "tickets" });
+    } else if (ticketBlockers.every((found) => found.length > 0)) {
+      const ids = [...new Set(ticketBlockers.flat().map((blocker) => blocker.id))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+      shaping.push({ ...row, missing: `Every ticket waits on a blocker: ${ids.join(", ")}`, action: "tickets" });
+    } else ready.push(readyRow(spec, tickets));
+  }
+  function readyRow(spec: TrackerIssue, tickets: TrackerIssue[]): ReadySpec {
     const specBlockers = openBlockers(spec);
     const ticketBlockers = tickets.map(openBlockers);
     const blockers = [...new Map([...specBlockers, ...ticketBlockers.flat()].map((blocker) => [blocker.id, blocker])).values()]
@@ -178,10 +208,6 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       startReason = doctorFix.message;
     } else if (specBlockers.length) {
       startReason = `Waits on ${list(specBlockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
-    } else if (!tickets.length) {
-      startReason = "Has no open tickets. Plan its tickets first.";
-    } else if (ticketBlockers.every((found) => found.length > 0)) {
-      startReason = `Every ticket waits on a blocker: ${[...new Set(ticketBlockers.flat().map((blocker) => blocker.id))].join(", ")}`;
     } else if (!settings) {
       const sections = input.settings && !input.settings.ok ? input.settings.issues.map((issue) => issue.section) : [];
       startReason = sections.length
@@ -195,9 +221,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       routes: settings ? uniqueRoutes(tickets.map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
       acceptOwner: labels(spec).includes(ACCEPT_OWNER),
+      waiting: tickets.flatMap((ticket, i) => ticketBlockers[i].length
+        ? [{ id: ticket.identifier, title: ticket.title, blockedBy: ticketBlockers[i].map((blocker) => blocker.id) }] : []),
     };
-  });
-  // Anything open that isn't a Ready spec or one of its tickets waits here,
+  }
+  // Anything open that isn't a spec or one of its tickets waits here,
   // so no issue in the bound project drops off the board.
   const under = (issue: TrackerIssue): string | undefined => {
     if (issue.parentId === null) return undefined;
@@ -234,7 +262,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
         project: project?.name ?? null },
       tick: 0, laneCapacity: 0, workersPerLane: 0,
-      autoStart: false, lanes, ready, openIssues,
+      autoStart: false, lanes, ready, shaping, openIssues,
     },
   };
 }

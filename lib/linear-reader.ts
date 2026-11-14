@@ -51,6 +51,8 @@ async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pag
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
   /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
   laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
+  /** Which bound projects the background poller reads: those a board shows. Default: every bound project. */
+  shouldPoll?: (bbProjectId: string) => boolean;
   now?: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 } = {}) {
@@ -313,7 +315,8 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     polls.clear(); // Every service start rebuilds the in-memory snapshot.
     let budgetAt = 0;
     while (!signal.aborted && !lifetime.signal.aborted) {
-      const rows = db.prepare("SELECT bb_project_id FROM mirror_bindings ORDER BY bb_project_id").all() as { bb_project_id: string }[];
+      const rows = (db.prepare("SELECT bb_project_id FROM mirror_bindings ORDER BY bb_project_id").all() as { bb_project_id: string }[])
+        .filter(({ bb_project_id: id }) => options.shouldPoll?.(id) ?? true);
       for (const { bb_project_id: id } of rows) {
         if (signal.aborted || lifetime.signal.aborted || now() < budgetAt) break;
         const at = polls.get(id) ?? 0;

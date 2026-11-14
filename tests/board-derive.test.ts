@@ -3,6 +3,25 @@ import assert from "node:assert/strict";
 import { deriveBoard } from "../lib/board-derive.js";
 import { needsYou } from "../lib/board-model.js";
 import { blocks, input, issue, snapshot } from "./fixtures/board-snapshots.js";
+import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+
+test("a live Lead makes its spec Flying and links the Lead instead of offering Start", () => {
+  const snap = snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent", "ui"] }),
+    issue("FIX-2", { parent: "FIX-1" }),
+  ]);
+  const { board } = deriveBoard(input(snap, { leads: [{ specId: "fix-1", thread: makeThreadResponse({
+    id: "thr_lead", projectId: "proj-one", providerId: "claude-code",
+    createdAt: Date.parse("2026-11-13T20:00:00Z"),
+  }), route: { family: "claude", model: "claude-opus-5-5", effort: "high" }, branch: "spec/fix-1" }] }));
+  assert.deepEqual(board.ready, []);
+  assert.equal(board.lanes.length, 1);
+  assert.equal(board.lanes[0].state, "flying");
+  assert.equal(board.lanes[0].specId, "FIX-1");
+  assert.equal(board.lanes[0].leadThreadId, "thr_lead");
+  assert.deepEqual(board.lanes[0].lead, { family: "claude", model: "claude-opus-5-5", effort: "high" });
+  assert.equal(board.lanes[0].minutes, 0);
+});
 
 test("ready-for-agent specs show under Ready with their tickets, and parentless issues under Unplanned", () => {
   const { board } = deriveBoard(input(snapshot([
@@ -53,7 +72,7 @@ test("open blockers across specs, inside or outside the project, hold Start with
   assert.deepEqual(board.unplanned.map((row) => row.id), [], "outside and closed blockers never become rows");
 });
 
-test("a spec with no blockers still can't start in this version, and says why", () => {
+test("a spec waits for Doctor, open tickets and an available frontier", () => {
   const { board } = deriveBoard(input(snapshot([
     issue("FIX-1", { labels: ["ready-for-agent"] }),
     issue("FIX-2", { parent: "FIX-1" }),
@@ -62,7 +81,7 @@ test("a spec with no blockers still can't start in this version, and says why", 
     issue("FIX-7", { parent: "FIX-6" }),
   ], [blocks("FIX-2", "FIX-7")])));
   assert.deepEqual(board.ready.map((spec) => [spec.id, spec.startReason]), [
-    ["FIX-1", "Squadron can't start lanes yet. This version only reads Linear."],
+    ["FIX-1", "Check Doctor before starting a lane."],
     ["FIX-5", "Has no open tickets. Plan its tickets first."],
     ["FIX-6", "Every ticket waits on a blocker: FIX-2"],
   ]);
@@ -90,7 +109,7 @@ test("Ready shows open blockers of its tickets while preserving a partially avai
     issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
   ], [blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3")]))).board.ready[0];
   assert.deepEqual(partial.blockedBy, ["OUT-9"]);
-  assert.equal(partial.startReason, "Squadron can't start lanes yet. This version only reads Linear.");
+  assert.equal(partial.startReason, "Check Doctor before starting a lane.");
 });
 
 test("Start waits on a valid docs/agents/squadron.md before anything else after blockers", () => {
@@ -160,4 +179,19 @@ test("Start uses the Doctor's first failing fix and owner-file warnings don't bl
   const board = deriveBoard(input(snap, { doctor: warnings })).board;
   assert.equal(board.ready[0].startReason, null);
   assert.deepEqual(board.doctor, warnings);
+});
+
+test("Start waits for a current bound Linear snapshot and a ready Doctor", () => {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })]);
+  const doctor = { ready: true, checks: [], configurationFiles: [] };
+  assert.equal(deriveBoard(input(snap, { doctor })).board.ready[0].startReason, null);
+  for (const overrides of [
+    { snapshot: { ...snap, error: "Linear is unavailable." } },
+    { snapshot: { ...snap, syncedAt: null } },
+    { snapshot: { ...snap, binding: null } },
+    { connection: { status: "disconnected", message: "Connect Linear." } },
+    { doctor: { ready: false, checks: [], configurationFiles: [] } },
+  ]) {
+    assert.notEqual(deriveBoard(input(snap, { doctor, ...overrides })).board.ready[0].startReason, null);
+  }
 });

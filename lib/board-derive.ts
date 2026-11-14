@@ -1,15 +1,18 @@
 // Derives the board from the in-memory Linear snapshot and project settings.
-import type { Blocker, Board, LinearStatus, ReadySpec, Route, UnplannedIssue } from "./board-model.js";
+import type { Blocker, Board, Lane, LinearStatus, ReadySpec, Route, UnplannedIssue } from "./board-model.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
+import type { LeadThread } from "./lead-threads.js";
+import { isActiveProjectThread } from "./project-thread.js";
 
 export interface BoardInput {
   snapshot: MirrorSnapshot;
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
   doctor?: DoctorReport;
+  leads?: LeadThread[];
   /** The board clock for derived lane state. */
   now: number;
 }
@@ -39,6 +42,17 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const binding = snapshot.binding;
+  const leads = new Map((input.leads ?? []).filter(({ thread }) =>
+    binding && isActiveProjectThread(thread, thread.id, binding.bbProjectId)).map((lead) => [lead.specId, lead]));
+  const lanes: Lane[] = specs.flatMap((spec) => {
+    const lead = leads.get(spec.id);
+    return lead ? [{
+      specId: spec.identifier, title: spec.title, lead: lead.route, leadThreadId: lead.thread.id,
+      branch: lead.branch, state: "flying" as const,
+      minutes: Math.max(0, Math.floor((input.now - lead.thread.createdAt) / 60_000)),
+      acceptOwner: labels(spec).includes(ACCEPT_OWNER), tickets: [],
+    }] : [];
+  });
   /** Open blockers of one issue, in identifier order. Unknown endpoints are skipped. */
   const openBlockers = (issue: MirrorIssue): Blocker[] => snapshot.relations
     .filter((relation) => relation.relatedIssueId === issue.id)
@@ -51,7 +65,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       id: blocker.identifier, title: blocker.title, url: blocker.url,
       outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id,
     }));
-  const ready: ReadySpec[] = specs.map((spec) => {
+  const ready: ReadySpec[] = specs.filter((spec) => !leads.has(spec.id)).map((spec) => {
     const tickets = open.filter((issue) => issue.parentId === spec.id);
     const specBlockers = openBlockers(spec);
     const ticketBlockers = tickets.map(openBlockers);
@@ -59,7 +73,13 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
     let startReason: string | null;
     const doctorFix = input.doctor?.checks.find((check) => check.status === "fix");
-    if (doctorFix) {
+    if (input.connection.status !== "connected") {
+      startReason = input.connection.message;
+    } else if (!binding) {
+      startReason = "Choose this project's Linear team and project before Start.";
+    } else if (snapshot.error || snapshot.syncedAt === null) {
+      startReason = snapshot.error ?? "Wait for Linear to finish reading this project's issues.";
+    } else if (doctorFix) {
       startReason = doctorFix.message;
     } else if (specBlockers.length) {
       startReason = `Waits on ${list(specBlockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
@@ -73,7 +93,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
         ? `Fix docs/agents/squadron.md first: ${[...new Set(sections)].join(", ")}. Open Doctor for details.`
         : "Couldn't read docs/agents/squadron.md. Open Doctor for details.";
     } else {
-      startReason = input.doctor ? null : "Squadron can't start lanes yet. This version only reads Linear.";
+      startReason = input.doctor?.ready ? null : "Check Doctor before starting a lane.";
     }
     return {
       id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length,
@@ -119,7 +139,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
         project: binding ? `${binding.team.name} · ${binding.project.name}` : null },
       tick: 0, laneCapacity: 0, workersPerLane: 0,
-      autoStart: false, lanes: [], ready, unplanned,
+      autoStart: false, lanes, ready, unplanned,
     },
   };
 }

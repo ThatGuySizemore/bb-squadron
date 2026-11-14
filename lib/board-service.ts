@@ -11,10 +11,12 @@ import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
+import type { LeadThread } from "./lead-threads.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
+  leads?(projectId: string): Promise<LeadThread[]>;
   mirror: {
     getSnapshot(bbProjectId: string): MirrorSnapshot;
     onChange(listener: (bbProjectId: string) => void): () => void;
@@ -72,6 +74,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
+      leads: await sources.leads?.(projectId),
     });
     return board;
   }

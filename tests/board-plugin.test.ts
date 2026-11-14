@@ -19,6 +19,7 @@ function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e
     experimental_hostEntry: true,
     settings,
     sdk: {
+      threads: { list: async () => [] },
       projects: { get: async () => ({
         id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId: "proj-one", hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],

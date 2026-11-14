@@ -8,6 +8,7 @@ import type { boardContract } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
+import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
@@ -414,9 +415,10 @@ function IssueTitle({ title, url, className }: { title: string; url?: string; cl
   );
 }
 
-function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void }) {
+function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
   // Real specs carry the board model's reason; the demo computes its own.
-  const blocked = spec.startReason !== undefined ? spec.startReason : canStart(board, spec);
+  const blocked = (spec.startReason !== undefined ? spec.startReason : canStart(board, spec))
+    ?? (startBusy ? "Wait for the Lead thread to open." : null);
   return (
     <li className="sq-ready" data-blocked={blocked !== null}>
       <PixelText text={spec.id} cell={2} className="sq-ready-id" />
@@ -430,9 +432,9 @@ function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; di
         ))}
       </span>
       {spec.acceptOwner ? <span className="sq-tag">accept:owner</span> : <span />}
-      <span className="sq-ready-why">{blocked ?? ""}</span>
-      <Btn tone="primary" disabled={blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
-        Start
+      <span className="sq-ready-why" role={opening ? "status" : undefined}>{opening ? "Opening its Lead thread" : blocked ?? ""}</span>
+      <Btn tone="primary" disabled={opening || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
+        {opening ? "Opening…" : "Start"}
       </Btn>
     </li>
   );
@@ -533,6 +535,7 @@ interface BoardViewProps {
   onPlan: (issueId?: string) => void;
   /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
   planning?: string | null;
+  starting?: string | null;
   setup?: ReactNode;
   /** Replaces Ready and Unplanned while the board can't show them. */
   notice?: ReactNode;
@@ -540,7 +543,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, setup, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, setup, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -621,7 +624,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           ) : (
             <ul className="sq-ready-list">
               {board.ready.map((spec) => (
-                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} />
+                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
               ))}
             </ul>
           )}
@@ -734,12 +737,28 @@ export async function planFromBoard(deps: {
   }
 }
 
+/** Start a lane through the board's public RPC and follow its Lead. */
+export async function startFromBoard(deps: {
+  start: (input: { projectId: string; specId: string }) => Promise<{ threadId: string }>;
+  openThread: (threadId: string) => void;
+  notify: (text: string) => void;
+  refresh: () => Promise<void>;
+}, projectId: string, specId: string) {
+  try {
+    const started = await deps.start({ projectId, specId });
+    deps.openThread(started.threadId);
+  } catch (error) {
+    deps.notify(error instanceof Error && error.message ? error.message : "Couldn't start this lane. Try again.");
+  } finally { await deps.refresh(); }
+}
+
 /** The real board for the BB project in view, read from the reader. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof planningContract>();
+  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof laneContract>();
   const open = useOpen();
   const [planning, setPlanning] = useState<string | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -785,15 +804,25 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       }, projectId, issueId);
     } finally { setPlanning(null); }
   }, [rpc, projectId, planning, open]);
+  const start = useCallback(async (specId: string) => {
+    if (!projectId || starting !== null) return;
+    setStarting(specId);
+    try {
+      await startFromBoard({ start: (input) => rpc.call("lane.start", input),
+        openThread: (threadId) => open.thread(threadId, "the Lead thread"), notify: (text) => toast(text), refresh: load,
+      }, projectId, specId);
+    } finally { setStarting(null); }
+  }, [rpc, projectId, starting, open, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
       board={board ?? EMPTY_BOARD}
       demo={false}
       modeSwitch={modeSwitch}
-      dispatch={() => undefined}
+      dispatch={(action) => { if (action.type === "start") void start(action.specId); }}
       onPlan={(issueId) => void plan(issueId)}
       planning={planning}
+      starting={starting}
       notice={notice ? (
         <>
           {notice}

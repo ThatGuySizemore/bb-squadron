@@ -57,7 +57,7 @@ function issueReferences(operation: Operation, id: string): string[] {
   if (operation.type === "issue") return [id, ...(operation.parentId ? [operation.parentId] : [])];
   return [...new Set([operation.issueId, ...(operation.type === "blocks" ? [operation.blockedIssueId] : operation.type === "parent" ? [operation.parentId] : [])])];
 }
-function modelDisplayName(model: string): string {
+export function modelDisplayName(model: string): string {
   const claude = /^claude-(opus|sonnet|haiku)-(\d+)[.-](\d+)/.exec(model);
   if (claude) return `${claude[1][0].toUpperCase()}${claude[1].slice(1)} ${claude[2]}.${claude[3]}`;
   const gpt = /^gpt-(\d+(?:\.\d+)?)(?:-(.+))?$/.exec(model);
@@ -113,12 +113,13 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
     return { id: row.id, ...(["comment", "issue", "blocks"].includes(operation.type) ? { entityId: row.id } : {}),
       ...(original.type === "comment" ? { signature: `${original.author.role} · ${original.author.model}` } : {}) };
   }
-  async function enqueue(input: { bbProjectId: string; dedupeKey: string; operation: Operation }) {
+  async function enqueue(input: { bbProjectId: string; dedupeKey: string; operation: Operation; expectedWorkspaceId?: string }) {
     const bbProjectId = text.parse(input.bbProjectId);
     const dedupeKey = text.parse(input.dedupeKey);
     const operation = operationSchema.parse(input.operation);
     const connection = await auth.getConnection({ throwOnFailure: true });
     if (connection.status !== "connected" || !connection.workspace || !connection.mode) throw new Error("Connect Linear before queuing a write.");
+    if (input.expectedWorkspaceId && connection.workspace.id !== input.expectedWorkspaceId) throw new Error("The Linear workspace changed before the write was queued.");
     if (connection.mode === "app" && operation.type === "comment" && !operation.author.avatarUrl) throw new Error("App comments need a public HTTPS avatar.");
     return store(dedupeKey, operation, connection.workspace.id, connection.mode, bbProjectId);
   }

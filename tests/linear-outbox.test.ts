@@ -5,6 +5,16 @@ import { registerLinearAuth } from "../lib/linear-auth.js";
 import { registerLinearOutbox } from "../lib/linear-outbox.js";
 import { personalIdentity, appIdentity } from "./fixtures/linear.js";
 
+test("a Helper command cannot queue into a different workspace after its lane was planned", async (t) => {
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-key" } });
+  t.after(() => harness.lifecycle.dispose());
+  const auth = registerLinearAuth(bb, { fetch: async () => Response.json(personalIdentity) });
+  const outbox = registerLinearOutbox(bb, auth);
+  await assert.rejects(outbox.enqueue({ bbProjectId: "bb-project-1", expectedWorkspaceId: "old-workspace",
+    dedupeKey: "lane-status", operation: { type: "status", issueId: "issue-1", stateId: "state-2" } }), /workspace changed/);
+  assert.equal((await outbox.getHealth("bb-project-1")).pendingCount, 0);
+});
+
 test("the outbox sends an exact status payload once for a repeated key", async (t) => {
   const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());

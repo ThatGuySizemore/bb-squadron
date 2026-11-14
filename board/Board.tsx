@@ -9,6 +9,7 @@ import { boardChanged, linearOutboxChanged, linearConnectionChanged } from "../l
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
 import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
+import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
@@ -435,7 +436,7 @@ function IssueTitle({ title, url, className }: { title: string; url?: string; cl
   );
 }
 
-function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void }) {
+function ReadyRow({ spec, board, dispatch, starting = false }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void; starting?: boolean }) {
   // Real specs carry the Helper core's reason; the demo computes its own.
   const blocked = spec.startReason !== undefined ? spec.startReason : canStart(board, spec);
   return (
@@ -452,8 +453,8 @@ function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; di
       </span>
       {spec.acceptOwner ? <span className="sq-tag">accept:owner</span> : <span />}
       <span className="sq-ready-why">{blocked ?? ""}</span>
-      <Btn tone="primary" disabled={blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
-        Start
+      <Btn tone="primary" disabled={starting || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
+        {starting ? "Starting…" : "Start"}
       </Btn>
     </li>
   );
@@ -556,6 +557,7 @@ interface BoardViewProps {
   onPlan: (issueId?: string) => void;
   /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
   planning?: string | null;
+  starting?: string | null;
   setup?: ReactNode;
   onRetry?: (writeId: string) => Promise<void>;
   /** Replaces Ready and Unplanned while the board can't show them. */
@@ -564,7 +566,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live Helper or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, setup, onRetry, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, setup, onRetry, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -645,7 +647,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           ) : (
             <ul className="sq-ready-list">
               {board.ready.map((spec) => (
-                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} />
+                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} starting={starting === spec.id} />
               ))}
             </ul>
           )}
@@ -759,12 +761,30 @@ export async function planFromBoard(deps: {
   }
 }
 
+/** Start a lane, open its Lead and refresh the board after success or refusal. */
+export async function startLaneFromBoard(deps: {
+  start: (input: { projectId: string; specId: string }) => Promise<{ laneId: string; threadId: string; branch: string }>;
+  openThread: (threadId: string) => void;
+  refresh: () => Promise<void>;
+  notify: (text: string) => void;
+}, projectId: string, specId: string): Promise<void> {
+  try {
+    const started = await deps.start({ projectId, specId });
+    deps.openThread(started.threadId);
+  } catch (error) {
+    deps.notify(error instanceof Error && error.message ? error.message : "Couldn't start the lane. Refresh the board and try again.");
+  }
+  await deps.refresh();
+}
+
 /** The real board for the BB project in view, read from the Helper. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract>();
+  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract & typeof laneContract>();
   const open = useOpen();
   const [planning, setPlanning] = useState<string | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
+  const startingRequest = useRef(false);
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -824,15 +844,25 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       }, projectId, issueId);
     } finally { setPlanning(null); }
   }, [rpc, projectId, planning, open]);
+  const start = useCallback(async (specId: string) => {
+    if (!projectId || startingRequest.current) return;
+    startingRequest.current = true;
+    setStarting(specId);
+    try {
+      await startLaneFromBoard({ start: (input) => rpc.call("lanes.start", input),
+        openThread: (threadId) => open.thread(threadId, "the Lead thread"), refresh: load, notify: (text) => { toast(text); } }, projectId, specId);
+    } finally { startingRequest.current = false; setStarting(null); }
+  }, [rpc, projectId, open, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
       board={board ?? EMPTY_BOARD}
       demo={false}
       modeSwitch={modeSwitch}
-      dispatch={() => undefined}
+      dispatch={(action) => { if (action.type === "start") void start(action.specId); }}
       onPlan={(issueId) => void plan(issueId)}
       planning={planning}
+      starting={starting}
       notice={notice ? (
         <>
           {notice}

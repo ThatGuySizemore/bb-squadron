@@ -6,13 +6,15 @@ import { registerLinearMirror } from "./lib/linear-mirror.js";
 import { registerDoctor } from "./lib/doctor-service.js";
 import { registerBoard } from "./lib/board-service.js";
 import { registerPlanning } from "./lib/planning.js";
+import { registerLanes } from "./lib/lane-service.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
   const outbox = registerLinearOutbox(bb, linear);
   const mirror = registerLinearMirror(bb, linear);
-  registerDoctor(bb, () => linear.getConnection());
-  registerBoard(bb, { connection: () => linear.getConnection(), mirror, writes: (id) => outbox.getHealth(id) });
+  const doctor = registerDoctor(bb, () => linear.getConnection());
+  const lanes = registerLanes(bb, { connection: () => linear.getConnection(), mirror, doctor, outbox });
+  registerBoard(bb, { connection: () => linear.getConnection(), mirror, writes: (id) => outbox.getHealth(id), lanes });
   registerPlanning(bb, { connection: () => linear.getConnection(), mirror, outbox });
   bb.log.info("loaded");
 }

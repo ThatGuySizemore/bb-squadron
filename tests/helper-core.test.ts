@@ -53,7 +53,7 @@ test("open blockers across specs, inside or outside the project, hold Start with
   assert.deepEqual(board.unplanned.map((row) => row.id), [], "outside and closed blockers never become rows");
 });
 
-test("a spec with no blockers still can't start in this version, and says why", () => {
+test("Start is available with a frontier and held for empty or fully blocked specs", () => {
   const { board } = helperCore(input(snapshot([
     issue("FIX-1", { labels: ["ready-for-agent"] }),
     issue("FIX-2", { parent: "FIX-1" }),
@@ -62,7 +62,7 @@ test("a spec with no blockers still can't start in this version, and says why", 
     issue("FIX-7", { parent: "FIX-6" }),
   ], [blocks("FIX-2", "FIX-7")])));
   assert.deepEqual(board.ready.map((spec) => [spec.id, spec.startReason]), [
-    ["FIX-1", "Squadron can't start lanes yet. This version only reads Linear."],
+    ["FIX-1", null],
     ["FIX-5", "Has no open tickets. Plan its tickets first."],
     ["FIX-6", "Every ticket waits on a blocker: FIX-2"],
   ]);
@@ -90,7 +90,7 @@ test("Ready shows open blockers of its tickets while preserving a partially avai
     issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
   ], [blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3")]))).board.ready[0];
   assert.deepEqual(partial.blockedBy, ["OUT-9"]);
-  assert.equal(partial.startReason, "Squadron can't start lanes yet. This version only reads Linear.");
+  assert.equal(partial.startReason, null);
 });
 
 test("Start waits on a valid docs/agents/squadron.md before anything else after blockers", () => {

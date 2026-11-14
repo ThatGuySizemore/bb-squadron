@@ -59,7 +59,7 @@ test("install, bind a recorded workspace, sync it and read the real board throug
   assert.equal(board.linear?.project, "Fixture team · Fixture project");
   assert.deepEqual(board.ready.map(({ id, ticketCount, blockedBy, startReason, routes }) => ({ id, ticketCount, blockedBy, startReason, models: routes.map((route) => route.model) })), [
     { id: "FIX-1", ticketCount: 2, blockedBy: ["OUT-10"], startReason: "Waits on OUT-10 (outside this project)", models: ["gpt-6.1-sol", "claude-opus-5-5"] },
-    { id: "FIX-5", ticketCount: 1, blockedBy: [], startReason: "Squadron can't start lanes yet. This version only reads Linear.", models: ["gpt-6.1-sol"] },
+    { id: "FIX-5", ticketCount: 1, blockedBy: [], startReason: null, models: ["gpt-6.1-sol"] },
   ]);
   assert.deepEqual(board.unplanned.map((row) => [row.id, row.title]), [["FIX-9", "Linear webhooks"]]);
   assert.deepEqual(board.lanes, []);
@@ -181,10 +181,11 @@ test("the board page renders the RPC board model: Ready, Unplanned, reasons and 
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
-    "Squadron can&#x27;t start lanes yet. This version only reads Linear.", "Doctor checks", "Linear webhooks", "No lanes flying."]) {
+    "Doctor checks", "Linear webhooks", "No lanes flying."]) {
     assert.ok(html.includes(text), `the board shows ${text}`);
   }
-  assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Start<\/button>/g) ?? []).length, 2, "both Start buttons are disabled");
+  assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Start<\/button>/g) ?? []).length, 1, "the blocked spec's Start is disabled");
+  assert.match(html, /<button[^>]*title="Start a lane for FIX-5"[^>]*>Start<\/button>/, "the unblocked spec can start");
   assert.ok(!html.includes("Synthetic data"), "the real board carries no synthetic label");
 
   const page = renderToStaticMarkup(createElement(BoardPage));

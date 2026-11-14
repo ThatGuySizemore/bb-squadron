@@ -12,6 +12,7 @@ import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { OutboxHealth } from "./linear-outbox-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
+import type { LaneService } from "./lane-service.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
@@ -22,6 +23,7 @@ export interface BoardSources {
   };
   /** The outbox's safe health read for one BB project. */
   writes?(bbProjectId: string): Promise<OutboxHealth>;
+  lanes?: Pick<LaneService, "list" | "onChange">;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -75,7 +77,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     try { writes = await sources.writes?.(projectId) ?? null; } catch { writes = null; }
     const { board, commands } = helperCore({
       snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
-      settings: entry.settings.value, writes, now: now(), startedAt,
+      settings: entry.settings.value, writes, now: now(), startedAt, lanes: sources.lanes?.list(projectId),
     });
     for (const command of commands) {
       if (command.type === "sync" && !entry.catchingUp && !lifetime.signal.aborted) {
@@ -112,7 +114,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return running;
   }
 
-  sources.mirror.onChange((projectId) => { void refresh(projectId); });
+  bb.onDispose(sources.mirror.onChange((projectId) => { void refresh(projectId); }));
+  if (sources.lanes) bb.onDispose(sources.lanes.onChange((projectId) => { void refresh(projectId); }));
 
   bb.background.service("board-watcher", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);

@@ -1,11 +1,12 @@
 // The Helper core: one deterministic function from the Linear mirror,
 // settings and clock to the board view model and the commands the server
-// should run. Spec B extends this function with lanes; Spec A only reads.
+// should run. Reading a board never starts work without an explicit action.
 import type { Blocker, Board, LinearStatus, ReadySpec, Route, UnplannedIssue } from "./board-model.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { OutboxBlockedReason, OutboxHealth } from "./linear-outbox-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
+import type { LaneRun, StartDecision, StartLeadCommand } from "./lane-contract.js";
 
 export interface HelperInput {
   snapshot: MirrorSnapshot;
@@ -17,6 +18,8 @@ export interface HelperInput {
   now: number;
   /** When this run of the plugin started; older snapshots predate it. */
   startedAt: number;
+  lanes?: readonly LaneRun[];
+  action?: { type: "start"; specId: string };
 }
 
 /** What the owner reads for each reason the outbox parks a write. */
@@ -31,11 +34,12 @@ const BLOCKED_WRITE_TEXT: Record<OutboxBlockedReason, string> = {
   dependency_blocked: "It waits on an earlier write that couldn't go through. Retry that one first.",
 };
 
-export type HelperCommand = { type: "sync"; reason: "catch-up" };
+export type HelperCommand = { type: "sync"; reason: "catch-up" } | StartLeadCommand;
 
 export interface HelperOutput {
   board: Board;
   commands: HelperCommand[];
+  start?: StartDecision;
 }
 
 function byIdentifier(a: MirrorIssue, b: MirrorIssue): number {
@@ -59,6 +63,8 @@ export function helperCore(input: HelperInput): HelperOutput {
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const binding = snapshot.binding;
+  const runs = input.lanes ?? [];
+  const active = runs.filter((run) => run.state !== "landed");
   /** Open blockers of one issue, in identifier order. Unknown endpoints are skipped. */
   const openBlockers = (issue: MirrorIssue): Blocker[] => snapshot.relations
     .filter((relation) => relation.relatedIssueId === issue.id)
@@ -71,14 +77,17 @@ export function helperCore(input: HelperInput): HelperOutput {
       id: blocker.identifier, title: blocker.title, url: blocker.url,
       outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id,
     }));
-  const ready: ReadySpec[] = specs.map((spec) => {
+  const ready: ReadySpec[] = specs.filter((spec) => !runs.some((run) => run.specIssueId === spec.id && run.leadThreadId)).map((spec) => {
     const tickets = open.filter((issue) => issue.parentId === spec.id);
     const specBlockers = openBlockers(spec);
     const ticketBlockers = tickets.map(openBlockers);
     const blockers = [...new Map([...specBlockers, ...ticketBlockers.flat()].map((blocker) => [blocker.id, blocker])).values()]
       .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
-    let startReason: string;
-    if (specBlockers.length) {
+    let startReason: string | null;
+    if (active.some((run) => run.specIssueId === spec.id)) {
+      startReason = active.find((run) => run.specIssueId === spec.id)?.stopReason
+        ?? "This lane is already starting. Open its Lead when it appears under Flying.";
+    } else if (specBlockers.length) {
       startReason = `Waits on ${list(specBlockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
     } else if (!tickets.length) {
       startReason = "Has no open tickets. Plan its tickets first.";
@@ -90,8 +99,7 @@ export function helperCore(input: HelperInput): HelperOutput {
         ? `Fix docs/agents/squadron.md first: ${[...new Set(sections)].join(", ")}. Open Doctor for details.`
         : "Couldn't read docs/agents/squadron.md. Open Doctor for details.";
     } else {
-      // Spec B starts lanes here, after the lane-capacity check.
-      startReason = "Squadron can't start lanes yet. This version only reads Linear.";
+      startReason = active.length >= settings.limits.lanesAtOnce ? "All lane slots are full." : null;
     }
     return {
       id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length,
@@ -135,6 +143,35 @@ export function helperCore(input: HelperInput): HelperOutput {
   } else {
     linear = "current"; message = "Up to date with Linear.";
   }
+  // Starting work requires a current mirror. A stale copy is still readable.
+  if (linear !== "current") for (const spec of ready) {
+    spec.startReason = linear === "catching-up" ? "Wait for Linear to catch up before starting a lane." : message;
+  }
+  let start: StartDecision | undefined;
+  const action = input.action;
+  if (action?.type === "start") {
+    const row = ready.find((spec) => spec.id === action.specId);
+    const spec = specs.find((spec) => spec.identifier === action.specId);
+    const reason = row?.startReason ?? (!row ? "This spec isn't ready to start in this project's current board." : null);
+    if (reason || !spec || !settings) start = { allowed: false, reason: reason ?? "Fix Squadron settings first." };
+    else {
+      start = { allowed: true };
+      commands.push({ type: "start-lead", specIssueId: spec.id, specId: spec.identifier, route: resolveRoute(settings, labels(spec)) });
+    }
+  }
+  const lanes: Board["lanes"] = runs.flatMap((run) => {
+    if (!run.leadThreadId) return [];
+    return [{ specId: run.specId, title: run.title, lead: run.route, leadThreadId: run.leadThreadId,
+      branch: run.branch ?? "Preparing integration branch", state: run.state === "starting" ? "flying" : run.state,
+      minutes: Math.max(0, Math.floor((input.now - run.startedAt) / 60_000)), acceptOwner: run.acceptOwner,
+      ...(run.stopReason ? { stopReason: run.stopReason } : {}),
+      tickets: snapshot.issues.filter((issue) => issue.parentId === run.specIssueId && issue.inProject).sort(byIdentifier).map((issue) => ({
+        id: issue.identifier, title: issue.title, blockedBy: openBlockers(issue).map((blocker) => blocker.id),
+        route: settings ? resolveRoute(settings, labels(issue)) : run.route,
+        state: !isOpenIssue(issue) ? "done" as const : openBlockers(issue).length ? "blocked" as const : "ready" as const, minutes: 0,
+      })),
+    }];
+  });
   return {
     board: {
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
@@ -147,8 +184,9 @@ export function helperCore(input: HelperInput): HelperOutput {
         })),
       } } : {}),
       tick: 0, laneCapacity: settings?.limits.lanesAtOnce ?? 0, workersPerLane: settings?.limits.workersPerLane ?? 0,
-      autoStart: false, lanes: [], ready, unplanned,
+      autoStart: false, lanes, ready, unplanned,
     },
     commands,
+    ...(start ? { start } : {}),
   };
 }

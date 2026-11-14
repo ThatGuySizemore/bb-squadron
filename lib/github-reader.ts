@@ -13,7 +13,7 @@ export function registerGithubReader(bb: BbPluginApi, options: { now?: () => num
   async function getSnapshot(bbProjectId: string): Promise<TrackerSnapshot> {
     const empty: TrackerSnapshot = { kind: "github", bbProjectId, project: null, issues: [], relations: [], labels: [], states: [], syncedAt: null, error: null };
     const checkout = await readProjectCheckout(bb, bbProjectId).catch(() => null);
-    if (!checkout) return { ...empty, error: "Choose a checkout for this project's GitHub issues." };
+    if (!checkout) return { ...(cache.get(bbProjectId)?.value ?? empty), error: "Choose a checkout for this project's GitHub issues." };
     const key = `${checkout.hostId}\n${checkout.path}`;
     let entry = cache.get(bbProjectId);
     if (entry?.key !== key) { entry = { key, at: -Infinity, value: empty }; cache.set(bbProjectId, entry); }

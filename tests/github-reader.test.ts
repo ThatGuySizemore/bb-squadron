@@ -124,6 +124,7 @@ test("a failed or partial gh read preserves the last complete snapshot and the r
   const { registerGithubReader } = await import("../lib/github-reader.js");
   let clock = 0;
   let mode = "complete";
+  let sourceAvailable = true;
   const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async (command, args, options) => {
     if (args[0] === "repo") return recorded(command, args, options);
     if (mode === "failed") return { code: 1, stdout: "private process diagnostic" };
@@ -133,14 +134,22 @@ test("a failed or partial gh read preserves the last complete snapshot and the r
     return recorded(command, args, options);
   }));
   const { bb, harness } = createFakePluginHost({ experimental_hostEntry: true, sdk: {
-    projects: { get: async () => ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
-      sources: [{ id: "source", projectId: "project", hostId: "repo-host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
+    projects: { get: async () => {
+      if (!sourceAvailable) throw new Error("private offline diagnostic");
+      return ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
+      sources: [{ id: "source", projectId: "project", hostId: "repo-host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }); } },
     files: { read: async ({ path }) => ({ content: "# Issue tracker: GitHub", contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: 0 }) },
   }, experimental_callHostRpc: ({ input }) => host.experimental_call("githubRead", input as { bbProjectId: string; checkoutPath: string }) });
   try {
     const reader = registerGithubReader(bb, { now: () => clock });
     const complete = await reader.getSnapshot("project");
     assert.equal(complete.error, null);
+    sourceAvailable = false;
+    const offline = await reader.getSnapshot("project");
+    assert.deepEqual(offline.issues, complete.issues, "a project lookup failure retains the last complete data");
+    assert.equal(offline.syncedAt, complete.syncedAt);
+    assert.equal(JSON.stringify(offline).includes("private"), false);
+    sourceAvailable = true;
     mode = "failed";
     assert.deepEqual(await reader.getSnapshot("project"), complete, "a read inside 30 seconds uses the cached snapshot");
     for (const failure of ["failed", "partial"]) {

@@ -683,3 +683,60 @@ test("Autopilot never starts a Shaping spec whose ready-for-agent label remains 
   assert.ok(board.shaping.some((spec) => spec.id === "FIX-5"));
   assert.ok(!board.ready.some((spec) => spec.id === "FIX-5"));
 });
+
+test("Autopilot follows Linear manual order, priority with none last, and oldest creation time", async (t) => {
+  const template = workspaceIssues.data.issues.nodes[3];
+  const ticket = workspaceIssues.data.issues.nodes[4];
+  const order = [
+    { id: "fix-10", sortOrder: 2, priority: 1, createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "fix-20", sortOrder: 1, priority: 0, createdAt: "2026-01-01T00:00:00.000Z" },
+    { id: "fix-30", sortOrder: 1, priority: 2, createdAt: "2026-03-01T00:00:00.000Z" },
+    { id: "fix-40", sortOrder: 1, priority: 1, createdAt: "2026-02-01T00:00:00.100Z" },
+    { id: "fix-50", sortOrder: 1, priority: 1, createdAt: "2026-02-01T00:00:00Z" },
+  ];
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: order.flatMap((fields) => [
+      { ...template, ...fields, identifier: fields.id.toUpperCase() },
+      { ...ticket, id: `${fields.id}-ticket`, identifier: `${fields.id.toUpperCase()}-T`, parent: { id: fields.id } },
+    ]),
+  } } }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.ready.map((row) => row.id), ["FIX-50", "FIX-40", "FIX-30", "FIX-20", "FIX-10"]);
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 5 });
+  for (let i = 0; i < 5; i++) await watcherCycle(harness);
+  assert.deepEqual([...native.metadata.values()].map((row) => row.specId), ["fix-50", "fix-40", "fix-30", "fix-20", "fix-10"]);
+});
+
+test("a queued spec waits for its open blocker while Autopilot starts the next eligible spec", async (t) => {
+  const { harness, native } = await setup(t);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const html = renderToStaticMarkup(createElement(BoardView, { board, demo: false, modeSwitch: null,
+    dispatch: () => undefined, onPlan: () => undefined }));
+  assert.match(html, /Waiting for .*OUT-10/);
+  assert.match(html, /aria-label="FIX-5 is next in the queue"/);
+  assert.doesNotMatch(html, /aria-label="FIX-1 is next in the queue"/);
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.deepEqual([...native.metadata.values()].map((row) => row.specId), ["fix-5"]);
+});
+
+for (const completed of [false, true]) {
+  test(`a queued spec ${completed ? "can start after its blocker is completed" : "waits for an open blocking spec"}`, async (t) => {
+    const nodes = workspaceIssues.data.issues.nodes;
+    const blocker = { ...nodes[3], ...(completed ? { state: { id: "done", name: "Done", type: "completed" } } : {}) };
+    const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+      nodes: nodes.map((node) => node.id === "fix-1" ? { ...node, sortOrder: -10,
+        inverseRelations: { nodes: [{ id: "spec-block", type: "blocks", issue: blocker, relatedIssue: node }], pageInfo: { hasNextPage: false, endCursor: null } },
+      } : node.id === "fix-5" ? blocker : node),
+    } } }));
+    const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+    assert.deepEqual(board.ready.find((row) => row.id === "FIX-1")?.waitingFor?.map((row) => row.id) ?? [], completed ? [] : ["FIX-5"]);
+    await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+    await watcherCycle(harness);
+    assert.deepEqual([...native.metadata.values()].map((row) => row.specId), completed ? ["fix-1"] : ["fix-5"]);
+  });
+}

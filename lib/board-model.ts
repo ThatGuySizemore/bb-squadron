@@ -51,6 +51,8 @@ const boardSchema = z.object({
     id: z.string(), title: z.string(), ticketCount: z.number(), routes: z.array(route), blockedBy: z.array(z.string()),
     acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
     startReason: z.string().nullable().optional(),
+    /** Open blockers of the spec itself, distinct from tickets that can wait inside its lane. */
+    waitingFor: z.array(blocker).optional(),
     /** Open tickets that wait on open blockers, so a partial frontier shows why the rest won't start. */
     waiting: z.array(z.object({ id: z.string(), title: z.string(), blockedBy: z.array(z.string()) })).optional(),
     /** Open tickets a hold label keeps from agents. The Lead skips them. */

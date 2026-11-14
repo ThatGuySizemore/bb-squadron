@@ -418,3 +418,28 @@ test("a repo's own hold labels hold tickets on the board too", () => {
   ]), { settings: parseSquadronSettings(markdown) }));
   assert.deepEqual(board.shaping.map(({ id, missing }) => [id, missing]), [["FIX-1", "Every open ticket is held: FIX-2."]]);
 });
+
+for (const kind of ["github", "local-markdown"] as const) {
+  test(`${kind} Ready queue preserves tracker order rather than identifier or Linear priority`, () => {
+    const snap = snapshot([
+      issue("FIX-20", { labels: ["ready-for-agent"] }), issue("FIX-21", { parent: "FIX-20" }),
+      issue("FIX-10", { labels: ["ready-for-agent"] }), issue("FIX-11", { parent: "FIX-10" }),
+    ]);
+    snap.issues[0].priority = 0;
+    snap.issues[2].priority = 1;
+    const { board } = deriveBoard(input(snap, { kind }));
+    assert.deepEqual(board.ready.map((row) => row.id), ["FIX-20", "FIX-10"]);
+  });
+}
+
+for (const kind of ["github", "local-markdown"] as const) {
+  test(`${kind} Ready queue uses oldest creation time for equal tracker ordinals`, () => {
+    const source = input(snapshot([
+      issue("FIX-20", { labels: ["ready-for-agent"] }), issue("FIX-21", { parent: "FIX-20" }),
+      issue("FIX-10", { labels: ["ready-for-agent"] }), issue("FIX-11", { parent: "FIX-10" }),
+    ]), { kind });
+    Object.assign(source.snapshot.issues[0], { trackerOrder: 1, createdAt: "2026-01-01T00:00:00.100Z" });
+    Object.assign(source.snapshot.issues[2], { trackerOrder: 1, createdAt: "2026-01-01T00:00:00Z" });
+    assert.deepEqual(deriveBoard(source).board.ready.map((row) => row.id), ["FIX-10", "FIX-20"]);
+  });
+}

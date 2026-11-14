@@ -11,7 +11,7 @@ export type Fx =
   | { kind: "peg"; state: "working" | "question" | "review" | "branch" | "done" | "failed" }
   | { kind: "needs-you" }
   | { kind: "plate" }
-  | { kind: "formation"; flying: number }
+  | { kind: "formation"; slots: number; lit: number }
   | { kind: "burst" };
 
 type Inks = (name: string) => number;
@@ -21,7 +21,7 @@ function painterFor(fx: Fx, ink: Inks): Painter {
     case "airstream": return airstream({ pace: fx.pace, ink: ink("--sq-sky") });
     case "needs-you": return needsYou({ ink: ink("--sq-amber") });
     case "plate": return plate({ ink: ink("--sq-green"), level: 0.2 });
-    case "formation": return formation({ flying: fx.flying, on: ink("--sq-sky"), off: ink("--border") });
+    case "formation": return formation({ slots: fx.slots, lit: fx.lit, on: ink("--sq-sky"), off: ink("--border") });
     case "burst": return burst({ ink: ink("--sq-green") });
     case "peg":
       switch (fx.state) {
@@ -40,7 +40,7 @@ function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until">
   switch (fx.kind) {
     case "airstream": return { animated: fx.pace > 0, stillAt: 2.4 };
     case "needs-you": return { animated: true, stillAt: 0.9 };
-    case "formation": return { animated: fx.flying > 0, stillAt: 0.8 };
+    case "formation": return { animated: fx.lit > 0, stillAt: 0.8 };
     case "burst": return { animated: true, stillAt: BURST_SECONDS, until: BURST_SECONDS };
     case "peg": return { animated: fx.state === "working", stillAt: 1.2 };
     case "plate": return { animated: false, stillAt: 0 };
@@ -85,13 +85,15 @@ function inksOf(el: Element): Inks {
   };
 }
 
-export function DitherCanvas({ fx, className, onDone, label }: {
+export function DitherCanvas({ fx, className, onDone, label, title }: {
   fx: Fx;
   className?: string;
   /** A one-time animation's end. */
   onDone?: () => void;
   /** An accessible name when the art carries meaning; otherwise it's hidden from assistive tech. */
   label?: string;
+  /** A hover text; the formation mark's says what its label says. */
+  title?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const done = useRef(onDone);
@@ -148,6 +150,6 @@ export function DitherCanvas({ fx, className, onDone, label }: {
     };
   }, [key]);
   return label
-    ? <canvas ref={ref} className={className} role="img" aria-label={label} />
+    ? <canvas ref={ref} className={className} role="img" aria-label={label} title={title} />
     : <canvas ref={ref} className={className} aria-hidden="true" />;
 }

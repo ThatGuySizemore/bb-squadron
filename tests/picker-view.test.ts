@@ -85,15 +85,3 @@ test("an invalid realtime signal's diagnostic is visible on the board", async ()
   assert.match(html, /role="status"[^>]*>[^<]*Squadron ignored a board-changed update/);
 });
 
-test("SIZE-956: the formation mark counts lanes flying across every project, with the shown project read live", async () => {
-  await import("./fixtures/app-runtime.js");
-  const { fleetFlying } = await import("../board/ProjectPicker.js");
-  const counts = { projects: [
-    { id: "proj-a", tracker: "linear" as const, ready: 1, flying: 2, note: null },
-    { id: "proj-b", tracker: "github" as const, ready: 0, flying: 1, note: null },
-    { id: "proj-c", tracker: null, ready: null, flying: null, note: "Couldn't read this project." },
-  ] };
-  assert.equal(fleetFlying(counts, "proj-a", 3), 4, "the shown project's live count replaces its picker count");
-  assert.equal(fleetFlying(counts, "proj-x", 0), 3, "a project outside the counts adds its own lanes");
-  assert.equal(fleetFlying(null, "proj-a", 2), 2, "before the counts load, the shown project alone");
-});

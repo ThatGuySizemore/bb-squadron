@@ -188,47 +188,80 @@ export function plate({ ink, level }: { ink: number; level: number }): Painter {
   return (s) => field(s, ink, () => level);
 }
 
-const CHEVRON = ["  #  ", " # # ", "#   #"];
-const FORMATION_SLOTS: ReadonlyArray<readonly [number, number]> = [[8, 0], [2, 5], [14, 5], [-4, 10], [20, 10]];
+/**
+ * A plane seen from above, nose right, on the formation's 3px cell: a fuselage
+ * of eight cells, wings swept back from its middle and two tail fins.
+ */
+const PLANE = ["  ##    ", "#  ##   ", "########", "#  ##   ", "  ##    "];
+const CELL = 3;
+const PLANE_W = PLANE[0]!.length * CELL, PLANE_H = PLANE.length * CELL;
+/** The most planes the mark draws: a lead and five pairs. */
+const FORMATION_MAX = 11;
+/** Cells from the lead's fuselage to the first pair's, above and below. */
+const FIRST_SPREAD = 4;
+/** Cells between ranks, nose to nose. */
+const RANK_STEP = 10;
+/** How far, in CSS pixels, a contrail streams behind its plane. */
+const TRAIL = 42;
 /** The formation mark's canvas size in CSS pixels. */
-export const FORMATION_SIZE = { width: 92, height: 40 } as const;
+export const FORMATION_SIZE = { width: 184, height: 80 } as const;
 
 /**
- * The formation mark: one sky chevron per lane flying (three slots minimum,
- * empty ones in hairline), each bobbing under a pixel with a short dithered
- * contrail. Still when nothing flies.
+ * Where each plane sits on a mark `width` x `height` CSS pixels, as its
+ * top-left corner: a V flying right, the lead at its point and pairs stepping
+ * back above and below it. The V flattens as ranks are added, so up to eleven
+ * planes fit the 184x80 mark.
  */
-export function formation({ flying, on, off }: { flying: number; on: number; off: number }): Painter {
-  const cell = 3;
+function formationLayout(count: number, width: number, height: number): Array<{ x: number; y: number }> {
+  const ranks = Math.ceil((count - 1) / 2);
+  const maxSpread = Math.floor((height / 2 - PLANE_H / 2 - 1) / CELL);
+  const step = ranks <= 1 ? 0 : Math.min(3, Math.floor((maxSpread - FIRST_SPREAD) / (ranks - 1)));
+  // The lead flies at the right, beside the title; the rest of the V and the contrails fill the mark behind it.
+  const lead = width - PLANE_W - 3;
+  const mid = height / 2 - PLANE_H / 2;
+  return Array.from({ length: count }, (_, i) => {
+    const rank = Math.ceil(i / 2);
+    const side = i === 0 ? 0 : i % 2 === 1 ? -1 : 1;
+    const spread = rank === 0 ? 0 : FIRST_SPREAD + (rank - 1) * step;
+    return { x: lead - rank * RANK_STEP * CELL, y: mid + side * spread * CELL };
+  });
+}
+
+/**
+ * The formation mark: one plane slot per lane in the project's lane limit.
+ * The first `lit` planes fly in sky, bobbing under a pixel with a dithered
+ * contrail streaming behind them; empty slots stay still in hairline. Lanes
+ * over the limit add planes up to eleven. Still when nothing flies.
+ */
+export function formation({ slots, lit, on, off, trail = on }: { slots: number; lit: number; on: number; off: number; trail?: number }): Painter {
+  const count = Math.max(1, Math.min(Math.max(slots, lit), FORMATION_MAX));
+  const flying = Math.max(0, Math.min(lit, count));
+  const motion = (i: number, t: number) => i < flying
+    ? { dx: Math.sin(t * 0.7 + i) * 0.6, dy: Math.sin(t * 1.3 + i * 1.9) * 0.9 }
+    : { dx: 0, dy: 0 };
   return (s, t) => {
-    const shown = Math.min(Math.max(3, flying), FORMATION_SLOTS.length);
-    const lit = Math.min(flying, FORMATION_SLOTS.length);
-    if (lit > 0) {
-      field(s, on, (x, y) => {
+    const planes = formationLayout(count, s.cssW, s.cssH);
+    if (flying > 0) {
+      field(s, trail, (x, y) => {
         let v = 0;
-        for (let i = 0; i < lit; i++) {
-          const [ox, oy] = FORMATION_SLOTS[i]!;
-          const bob = Math.sin(t * 1.3 + i * 1.9) * 0.9;
-          const cy = (oy + 1) * cell + bob + 4;
-          const cx = (ox + 2.5) * cell + 14;
-          const dx = cx - x;
-          if (dx < 0 || dx > 44) continue;
-          const dyv = (y - cy) / (1.2 + dx * 0.05);
+        for (let i = 0; i < flying; i++) {
+          const { dx: driftX, dy: bob } = motion(i, t);
+          const tail = planes[i]!.x + driftX;
+          const behind = tail - x;
+          if (behind < 1 || behind > TRAIL) continue;
+          const spread = (y - (planes[i]!.y + PLANE_H / 2 + bob)) / (1.2 + behind * 0.05);
           const flow = fbm((x + t * 22) / 9, i * 7.1 + y / 4);
-          v = Math.max(v, Math.exp(-dyv * dyv) * (1 - dx / 44) * (0.25 + 0.55 * flow));
+          v = Math.max(v, Math.exp(-spread * spread) * (1 - behind / TRAIL) * (0.25 + 0.55 * flow));
         }
         return v * 0.85;
       });
     }
-    for (let i = 0; i < shown; i++) {
-      const [ox, oy] = FORMATION_SLOTS[i]!;
-      const flyingHere = i < lit;
-      const bob = flyingHere ? Math.sin(t * 1.3 + i * 1.9) * 0.9 : 0;
-      const drift = flyingHere ? Math.sin(t * 0.7 + i) * 0.6 : 0;
-      CHEVRON.forEach((row, ry) => [...row].forEach((c, rx) => {
-        if (c === "#") rect(s, flyingHere ? on : off, (ox + rx) * cell + 14 + drift, (oy + ry) * cell + 4 + bob, cell, cell);
+    planes.forEach(({ x, y }, i) => {
+      const { dx, dy } = motion(i, t);
+      PLANE.forEach((row, ry) => [...row].forEach((c, rx) => {
+        if (c === "#") rect(s, i < flying ? on : off, x + rx * CELL + dx, y + ry * CELL + dy, CELL, CELL);
       }));
-    }
+    });
   };
 }
 

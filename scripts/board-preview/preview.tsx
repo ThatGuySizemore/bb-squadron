@@ -45,7 +45,7 @@ function Preview() {
     : landedNow ? { ...lane, state: "landed" as const, landedAt: Date.now(), tickets: lane.tickets.map((t) => ({ ...t, state: "done" as const })), needs: [] } : lane) }, [landedNow]);
   const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
   return React.createElement(BoardView, {
-    board, demo: false, modeSwitch: null, projectId: fixture.name, tracker: fixture.tracker, fleet: fixture.fleet,
+    board, demo: false, modeSwitch: null, projectId: fixture.name, tracker: fixture.tracker,
     // The narrow width is the side panel: the comp's narrow layout, thread links opening in the main view.
     placement: width === "narrow" ? "panel" : "page",
     dispatch: (action: unknown) => console.log("dispatch", action), onPlan: (...args: unknown[]) => console.log("plan", ...args), onSetUp: () => console.log("set up"),

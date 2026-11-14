@@ -90,11 +90,11 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const environmentId = lead.thread.environmentId;
     const snapshot = await sources.tracker.getSnapshot(projectId);
     const progress = await readLaneProgress(bb, snapshot, [lead]);
+    const checkout = await readProjectCheckout(bb, projectId);
+    const { board } = deriveBoard({ snapshot, leads: [lead], settings: checkout?.settings ?? null,
+      connection: { status: "connected", message: "" }, now: Date.now(), ...progress });
+    const lane = board.lanes.find((lane) => lane.specId === specId);
     if (progress.repository?.hasRemote === false) {
-      const checkout = await readProjectCheckout(bb, projectId);
-      const { board } = deriveBoard({ snapshot, leads: [lead], settings: checkout?.settings ?? null,
-        connection: { status: "connected", message: "" }, now: Date.now(), ...progress });
-      const lane = board.lanes.find((lane) => lane.specId === specId);
       if (!lane || lane.state === "landed" || !canMerge(lane)) {
         throw new Error(`${specId} isn't ready for a local merge. Read the board again.`);
       }
@@ -106,6 +106,8 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     if (!canMerge({ pr: { state: pr.state, checks: pr.checks.state === "no_checks" ? "none" : pr.checks.state } })) {
       throw new Error(pr.state === "open" ? `PR #${pr.number} can merge once its checks pass.` : `PR #${pr.number} is ${pr.state}, not open.`);
     }
+    if (lane?.state === "landed") throw new Error(`${specId} has already landed. Read the board again.`);
+    if (!lane) throw new Error(`${specId} isn't ready for a merge. Read the board again.`);
     await bb.sdk.plugins.callRpc({ pluginId: PULL_REQUEST_PLUGIN, method: "merge",
       input: { environmentId, method: "squash" }, outputSchema: z.object({ message: z.string() }) });
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });

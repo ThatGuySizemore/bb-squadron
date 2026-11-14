@@ -327,3 +327,32 @@ test("CLI Start keeps Doctor's board refusal and single-project actions need no 
   assert.deepEqual(await harness.behavior.runCli(["start", "FIX-5"]), { exitCode: 1, stdout: "", stderr: `${reason}\n` });
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
 });
+
+
+test("remote CLI and board Merge refuse a Done spec even with an open passing PR", async (t) => {
+  const spec = workspaceIssues.data.issues.nodes.find((node) => node.identifier === "FIX-5")!;
+  const done = { ...spec, state: { id: "done", name: "Done", type: "completed" } };
+  const { harness, native } = await setup(t, { laneSpec: () => Response.json({ data: { issue: { ...done,
+    children: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } }), issues: () => Response.json({ data: { issues: {
+    ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-5"
+      ? { ...node, state: { id: "done", name: "Done", type: "completed" } } : node),
+  } } }) });
+  native.threads.set("thr_lead_1", makeThreadResponse({ id: "thr_lead_1", projectId: "proj-one",
+    providerId: "codex", environmentId: "env_lead_1", status: "active" }));
+  native.metadata.set("thr_lead_1", { role: "lead", specId: spec.id });
+  native.routes.set("thr_lead_1", { model: "gpt-6.1-sol", reasoningLevel: "medium" });
+  harness.sdk.stub("plugins.callRpc", async (args: { method: string }) => args.method === "merge"
+    ? { message: "Merged." } : { env_lead_1: { outcome: "available", pullRequest: {
+      number: 7, state: "open", checks: { state: "passing" }, updatedAt: "2026-11-14T12:00:00Z",
+      url: "https://github.com/fixture/repo/pull/7",
+    } } });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one", visibleLaneIds: [] }) as import("../lib/board-model.js").Board;
+  assert.equal(board.lanes.find((lane) => lane.specId === "FIX-5")?.state, "landed");
+  assert.deepEqual(await harness.behavior.runCli(["merge", "FIX-5"], { projectId: "proj-one" }), {
+    exitCode: 1, stdout: "", stderr: "FIX-5 has already landed. Read the board again.\n",
+  });
+  await assert.rejects(harness.behavior.callRpc("lane.merge", { projectId: "proj-one", specId: "FIX-5" }),
+    { message: "FIX-5 has already landed. Read the board again." });
+  assert.equal(harness.inspection.sdk.callsTo("plugins.callRpc").filter(([args]) => (args as { method: string }).method === "merge").length, 0);
+});

@@ -35,8 +35,8 @@
   cursor: pointer;
 }
 .sq-helper-option:hover { background: var(--sq-hover); }
-.sq-helper-option:focus-visible { outline: 2px solid var(--sq-sky-ink); outline-offset: -2px; }
-.sq-helper-option:disabled { opacity: .42; cursor: wait; }
+.sq-helper-option:focus-visible { outline: 2px solid var(--sq-sky-ink); outline-offset: 2px; }
+.sq-helper-option:disabled { opacity: .42; cursor: not-allowed; }
 .sq-helper-option[aria-current="true"] { font-weight: 650; }
 .sq-helper-threads { max-height: 240px; overflow: auto; border-top: 1px solid var(--sq-rule); margin-top: 4px; }
 .sq-helper-threads p { padding: 6px 8px; margin: 0; color: var(--sq-muted); font-size: 12px; }

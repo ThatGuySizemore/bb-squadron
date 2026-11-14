@@ -18,6 +18,7 @@ export function HelperControl({ projectId, openThread }: { projectId: string | n
   const toggle = useRef<HTMLButtonElement>(null);
   const menuBox = useRef<HTMLDivElement>(null);
   const listId = useId();
+  const reasonId = useId();
   const version = useRef(0);
   const active = useRef(false);
   const choices = useRef(0);
@@ -80,29 +81,33 @@ export function HelperControl({ projectId, openThread }: { projectId: string | n
     try { const list = await rpc.call("helper.threads", { projectId }); if (request === choices.current) setThreads(list); }
     catch { if (request === choices.current) setError("Couldn't read this project's threads. Close this menu and try again."); }
   };
+  const disabledReason = busy ? "Opening the Helper…" : !projectId ? "Choose a project first."
+    : !loaded ? (error ? "Waiting for the Helper's machine." : "Reading the Helper…") : null;
   return <div className="sq-helper" ref={root} onKeyDown={(event) => {
     if (event.key === "Escape" && menu) { event.stopPropagation(); close(); }
   }}>
-    <button type="button" className="sq-btn" disabled={!loaded || !projectId || busy} aria-busy={busy} onClick={() => start()}>
+    <button type="button" className="sq-btn" disabled={!loaded || !projectId || busy} aria-describedby={disabledReason ? reasonId : undefined} aria-busy={busy} onClick={() => start()}>
       {!helper ? "Start " : null}<Term text="Helper" nested />
     </button>
     {helper ? <button type="button" className="sq-btn sq-helper-toggle" ref={toggle} aria-label="Helper options" aria-expanded={menu}
-      aria-controls={menu ? listId : undefined} disabled={busy} onClick={() => { setMenu((value) => !value); setChoosing(false); }}>
+      aria-controls={menu ? listId : undefined} disabled={busy} aria-describedby={busy ? reasonId : undefined} onClick={() => { setMenu((value) => !value); setChoosing(false); }}>
       <svg aria-hidden="true" width="10" height="6" viewBox="0 0 10 6" shapeRendering="crispEdges">
         {[[0, 0], [2, 2], [4, 4], [6, 2], [8, 0]].map(([x, y]) => <rect key={x} x={x} y={y} width="2" height="2" />)}
       </svg>
     </button> : null}
     {helper && menu ? <div id={listId} ref={menuBox} className="sq-helper-menu" role="region" aria-label="Helper options">
-      <button className="sq-helper-option" type="button" disabled={busy} onClick={() => start(true)}>Start new</button>
-      <button className="sq-helper-option" type="button" disabled={busy} onClick={() => void choose()}>Use another thread…</button>
+      <button className="sq-helper-option" type="button" disabled={busy} aria-describedby={busy ? `${reasonId}-menu` : undefined} onClick={() => start(true)}>Start new</button>
+      <button className="sq-helper-option" type="button" disabled={busy} aria-describedby={busy ? `${reasonId}-menu` : undefined} onClick={() => void choose()}>Use another thread…</button>
+      {busy ? <p id={`${reasonId}-menu`} className="sq-why" role="status">{disabledReason}</p> : null}
       {choosing ? <div className="sq-helper-threads" role="region" aria-label="Recent threads" aria-busy={threads === null}>
         {threads === null ? <p role="status">Reading threads…</p> : threads.length === 0 ? <p>No recent threads in this project.</p>
-          : threads.map((thread) => <button type="button" className="sq-helper-option" key={thread.threadId} disabled={busy}
+          : threads.map((thread) => <button type="button" className="sq-helper-option" key={thread.threadId} disabled={busy} aria-describedby={busy ? `${reasonId}-menu` : undefined}
             aria-current={thread.threadId === helper.threadId} onClick={() => {
               if (projectId) void run(() => rpc.call("helper.use", { projectId, threadId: thread.threadId }));
             }}>{thread.title}</button>)}
       </div> : null}
     </div> : null}
+    {disabledReason ? <span id={reasonId} className="sq-why" role="status">{disabledReason}</span> : null}
     {error ? <span className="sq-helper-error" role="status">{error}</span> : null}
   </div>;
 }

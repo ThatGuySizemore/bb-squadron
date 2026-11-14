@@ -1,7 +1,7 @@
 // A canvas that the board's dither renderer paints. Each canvas sizes itself
 // to its box at device-pixel density, joins the one shared frame loop, and
 // leaves it when it unmounts or scrolls off screen.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
 import { airstream, burst, BURST_SECONDS, createSurface, formation, needsYou, packInk, pegFill, plate, type Painter, type Surface } from "../lib/dither.js";
 
@@ -85,9 +85,10 @@ function inksOf(el: Element): Inks {
   };
 }
 
-export function DitherCanvas({ fx, className, onDone, label, title }: {
+export function DitherCanvas({ fx, className, onDone, label, title, style }: {
   fx: Fx;
   className?: string;
+  style?: CSSProperties;
   /** A one-time animation's end. */
   onDone?: () => void;
   /** An accessible name when the art carries meaning; otherwise it's hidden from assistive tech. */
@@ -150,6 +151,6 @@ export function DitherCanvas({ fx, className, onDone, label, title }: {
     };
   }, [key]);
   return label
-    ? <canvas ref={ref} className={className} role="img" aria-label={label} title={title} />
-    : <canvas ref={ref} className={className} aria-hidden="true" />;
+    ? <canvas ref={ref} className={className} style={style} role="img" aria-label={label} title={title} />
+    : <canvas ref={ref} className={className} style={style} aria-hidden="true" />;
 }

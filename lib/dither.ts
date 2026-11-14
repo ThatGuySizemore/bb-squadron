@@ -195,8 +195,10 @@ export function plate({ ink, level }: { ink: number; level: number }): Painter {
 const PLANE = ["  ##    ", "#  ##   ", "########", "#  ##   ", "  ##    "];
 const CELL = 3;
 const PLANE_W = PLANE[0]!.length * CELL, PLANE_H = PLANE.length * CELL;
-/** The most planes the mark draws: a lead and five pairs. */
-const FORMATION_MAX = 11;
+/** The original V fits a lead and five pairs. Larger formations use rows. */
+const V_SLOTS = 11;
+const FORMATION_COLUMNS = 6;
+const FORMATION_ROW_PITCH = PLANE_H + 6;
 /** Cells from the lead's fuselage to the first pair's, above and below. */
 const FIRST_SPREAD = 4;
 /** Cells between ranks, nose to nose. */
@@ -206,6 +208,13 @@ const TRAIL = 42;
 /** The formation mark's canvas size in CSS pixels. */
 export const FORMATION_SIZE = { width: 184, height: 80 } as const;
 
+/** Keep the ordinary mark's size, adding height when more sprite rows are needed. */
+export function formationSize(slots: number, lit: number): { width: number; height: number } {
+  const count = Math.max(1, slots, lit);
+  return { width: FORMATION_SIZE.width, height: count <= V_SLOTS ? FORMATION_SIZE.height
+    : Math.max(FORMATION_SIZE.height, Math.ceil(count / FORMATION_COLUMNS) * FORMATION_ROW_PITCH + 4) };
+}
+
 /**
  * Where each plane sits on a mark `width` x `height` CSS pixels, as its
  * top-left corner: a V flying right, the lead at its point and pairs stepping
@@ -213,6 +222,14 @@ export const FORMATION_SIZE = { width: 184, height: 80 } as const;
  * planes fit the 184x80 mark.
  */
 function formationLayout(count: number, width: number, height: number): Array<{ x: number; y: number }> {
+  if (count > V_SLOTS) {
+    const rows = Math.ceil(count / FORMATION_COLUMNS);
+    const top = (height - ((rows - 1) * FORMATION_ROW_PITCH + PLANE_H)) / 2;
+    return Array.from({ length: count }, (_, i) => ({
+      x: width - PLANE_W - 3 - (i % FORMATION_COLUMNS) * RANK_STEP * CELL,
+      y: top + Math.floor(i / FORMATION_COLUMNS) * FORMATION_ROW_PITCH,
+    }));
+  }
   const ranks = Math.ceil((count - 1) / 2);
   const maxSpread = Math.floor((height / 2 - PLANE_H / 2 - 1) / CELL);
   const step = ranks <= 1 ? 0 : Math.min(3, Math.floor((maxSpread - FIRST_SPREAD) / (ranks - 1)));
@@ -231,10 +248,10 @@ function formationLayout(count: number, width: number, height: number): Array<{ 
  * The formation mark: one plane slot per lane in the project's lane limit.
  * The first `lit` planes fly in sky, bobbing under a pixel with a dithered
  * contrail streaming behind them; empty slots stay still in hairline. Lanes
- * over the limit add planes up to eleven. Still when nothing flies.
+ * over the limit add slots; larger formations use rows. Still when nothing flies.
  */
 export function formation({ slots, lit, on, off, trail = on }: { slots: number; lit: number; on: number; off: number; trail?: number }): Painter {
-  const count = Math.max(1, Math.min(Math.max(slots, lit), FORMATION_MAX));
+  const count = Math.max(1, slots, lit);
   const flying = Math.max(0, Math.min(lit, count));
   const motion = (i: number, t: number) => i < flying
     ? { dx: Math.sin(t * 0.7 + i) * 0.6, dy: Math.sin(t * 1.3 + i * 1.9) * 0.9 }

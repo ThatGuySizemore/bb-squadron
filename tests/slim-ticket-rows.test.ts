@@ -106,3 +106,38 @@ test("narrow lanes show slim active ticket rows with titles, state words, live s
     ["working", "review", "question", "failed", "done", "branch", "blocked", "ready", "held"]);
   assert.ok(html.indexOf('class="sq-active"') < html.indexOf('class="sq-all"'));
 });
+
+
+test("pending interactions from BB derivation show Needs you in both layouts and clear after an answer", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { makeThreadResponse } = await import("@get-bb/plugin-sdk/testing");
+  const { deriveBoard } = await import("../lib/board-derive.js");
+  const { input, issue, snapshot } = await import("./fixtures/board-snapshots.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }),
+    { ...issue("FIX-2", { parent: "FIX-1" }), state: { id: "working", name: "In Progress", type: "started" } }]);
+  for (const [pending, status, expectedState, word] of [
+    [true, "active", "question", "Needs you"], [true, "idle", "question", "Needs you"],
+    [false, "error", "failed", "Stopped"], [false, "active", "working", "Working"],
+  ] as const) {
+    const derived = deriveBoard(input(snap, { leads: [{
+      specId: "fix-1", branch: "spec/fix-1", route,
+      thread: makeThreadResponse({ id: "lead", projectId: "proj-one", status: "active", runtime: { displayStatus: "active" } }),
+      workers: [{ ...makeThreadResponse({ id: "worker", title: "Worker FIX-2", status, runtime: { displayStatus: status } }), hasPendingInteraction: pending }],
+    }] })).board;
+    assert.equal(derived.lanes[0].tickets[0].state, "working", "the tracker still says In Progress");
+    assert.equal(derived.lanes[0].needs?.some((need) => need.kind === "waiting") ?? false, pending);
+    for (const placement of ["panel", "page"] as const) {
+      const html = renderToStaticMarkup(createElement(BoardView, { board: derived, placement, demo: false,
+        modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
+      const nodes = elements(parse(html));
+      const row = nodes.find((node) => node.attrs.class === (placement === "panel" ? "sq-ticket-row" : "sq-peg"))!;
+      assert.ok(row);
+      assert.equal(row.attrs["data-state"], expectedState, "state ink follows the actual BB interaction");
+      assert.match(visibleText(row), new RegExp(word));
+      assert.match(row.attrs["aria-label"], new RegExp(word));
+    }
+  }
+});

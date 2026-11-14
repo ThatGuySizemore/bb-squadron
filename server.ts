@@ -7,12 +7,14 @@ import { registerBoard } from "./lib/board-service.js";
 import { registerPlanning } from "./lib/planning.js";
 import { registerLaneStart } from "./lib/lane-start.js";
 import { readLeadThreads } from "./lib/lead-threads.js";
+import { readPullRequests } from "./lib/pull-requests.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
   const mirror = registerLinearReader(bb, linear);
   const doctor = registerDoctor(bb, () => linear.getConnection());
-  registerBoard(bb, { connection: () => linear.getConnection(), mirror, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId) });
+  registerBoard(bb, { connection: () => linear.getConnection(), mirror, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
+    pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal) });
   registerPlanning(bb, { mirror });
   registerLaneStart(bb, { mirror, doctor: doctor.read });
   bb.log.info("loaded");

@@ -32,7 +32,8 @@ function host(native = nativeThreads()) {
         registrySkillId: null, scope: "plugin" as const,
       }))) }) },
       threads: {
-        list: async () => [...threads.values()].map((thread) => ({ ...thread, environmentBranchName: "spec/fix-5" })),
+        list: async (args) => [...threads.values()].filter((thread) => !args?.parentThreadId || thread.parentThreadId === args.parentThreadId)
+          .map((thread) => ({ ...thread, environmentBranchName: "spec/fix-5" })),
         getPluginMetadata: async ({ threadId }) => metadata.get(threadId) ?? {},
         defaultExecutionOptions: async ({ threadId }) => ({ ...routes.get(threadId)!, permissionMode: "auto", serviceTier: "default", source: "client/turn/start" }),
         spawn: async (args) => {
@@ -142,6 +143,37 @@ test("reload and fresh plugin storage reconstruct Flying from BB metadata, witho
   assert.deepEqual(restored.lanes, board.lanes);
   assert.deepEqual(await fresh.harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
   assert.equal(fresh.harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+});
+
+test("a Flying lane links its worker threads and reads its PR only from BB's pull-request plugin", async (t) => {
+  const { harness, native } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  for (const [id, title] of [["thr_worker", "Worker FIX-6"], ["thr_other", "Reviewer"]]) {
+    native.threads.set(id, makeThreadResponse({ id, title, projectId: "proj-one", parentThreadId: "thr_lead_1", createdAt: Date.now() }));
+  }
+  const reads: unknown[] = [];
+  harness.sdk.stub("plugins.callRpc", async (args: { pluginId: string; method: string; input: unknown }) => {
+    reads.push([args.pluginId, args.method, args.input]);
+    return { env_lead_1: { outcome: "available", pullRequest: {
+      number: 7, title: "FIX-5", state: "open", url: "https://github.com/fixture/repo/pull/7", baseRefName: "main",
+      headRefName: "spec/fix-5", updatedAt: "2026-11-13T20:00:00Z", autoMerge: false, inMergeQueue: null,
+      checks: { state: "pending", totalCount: 1, passedCount: 0, failedCount: 0, pendingCount: 1 },
+      review: { state: "none", reviewRequestCount: 0 },
+      mergeability: { state: "unknown", mergeStateStatus: null, mergeable: null }, attention: "checks_pending",
+    } } };
+  });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  const lane = board.lanes[0];
+  assert.deepEqual(reads, [["bb--github-pr-status", "pullRequests", { keys: ["env_lead_1"] }]]);
+  assert.equal(lane.state, "pr-open");
+  assert.deepEqual(lane.pr, { number: 7, state: "open", checks: "pending", url: "https://github.com/fixture/repo/pull/7" });
+  assert.deepEqual(lane.tickets.map((ticket) => [ticket.id, ticket.threadId]), [["FIX-6", "thr_worker"]]);
+  assert.deepEqual(lane.unmatchedThreads, [{ threadId: "thr_other", title: "Reviewer" }]);
+
+  harness.sdk.stub("plugins.callRpc", async () => { throw new Error("plugin not installed"); });
+  const without = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(without.lanes[0].state, "flying", "without the pull-request plugin the lane shows no PR");
+  assert.equal(without.lanes[0].pr, undefined);
 });
 
 test("the bundled Lead skill points to installed Matt skills and adds BB lane rules without Squadron tools", () => {

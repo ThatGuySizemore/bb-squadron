@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } 
 import type { CSSProperties, ReactNode } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
+import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
 import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
 import type { boardContract } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
@@ -147,7 +147,7 @@ const LANE_LABEL: Record<LaneState, string> = {
   flying: "Flying",
   stopped: "Stopped",
   "spec-review": "Spec review",
-  "pr-open": "PR open",
+  "pr-open": "In review",
   "merge-waits": "Merge waits on you",
   landed: "Landed",
 };
@@ -170,9 +170,18 @@ function useOpen() {
 
 // ---------- the board ----------
 
+/** The settings' reviewer on a live lane; the demo pairs the other family from its own routes. */
+function laneReviewer(lane: Lane): Route {
+  return lane.reviewer ?? reviewerFor(lane.lead, "other", lane.tickets.map((t) => t.route));
+}
+
+const PR_CHECKS: Record<PullRequest["checks"], string> = {
+  passing: "checks pass", failing: "checks fail", pending: "checks running", none: "no checks", unknown: "checks unknown",
+};
+
 function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
-  const reviewer = reviewerFor(ticket.route);
+  const reviewer = laneReviewer(lane);
   const state = ticket.state;
   const levels =
     state === "working" ? [2, 3, 5] : state === "question" ? [2, 4, 6, 4] : state === "review" ? [2] : state === "branch" ? [3] : state === "failed" || state === "done" ? [4] : [];
@@ -214,7 +223,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
         <span className="sq-peg-id">{ticket.id}</span>
         <span className="sq-peg-state">{sub}</span>
       </span>
-      {state === "blocked" ? <span className="sq-peg-after sq-num">after {waitsOn.join(", ") || "blockers"}</span> : null}
+      {state === "blocked" && waitsOn.length > 0 ? <span className="sq-peg-after sq-num">after {waitsOn.join(", ")}</span> : null}
       <span className="sq-peg-title">{ticket.title}</span>
       <span className="sq-peg-foot">
         <AiChip route={state === "review" ? reviewer : ticket.route} />
@@ -234,7 +243,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       {body}
     </button>
   ) : (
-    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${state === "blocked" ? `waits on ${waitsOn.join(", ")}` : sub}`}>
+    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${state === "blocked" && waitsOn.length > 0 ? `waits on ${waitsOn.join(", ")}` : sub}`}>
       {body}
     </div>
   );
@@ -269,7 +278,15 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
       {landing ? <Burst /> : null}
       <div className="sq-tail">
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
-        <h3 className="sq-line-title">{lane.title}</h3>
+        <h3 className="sq-line-title">
+          {lane.url ? (
+            <button type="button" className="sq-issue-link" title="Open the spec in Linear" onClick={() => open.external(lane.url!, `${lane.specId} in Linear`)}>
+              {lane.title}
+            </button>
+          ) : (
+            lane.title
+          )}
+        </h3>
         <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, `the Lead thread for ${lane.specId}`)}>
           <AiChip route={lane.lead} prefix="Lead" />
         </button>
@@ -279,12 +296,20 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
           </span>
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
-        {lane.state === "spec-review" ? <AiChip route={reviewerFor(lane.lead)} prefix="Reviewer" /> : null}
+        {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" /> : null}
         {lane.pr ? (
-          <button type="button" className="sq-pr" data-checks={lane.pr.checks} onClick={() => open.external(lane.pr!.url, `PR #${lane.pr!.number} on GitHub`)}>
+          <button
+            type="button"
+            className="sq-pr"
+            data-checks={lane.pr.checks}
+            data-pr={lane.pr.state}
+            aria-label={`PR #${lane.pr.number}${lane.pr.state && lane.pr.state !== "open" ? `, ${lane.pr.state}` : ""}, ${PR_CHECKS[lane.pr.checks]}. Open on GitHub.`}
+            onClick={() => open.external(lane.pr!.url, `PR #${lane.pr!.number} on GitHub`)}
+          >
             <span className="sq-pr-dot" aria-hidden="true" />
             PR #{lane.pr.number}
-            <span className="sq-pr-checks">{lane.pr.checks === "passing" ? "checks pass" : lane.pr.checks === "failing" ? "checks fail" : "checks running"}</span>
+            {lane.pr.state && lane.pr.state !== "open" ? <span className="sq-pr-state">{lane.pr.state}</span> : null}
+            <span className="sq-pr-checks">{PR_CHECKS[lane.pr.checks]}</span>
           </button>
         ) : null}
         <span className="sq-branch">{lane.branch}</span>
@@ -339,6 +364,20 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
             ))}
           </div>
         </div>
+        {lane.unmatchedThreads?.length ? (
+          <div className="sq-threads">
+            <span className="sq-threads-label">Other threads</span>
+            <ul>
+              {lane.unmatchedThreads.map((t) => (
+                <li key={t.threadId}>
+                  <button type="button" className="sq-issue-link" title="Open the thread beside the board" onClick={() => open.thread(t.threadId, t.title || "the thread")}>
+                    {t.title || "Untitled thread"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </article>
   );

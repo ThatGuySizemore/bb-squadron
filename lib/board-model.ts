@@ -12,8 +12,17 @@ const lane = z.object({
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
-  pr: z.object({ number: z.number(), checks: z.enum(["pending", "passing", "failing"]), url: z.string() }).optional(),
+  pr: z.object({
+    number: z.number(), checks: z.enum(["pending", "passing", "failing", "none", "unknown"]), url: z.string(),
+    state: z.enum(["draft", "open", "merged", "closed"]).optional(),
+  }).optional(),
   stopReason: z.string().optional(), landedAt: z.number().optional(),
+  /** Who runs the lane's final review, from the final-review family. */
+  reviewer: route.optional(),
+  /** The spec in Linear. */
+  url: z.string().optional(),
+  /** Child threads of the Lead that match no ticket, so no thread is hidden. */
+  unmatchedThreads: z.array(z.object({ threadId: z.string(), title: z.string() })).optional(),
 });
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
 const boardSchema = z.object({
@@ -130,10 +139,12 @@ export function otherFamily(family: Family): Family {
   return family === "claude" ? "gpt" : "claude";
 }
 
-export function reviewerFor(route: Route): Route {
-  return otherFamily(route.family) === "claude"
-    ? { family: "claude", model: "Opus 5.5", effort: "high" }
-    : { family: "gpt", model: "GPT-6.1 Sol", effort: "high" };
+/** The final reviewer: the Lead's own route for "same", else the first route of the other family. */
+export function reviewerFor(lead: Route, finalReviewFamily: "other" | "same", routes: readonly Route[]): Route {
+  if (finalReviewFamily === "same") return lead;
+  const family = otherFamily(lead.family);
+  return routes.find((route) => route.family === family)
+    ?? { family, model: family === "claude" ? "Claude" : "GPT", effort: lead.effort };
 }
 
 export function formatMinutes(minutes: number): string {

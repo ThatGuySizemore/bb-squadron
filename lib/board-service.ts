@@ -12,11 +12,14 @@ import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
+import type { PullRequestRow } from "./pull-requests.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   leads?(projectId: string): Promise<LeadThread[]>;
+  /** Rows from BB's pull-request plugin for the Leads' environments. */
+  pullRequests?(environmentIds: string[], signal?: AbortSignal): Promise<Record<string, PullRequestRow>>;
   mirror: {
     getSnapshot(bbProjectId: string): MirrorSnapshot;
     onChange(listener: (bbProjectId: string) => void): () => void;
@@ -70,11 +73,14 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (fresh || !entry.connection || at - entry.connection.at > REUSE_MS) entry.connection = { at, value: await connection() };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
+    const leads = await sources.leads?.(projectId);
+    const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
     const { board } = deriveBoard({
       snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
-      leads: await sources.leads?.(projectId),
+      leads,
+      pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
     return board;
   }

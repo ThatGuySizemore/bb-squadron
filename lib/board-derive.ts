@@ -1,10 +1,11 @@
 // Derives the board from the in-memory Linear snapshot and project settings.
-import type { Blocker, Board, Lane, LinearStatus, ReadySpec, Route, UnplannedIssue } from "./board-model.js";
+import { dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type UnplannedIssue } from "./board-model.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
+import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
 export interface BoardInput {
@@ -13,6 +14,8 @@ export interface BoardInput {
   settings: SettingsResult | null;
   doctor?: DoctorReport;
   leads?: LeadThread[];
+  /** Rows from BB's pull-request plugin, keyed by environment id. */
+  pullRequests?: Record<string, PullRequestRow>;
   /** The board clock for derived lane state. */
   now: number;
 }
@@ -46,13 +49,55 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     binding && isActiveProjectThread(thread, thread.id, binding.bbProjectId)).map((lead) => [lead.specId, lead]));
   const lanes: Lane[] = specs.flatMap((spec) => {
     const lead = leads.get(spec.id);
-    return lead ? [{
-      specId: spec.identifier, title: spec.title, lead: lead.route, leadThreadId: lead.thread.id,
-      branch: lead.branch, state: "flying" as const,
-      minutes: Math.max(0, Math.floor((input.now - lead.thread.createdAt) / 60_000)),
-      acceptOwner: labels(spec).includes(ACCEPT_OWNER), tickets: [],
-    }] : [];
+    return lead ? [lane(spec, lead)] : [];
   });
+  /** Waiting, Working, In branch or Done, read from Linear through the status mapping. */
+  function ticketState(issue: MirrorIssue): Ticket["state"] {
+    const mapping = settings?.statusMapping.ticket;
+    if (issue.state.type === "completed" || issue.state.name === mapping?.done) return "done";
+    if (issue.state.name === mapping?.inBranch) return "branch";
+    if (issue.state.name === mapping?.working) return "working";
+    return "blocked";
+  }
+  function lane(spec: MirrorIssue, lead: LeadThread): Lane {
+    const issues = snapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
+    const ids = new Set(issues.map((issue) => issue.id));
+    const children = [...(lead.workers ?? [])].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+    const matched = new Set<string>();
+    const tickets: Ticket[] = issues.sort(byIdentifier).map((issue) => {
+      // The newest child naming the ticket is its worker; FIX-1 never matches FIX-12.
+      const pattern = new RegExp(`(?<![A-Za-z0-9])${issue.identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![0-9])`, "i");
+      const worker = children.find((child) => pattern.test(child.title));
+      if (worker) matched.add(worker.id);
+      return {
+        id: issue.identifier, title: issue.title,
+        blockedBy: snapshot.relations.filter((relation) => relation.relatedIssueId === issue.id && ids.has(relation.issueId))
+          .map((relation) => byId.get(relation.issueId)!.identifier),
+        route: settings ? resolveRoute(settings, labels(issue)) : lead.route,
+        state: ticketState(issue),
+        minutes: worker ? Math.max(0, Math.floor((input.now - worker.createdAt) / 60_000)) : 0,
+        ...(worker ? { threadId: worker.id } : {}),
+      };
+    });
+    const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
+    const pr = row?.outcome === "available" ? row.pullRequest : undefined;
+    const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt) : undefined;
+    return {
+      specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
+      branch: lead.branch, state: landedAt !== undefined ? "landed" : pr?.state === "open" ? "pr-open" : "flying",
+      minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
+      ...(pr ? { pr: { number: pr.number, state: pr.state, url: pr.url,
+        checks: pr.checks.state === "no_checks" ? "none" as const : pr.checks.state } } : {}),
+      ...(landedAt !== undefined ? { landedAt } : {}),
+      ...(settings ? { reviewer: reviewerFor(lead.route, settings.finalReviewFamily,
+        // The default row speaks for its family before label-specific rows.
+        [...settings.routes].sort((a, b) => Number(b.label === null) - Number(a.label === null))
+          .map(({ family, model, effort }) => ({ family, model, effort }))) } : {}),
+      acceptOwner: labels(spec).includes(ACCEPT_OWNER), tickets: dependencyColumns(tickets).flat(),
+      unmatchedThreads: [...(lead.workers ?? [])].filter((child) => !matched.has(child.id))
+        .map((child) => ({ threadId: child.id, title: child.title })),
+    };
+  }
   /** Open blockers of one issue, in identifier order. Unknown endpoints are skipped. */
   const openBlockers = (issue: MirrorIssue): Blocker[] => snapshot.relations
     .filter((relation) => relation.relatedIssueId === issue.id)

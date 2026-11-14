@@ -75,6 +75,26 @@ export function openSpecs(snapshot: TrackerSnapshot, planningIssueIds: ReadonlyS
     (readyMarked(issue) || planningIssueIds.has(issue.id) || open.some((ticket) => ticket.parentId === issue.id)));
 }
 
+function createdTime(issue: TrackerIssue): number {
+  const time = Date.parse(issue.createdAt ?? "");
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
+}
+
+/** Ready order is shared by the board and Autopilot. Snapshot order breaks remaining ties. */
+export function sortQueue(issues: readonly TrackerIssue[], snapshot: TrackerSnapshot): TrackerIssue[] {
+  const position = new Map(snapshot.issues.map((issue, index) => [issue.id, index]));
+  return [...issues].sort((a, b) => {
+    if (snapshot.kind === "linear") {
+      const order = (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+      const priority = (a.priority || 5) - (b.priority || 5);
+      const age = createdTime(a) - createdTime(b);
+      return order || priority || age || (position.get(a.id)! - position.get(b.id)!);
+    }
+    return ((a.trackerOrder ?? position.get(a.id)!) - (b.trackerOrder ?? position.get(b.id)!))
+      || createdTime(a) - createdTime(b);
+  });
+}
+
 export function deriveBoard(input: BoardInput): DerivedBoard {
   const { snapshot } = input;
   const usesLinear = snapshot.kind === "linear";
@@ -199,7 +219,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   // from today's tracker, never from the landed integration branch.
   const returning = new Set(lanes.filter((lane) => lane.state === "landed" && !lane.outside)
     .map((lane) => lane.specId));
-  for (const spec of [...specs, ...closedSpecs.filter((spec) => returning.has(spec.identifier))].filter((spec) => !leads.has(spec.id) ||
+  const queueSpecs = [...specs, ...closedSpecs.filter((spec) => returning.has(spec.identifier))];
+  for (const spec of queueSpecs.filter((spec) => !leads.has(spec.id) ||
     (returning.has(spec.identifier) && ticketsOf(spec).some((ticket) => !held(ticket))))) {
     const tickets = ticketsOf(spec);
     const marked = readyMarked(spec);
@@ -254,12 +275,15 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       id: spec.identifier, title: spec.title, url: spec.url, ticketCount: open.length,
       routes: settings ? uniqueRoutes(tickets.map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
+      ...(specBlockers.length ? { waitingFor: specBlockers } : {}),
       acceptOwner: labels(spec).includes(ACCEPT_OWNER),
       waiting: tickets.flatMap((ticket, i) => ticketBlockers[i].length
         ? [{ id: ticket.identifier, title: ticket.title, blockedBy: ticketBlockers[i].map((blocker) => blocker.id) }] : []),
       held: open.filter(held).map((ticket) => ({ id: ticket.identifier, title: ticket.title })),
     };
   }
+  const queueOrder = new Map(sortQueue(queueSpecs, snapshot).map((spec, index) => [spec.identifier, index]));
+  ready.sort((a, b) => queueOrder.get(a.id)! - queueOrder.get(b.id)!);
   // Anything open that isn't a spec or one of its tickets waits here,
   // so no issue in the project's scope drops off the board.
   const under = (issue: TrackerIssue): string | undefined => {

@@ -1,6 +1,6 @@
 import { Autopilot, type AutopilotChange } from "./Autopilot.js";
 import { autopilotContract } from "../lib/autopilot-contract.js";
-import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
+import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isActiveTicket } from "../lib/ticket-activity.js";
 import type { LiveStep } from "../lib/live-step.js";
 import { LIVE_STEP_MS } from "../lib/live-step.js";
@@ -673,7 +673,7 @@ function Plate({ id, landed = false }: { id: string; landed?: boolean }) {
   );
 }
 
-function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
+function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false, next = false }: { spec: ReadySpec; next?: boolean; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
   // Real specs carry the board model's reason; the demo computes its own.
   const blocked = (spec.startReason !== undefined ? spec.startReason : canStart(board, spec))
     ?? (startBusy ? "Wait for the Lead thread to open." : null);
@@ -686,6 +686,8 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
       <div className="sq-row-main">
         <IssueTitle title={spec.title} url={spec.url} className="sq-row-title" />
         <div className="sq-row-meta">
+          {next ? <span className="sq-tag" aria-label={`${spec.id} is next in the queue`}>Next</span> : null}
+          {spec.waitingFor?.length ? <span>Waiting for {spec.waitingFor.map((blocker, i) => <Fragment key={blocker.id}>{i ? ", " : ""}<IssueTitle title={blocker.id} url={blocker.url} className="sq-issue-link" /></Fragment>)}</span> : null}
           <span className="sq-num"><b>{spec.ticketCount}</b> {spec.ticketCount === 1 ? "ticket" : "tickets"}</span>
           {waiting.length || held.length ? <span className="sq-frontier sq-num">{canStartNow} can start</span> : null}
           {spec.routes.length ? (
@@ -1145,7 +1147,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
           ) : (
             <ul className="sq-list">
               {board.ready.map((spec) => (
-                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
+                <ReadyRow key={spec.id} next={startable?.id === spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
               ))}
             </ul>
           )}

@@ -23,7 +23,7 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 ## Polling
 
-Only the project a board page shows is polled. The page reads its board every 30 s while visible, and `registerBoard` treats a project as shown for 75 s after its last board read. The board watcher refreshes only shown projects. The Linear mirror's poller reads only bound projects that `isShown` reports. Other readers add no background poller of their own. `board.projectCounts` reads every project once, when the picker opens.
+Only the project a board page shows is polled. The page reads its board every 30 s while visible, and `registerBoard` treats a project as shown for 75 s after its last board read. The board watcher refreshes only shown projects. The Linear mirror's poller reads only bound projects that `isShown` reports. Other readers add no background poller of their own. `board.projectCounts` reads every project once when the board page opens, for the header's formation mark, and again each time the picker opens.
 
 ## Detection and binding
 

@@ -13,6 +13,13 @@ export function currentProject(state: { picked: string | null; context: string |
   return state.picked ?? state.context ?? state.lastPick;
 }
 
+/** Lanes flying across every BB project, for the header's formation mark.
+ * The shown project's live board replaces its picker count. */
+export function fleetFlying(counts: ProjectCounts | null, shown: string | null, shownFlying: number): number {
+  const others = counts?.projects.reduce((n, row) => n + (row.id === shown ? 0 : row.flying ?? 0), 0) ?? 0;
+  return others + shownFlying;
+}
+
 /** A small pixel chevron on 2px cells: down when closed, up when open. */
 function Chevron({ open }: { open: boolean }) {
   const cells = open ? [[0, 4], [2, 2], [4, 0], [6, 2], [8, 4]] : [[0, 0], [2, 2], [4, 4], [6, 2], [8, 0]];
@@ -75,13 +82,13 @@ export function ProjectList({ id, projects, counts, current, onPick }: {
 }
 
 /** Loads the counts once each time the picker opens. */
-export function ProjectListLoader(props: Omit<Parameters<typeof ProjectList>[0], "counts">) {
+export function ProjectListLoader({ onCounts, ...props }: Omit<Parameters<typeof ProjectList>[0], "counts"> & { onCounts?: (counts: ProjectCounts) => void }) {
   const rpc = useRpc<typeof boardContract>();
   const [counts, setCounts] = useState<ProjectCounts | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let current = true;
-    rpc.call("board.projectCounts", null).then((next) => { if (current) setCounts(next); })
+    rpc.call("board.projectCounts", null).then((next) => { if (current) { setCounts(next); onCounts?.(next); } })
       .catch(() => { if (current) setFailed(true); });
     return () => { current = false; };
   }, [rpc]);

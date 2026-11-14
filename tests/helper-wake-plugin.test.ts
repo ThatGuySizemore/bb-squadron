@@ -90,7 +90,9 @@ test("an unattended Linear poll observes the spec becoming Landed without a PR o
   await f.startWatcher();
   f.harness.behavior.runService("linear-reader"); await settle();
   done = true;
-  await f.advance(30_000); await f.advance(120_000);
+  await f.advance(299_999);
+  assert.equal(f.sends().length, 0, "an unattended project waits for its five-minute read");
+  await f.advance(1); await f.advance(120_000);
   assert.equal(f.sends().length, 1);
   assert.equal(f.sends()[0].input[0].text,
     "Fixture | Landed | FIX-5 | The lane landed. | https://linear.app/fixture/issue/FIX-5");

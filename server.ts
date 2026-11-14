@@ -18,6 +18,7 @@ import { registerHelper } from "./lib/helper.js";
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
   const mirror = registerLinearReader(bb, linear, {
+    shouldPoll: (projectId) => board.isShown(projectId),
     laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId) });
   const doctor = registerDoctor(bb, () => linear.getConnection(), (projectId) => mirror.scopeProblem(projectId));
   const tracker = registerTracker(bb, mirror);

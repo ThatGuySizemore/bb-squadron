@@ -6,6 +6,7 @@ import { readTrackerConfiguration, selectProjectCheckout, squadronSettingsPath }
 import type { Family } from "./board-model.js";
 import { repositoryHostContract } from "./repository-contract.js";
 import { SETTINGS_UNREADABLE } from "./squadron-settings.js";
+import { LINEAR_BUDGET_WAIT_MESSAGE } from "./linear-auth.js";
 
 function mattSkill(skill: { name: string; pluginId: string | null; scope: string; filePath: string; provider: string | null }): { name: string; family: Family; path: string } | null {
   const prefix = "mattpocock-skills:";
@@ -18,7 +19,7 @@ function mattSkill(skill: { name: string; pluginId: string | null; scope: string
   return family ? { name: skill.name.slice(prefix.length), family, path: skill.filePath } : null;
 }
 
-export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ status: string }>,
+export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ status: string; message?: string }>,
   /** The Linear reader's last Scope problem for a project, if any. */
   linearScopeProblem: (projectId: string) => string | null = () => null) {
   const host = bb.hosts.experimental_client({ contract: doctorHostContract });
@@ -40,7 +41,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
       { checkoutPath: path, branches: [] }, { hostId, signal, timeoutMs: 15_000 }).then((state) => !state.hasRemote).catch(() => false);
     const [skills, linear, github] = await Promise.allSettled([
       bb.sdk.skills.list({ projectId, environmentId: environmentId ?? null, signal }),
-      config.tracker.kind === "linear" ? getLinearState() : Promise.resolve({ status: "not-needed" }),
+      config.tracker.kind === "linear" ? getLinearState() : Promise.resolve({ status: "not-needed", message: undefined }),
       localOnly ? Promise.resolve({ authenticated: false, hostname: undefined })
         : host.call("githubLogin", { checkoutPath: path }, { hostId, signal, timeoutMs: 15_000 }),
     ]);
@@ -75,6 +76,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
       legacyHouseRulesExists: inspection?.playbookExists,
       settingsMarkdown: config.settingsMarkdown, issueTrackerMarkdown: config.issueTrackerMarkdown,
       linearConnected: linear.status === "fulfilled" && linear.value.status === "connected",
+      linearMessage: linear.status === "fulfilled" && linear.value.message === LINEAR_BUDGET_WAIT_MESSAGE ? linear.value.message : undefined,
       linearScopeProblem: config.tracker.kind === "linear" ? linearScopeProblem(projectId) : null,
       ghAuthenticated: github.status === "fulfilled" && github.value.authenticated,
       ghHostname: github.status === "fulfilled" ? github.value.hostname : undefined,

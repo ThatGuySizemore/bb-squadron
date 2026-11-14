@@ -19,9 +19,9 @@ _Avoid_: dependency (in UI copy), prerequisite
 
 ## Roles
 
-**Owner**: The person the factory works for. Only the owner answers questions, merges `accept:owner` specs and changes settings.
+**Owner**: The person the factory works for. Only the owner answers questions and changes settings, and an `accept:owner` spec merges only on the owner's click or the owner's order to the Chief.
 
-**Chief**: An optional, long-running thread the owner talks to, running Matt's `chief-of-staff`. It can plan and press the board's buttons for the owner, but no lane depends on it.
+**Chief**: An optional, long-running thread for one BB project that the owner talks to, running Matt's `chief-of-staff`. It can plan and press the board's buttons for the owner, but no lane depends on it.
 _Avoid_: Helper, orchestrator, dispatcher
 
 **Lead**: The agent thread that owns one spec until its PR merges. It runs `implement-spec`, with its workers as BB child threads.
@@ -64,6 +64,20 @@ _Avoid_: cancel, kill
 **Quick check**: The project's fast test command, run before every merge into the integration branch and before the PR merges.
 
 **Doctor**: The check that must pass before Start: Matt's plugin in each family's harness, Matt's setup files, Squadron's settings, the Linear key and `gh` login.
+
+## Configuration
+
+**Repo rules**: How to work on a repo's code: its `AGENTS.md` and Matt's `docs/agents/` setup. Checked in, and not Squadron's.
+
+**Project settings**: How the fleet flies one repo: quick check, stop list, routes, final-review family, time limits and status mapping. Checked in as `docs/agents/squadron.md`.
+
+**Playbook**: How the owner likes work done in every project, read by both families. Private to the owner. Its Never and Held entries beat every other rule.
+_Avoid_: global rules, harness rules
+
+**Machine profile**: What one machine has: devices and how to use them, tools for each family, identities, and notes for each project. Private to the owner, one per machine.
+_Avoid_: personal settings, local config
+
+**Secret**: A credential, kept only in BB's secret settings and never in a file.
 
 ## Board
 

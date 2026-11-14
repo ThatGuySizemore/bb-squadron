@@ -11,11 +11,24 @@ import { canMerge } from "./board-model.js";
 import { z } from "zod";
 import type { TrackerReader } from "./tracker-contract.js";
 import { repositoryHostContract } from "./repository-contract.js";
+import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
+import { readPlanningThreads } from "./planning.js";
+import type { LeadThread } from "./lead-threads.js";
+import type { TrackerSnapshot } from "./tracker-contract.js";
 
 export function registerLaneStart(bb: BbPluginApi, sources: {
   tracker: TrackerReader;
   doctor(projectId: string): Promise<DoctorReport>;
+  /** Lanes started outside Squadron: Start, Stop, Resume and Merge all refuse them. */
+  outside?: OutsideLaneReader;
 }) {
+  /** The outside lane flying this spec, if a thread Squadron didn't start names it. */
+  async function outsideLanes(projectId: string, snapshot: TrackerSnapshot, leads: LeadThread[]): Promise<LeadThread[]> {
+    if (!sources.outside) return [];
+    return sources.outside(projectId, outsideLaneSpecs(snapshot, leads, await readPlanningThreads(bb, projectId)));
+  }
+  const refuse = (specId: string, action: string) =>
+    new Error(`${specId} was started outside Squadron, so Squadron doesn't ${action} it. Open its thread to follow it.`);
   const starting = new Map<string, Promise<{ threadId: string }>>();
   async function start(projectId: string, specId: string) {
     const snapshot = await sources.tracker.getSnapshot(projectId);
@@ -23,10 +36,12 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
     const existing = spec && leads.find((lead) => lead.specId === spec.id);
     if (existing) return { threadId: existing.thread.id };
+    const outside = spec ? (await outsideLanes(projectId, snapshot, leads)).filter((lane) => lane.specId === spec.id) : [];
+    if (outside.length) throw refuse(specId, "start another Lead for");
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to start a lane in.");
     const doctor = await sources.doctor(projectId);
-    const { board } = deriveBoard({ snapshot, leads, settings: checkout.settings, doctor,
+    const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], settings: checkout.settings, doctor,
       connection: { status: "connected", message: "" }, now: Date.now() });
     const ready = board.ready.find((row) => row.id === specId);
     if (!ready || !spec) throw new Error(`${specId} isn't a ready spec in this project's tracker. Read the board again.`);
@@ -49,27 +64,31 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });
     return { threadId: thread.id };
   }
-  async function leadOf(projectId: string, specId: string) {
-    const spec = (await sources.tracker.getSnapshot(projectId)).issues.find((issue) => issue.identifier === specId && issue.inProject);
-    const lead = spec && (await readLeadThreads(bb, projectId)).find((found) => found.specId === spec.id);
-    if (!lead) throw new Error(`${specId} has no Lead thread in this project. Read the board again.`);
-    return lead;
+  /** Only a Lead Squadron started can be told anything; an outside lane's thread never is. */
+  async function leadOf(projectId: string, specId: string, action: string) {
+    const snapshot = await sources.tracker.getSnapshot(projectId);
+    const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
+    const leads = await readLeadThreads(bb, projectId);
+    const lead = spec && leads.find((found) => found.specId === spec.id);
+    if (lead) return lead;
+    if (spec && (await outsideLanes(projectId, snapshot, leads)).some((lane) => lane.specId === spec.id)) throw refuse(specId, action);
+    throw new Error(`${specId} has no Lead thread in this project. Read the board again.`);
   }
   /** Send the spec's own Lead a fixed message. Nothing is stored; the Lead's status is the lane's state. */
-  async function tell(projectId: string, specId: string, text: string, mode: "steer-if-active" | "queue-if-active") {
-    const lead = await leadOf(projectId, specId);
+  async function tell(projectId: string, specId: string, text: string, mode: "steer-if-active" | "queue-if-active", action: string) {
+    const lead = await leadOf(projectId, specId, action);
     await bb.sdk.threads.send({ threadId: lead.thread.id, mode, input: [{ type: "text", text, mentions: [] }] });
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });
     return { threadId: lead.thread.id };
   }
   /** Squash-merge the Lead's PR, read afresh, only while it is open with passing checks. */
   async function merge(projectId: string, specId: string) {
-    const environmentId = (await leadOf(projectId, specId)).thread.environmentId;
+    const environmentId = (await leadOf(projectId, specId, "merge")).thread.environmentId;
     const checkout = await readProjectCheckout(bb, projectId);
     if (checkout) {
       const repository = await bb.hosts.experimental_client({ contract: repositoryHostContract }).call("readRepositoryState",
         { checkoutPath: checkout.path, branches: [] }, { hostId: checkout.hostId, timeoutMs: 15_000 }).catch(() => null);
-      if (repository?.hasRemote === false) return tell(projectId, specId, LOCAL_MERGE_MESSAGE, "queue-if-active");
+      if (repository?.hasRemote === false) return tell(projectId, specId, LOCAL_MERGE_MESSAGE, "queue-if-active", "merge");
     }
     const row = environmentId ? (await readPullRequests(bb, [environmentId]))[environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
@@ -88,11 +107,11 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   bb.rpc.register(laneContract, {
     "lane.stop": ({ projectId, specId }, context) => {
       fromBoard(context, "Stop");
-      return tell(projectId, specId, STOP_MESSAGE, "steer-if-active");
+      return tell(projectId, specId, STOP_MESSAGE, "steer-if-active", "stop");
     },
     "lane.resume": ({ projectId, specId }, context) => {
       fromBoard(context, "Resume");
-      return tell(projectId, specId, RESUME_MESSAGE, "queue-if-active");
+      return tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume");
     },
     "lane.merge": ({ projectId, specId }, context) => {
       fromBoard(context, "Merge");

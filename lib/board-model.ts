@@ -15,6 +15,8 @@ const lane = z.object({
   stopped: z.boolean().optional(),
   /** A no-remote lane whose tickets are ready for the Lead's local merge. */
   localMerge: z.boolean().optional(),
+  /** Started outside Squadron: read-only, with no Stop, Resume or Merge. leadThreadId is its thread. */
+  outside: z.boolean().optional(),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
   pr: z.object({
     number: z.number(), checks: z.enum(["pending", "passing", "failing", "none", "unknown"]), url: z.string(),
@@ -99,7 +101,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
     }
   }
   for (const lane of board.lanes) {
-    if (lane.state === "merge-waits") {
+    if (lane.state === "merge-waits" && !lane.outside) {
       items.push({
         key: `merge:${lane.specId}`,
         kind: "merge",
@@ -114,7 +116,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       items.push({ key: `${need.kind}:${need.threadId}`, kind: need.kind, specId: lane.specId, text: need.text, threadId: need.threadId });
     }
     // A failure or a question already says why the lane isn't moving.
-    if ((lane.stopped ?? lane.state === "stopped") && lane.state !== "landed" && lane.state !== "merge-waits" && !lane.needs?.length) {
+    if (!lane.outside && (lane.stopped ?? lane.state === "stopped") && lane.state !== "landed" && lane.state !== "merge-waits" && !lane.needs?.length) {
       items.push({
         key: `stopped:${lane.specId}`,
         kind: "stopped",
@@ -186,7 +188,8 @@ export function nextLandings(previous: Landings | null, lanes: readonly Lane[], 
 }
 
 /** Merge shows, and the server merges, only for an open PR whose checks pass. The demo's PRs carry no state. */
-export function canMerge(lane: { localMerge?: boolean; pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+export function canMerge(lane: { outside?: boolean; localMerge?: boolean; pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+  if (lane.outside) return false;
   if (lane.localMerge) return true;
   return (lane.pr?.state ?? "open") === "open" && lane.pr?.checks === "passing";
 }

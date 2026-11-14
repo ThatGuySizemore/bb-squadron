@@ -58,21 +58,28 @@ function uniqueRoutes(routes: Route[]): Route[] {
   return [...new Map(routes.map((route) => [`${route.family}|${route.model}|${route.effort}`, route])).values()];
 }
 
+const labelNames = (issue: TrackerIssue) => issue.labels.map((label) => label.name);
+/** The `ready-for-agent` label, or a `Status: ready-for-agent` line in trackers without labels. */
+const readyMarked = (issue: TrackerIssue) => labelNames(issue).includes(READY_FOR_AGENT)
+  || issue.state.name.trim().toLowerCase() === READY_FOR_AGENT;
+
+/** Open specs: top-level open issues that are marked ready, have open tickets, or are being planned. */
+export function openSpecs(snapshot: TrackerSnapshot, planningIssueIds: ReadonlySet<string>): TrackerIssue[] {
+  const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
+  return open.filter((issue) => issue.parentId === null &&
+    (readyMarked(issue) || planningIssueIds.has(issue.id) || open.some((ticket) => ticket.parentId === issue.id)));
+}
+
 export function deriveBoard(input: BoardInput): DerivedBoard {
   const { snapshot } = input;
   const usesLinear = snapshot.kind === "linear";
   const tracker = snapshot.kind ? trackerName(snapshot.kind) : "the tracker";
   const settings = input.settings?.ok ? input.settings.settings : null;
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
-  const labels = (issue: TrackerIssue) => issue.labels.map((label) => label.name);
-  /** The `ready-for-agent` label, or a `Status: ready-for-agent` line in trackers without labels. */
-  const readyMarked = (issue: TrackerIssue) => labels(issue).includes(READY_FOR_AGENT)
-    || issue.state.name.trim().toLowerCase() === READY_FOR_AGENT;
+  const labels = labelNames;
   const planning = new Map((input.planning ?? []).map((thread) => [thread.issueId, thread.threadId]));
   const ticketsOf = (spec: TrackerIssue) => open.filter((issue) => issue.parentId === spec.id);
-  // A spec is a top-level issue that is marked ready, has tickets, or is being planned.
-  const specs = open.filter((issue) => issue.parentId === null &&
-    (readyMarked(issue) || planning.has(issue.id) || ticketsOf(issue).length > 0));
+  const specs = openSpecs(snapshot, new Set(planning.keys()));
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const project = snapshot.project;
@@ -103,7 +110,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   }
   function lane(spec: TrackerIssue, lead: LeadThread): Lane {
     const noRemote = input.repository?.hasRemote === false;
-    const localLanded = noRemote && (input.repository!.mergedBranches.includes(lead.branch) || spec.state.type === "completed");
+    // An outside lane's branch is the first of its candidates that could be read.
+    const branch = input.branches?.[spec.id] ?? lead.branch;
+    const localLanded = noRemote && (input.repository!.mergedBranches.includes(branch) || spec.state.type === "completed");
     const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
     const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
     const laneById = new Map(laneSnapshot.issues.map((issue) => [issue.id, issue]));
@@ -137,16 +146,19 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       : localLanded ? (spec.state.type === "completed" ? Date.parse(spec.updatedAt) : input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt)) : undefined;
     const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
     const acceptOwner = labels(spec).includes(ACCEPT_OWNER);
-    const localMerge = noRemote && !localLanded && tickets.length > 0 && tickets.every((ticket) => ["branch", "done"].includes(ticket.state));
+    const outside = lead.outside === true;
+    const localMerge = !outside && noRemote && !localLanded && tickets.length > 0 && tickets.every((ticket) => ["branch", "done"].includes(ticket.state));
     // accept:owner holds a mergeable PR for the owner's click; other Leads merge their own.
+    // Squadron holds nothing for an outside lane: it never merges, stops or resumes one.
     const inReview = acceptOwner && localMerge ? "merge-waits"
-      : pr?.state === "open" ? (acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
+      : pr?.state === "open" ? (!outside && acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
     return {
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
-      branch: lead.branch,
-      state: landedAt !== undefined ? "landed" : inReview ?? (stopped ? "stopped" : "flying"),
+      branch,
+      state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
-      ...(noRemote ? { localMerge } : {}),
+      ...(outside ? { outside } : {}),
+      ...(noRemote && !outside ? { localMerge } : {}),
       ...(needs.length ? { needs } : {}),
       minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
       ...(pr && checks ? { pr: { number: pr.number, state: pr.state, url: pr.url, checks } } : {}),

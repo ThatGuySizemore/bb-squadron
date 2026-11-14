@@ -9,6 +9,7 @@ import { registerLaneStart } from "./lib/lane-start.js";
 import { readLeadThreads } from "./lib/lead-threads.js";
 import { readPullRequests } from "./lib/pull-requests.js";
 import { registerTracker } from "./lib/tracker-service.js";
+import { createOutsideLaneReader } from "./lib/outside-lanes.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
@@ -19,11 +20,12 @@ export default async function plugin(bb: BbPluginApi) {
     shouldPoll: (projectId) => shown(projectId) });
   const doctor = registerDoctor(bb, () => linear.getConnection());
   const tracker = registerTracker(bb, mirror);
+  const outside = createOutsideLaneReader(bb);
   const board = registerBoard(bb, { connection: () => linear.getConnection(), tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
-    pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal) });
+    pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   shown = board.isShown;
   registerPlanning(bb, { tracker, doctor: doctor.read });
-  registerLaneStart(bb, { tracker, doctor: doctor.read });
+  registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
   bb.log.info("loaded");
 }

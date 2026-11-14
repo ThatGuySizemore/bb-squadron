@@ -3,9 +3,11 @@
 import { createLiveStepReader } from "./live-step.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { autopilotLaneCount, type AutopilotControls } from "./autopilot.js";
+import type { registerLaneStart } from "./lane-start.js";
 import type { Board } from "./board-model.js";
 import { boardContract, type ProjectCounts } from "./board-contract.js";
-import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
+import { boardChanged, publishSquadronSignal, onSquadronSignal } from "./realtime-contract.js";
 import { deriveBoard, type BoardInput, type PlanningThread } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
@@ -18,6 +20,8 @@ import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 
 export interface BoardSources {
+  autopilot?: AutopilotControls;
+  startLane?: ReturnType<typeof registerLaneStart>["start"];
   connection(): Promise<LinearConnectionState>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   leads?(projectId: string): Promise<LeadThread[]>;
@@ -107,16 +111,26 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       ...progress,
       pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
+    if (sources.autopilot) {
+      board.autopilot = await sources.autopilot.get(projectId);
+      board.laneCapacity = board.autopilot.laneLimit;
+      board.autoStart = board.autopilot.status === "on";
+    }
     return board;
   }
 
+  let publishing = false;
   function publishIfChanged(projectId: string, board: Board) {
     const entry = project(projectId);
     const json = JSON.stringify(board);
     if (entry.published === json) return;
     const first = entry.published === null;
     entry.published = json;
-    if (!first) publishSquadronSignal(bb.realtime, boardChanged, { projectId });
+    if (!first) {
+      publishing = true;
+      try { publishSquadronSignal(bb.realtime, boardChanged, { projectId }); }
+      finally { publishing = false; }
+    }
   }
 
   /** Signals that arrive during a refresh coalesce into one more pass. */
@@ -124,10 +138,29 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const entry = project(projectId);
     if (entry.refreshing) { entry.again = true; return entry.refreshing; }
     const run = async () => {
+      // A start emits board-changed. Observe it before the next cycle, without filling every slot at once.
+      let attempted = false;
       do {
         entry.again = false;
         if (lifetime.signal.aborted) return;
-        try { publishIfChanged(projectId, await compute(projectId, false)); }
+        try {
+          const board = await compute(projectId, false);
+          publishIfChanged(projectId, board);
+          if (!attempted && sources.autopilot?.isOn(projectId) && sources.startLane) {
+            attempted = true;
+            const state = await sources.autopilot.get(projectId);
+            const flying = autopilotLaneCount(board);
+            const next = board.ready.find((spec) => spec.startReason === null);
+            if (board.doctor?.ready && flying < state.laneLimit && next) {
+              await sources.startLane(projectId, next.id, "autopilot", async () => {
+                // Owner controls and hand starts can change while Start checks Doctor.
+                const current = await compute(projectId, false);
+                return !lifetime.signal.aborted && current.autopilot?.status === "on"
+                  && autopilotLaneCount(current) < current.autopilot.laneLimit;
+              });
+            }
+          }
+        }
         catch (error) { bb.log.warn(`board refresh failed: ${error instanceof Error ? error.name : "unknown"}`); }
       } while (entry.again);
     };
@@ -141,12 +174,17 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return at !== undefined && now() - at < SHOWN_MS;
   }
 
-  sources.tracker.onChange((projectId) => { if (isShown(projectId)) void refresh(projectId); });
+  const isWatched = (id: string) => isShown(id) || sources.autopilot?.isOn(id) === true;
+  bb.onDispose(sources.tracker.onChange((projectId) => { if (isWatched(projectId)) void refresh(projectId); }));
+  bb.onDispose(onSquadronSignal(bb.realtime, boardChanged, ({ projectId }) => {
+    if (!publishing && sources.autopilot?.isOn(projectId)) void refresh(projectId);
+  }));
 
   bb.background.service("board-watcher", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);
     while (!stop.aborted) {
-      for (const id of [...projects.keys()].filter(isShown)) await refresh(id);
+      const ids = new Set([...projects.keys()].filter(isWatched).concat(sources.autopilot?.enabledProjectIds() ?? []));
+      await Promise.all([...ids].map(refresh));
       try { await wait(WATCH_MS, stop); } catch { return; }
     }
   } });

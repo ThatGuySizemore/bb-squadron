@@ -12,8 +12,23 @@ export const linearMirrorChanged = { name: "linear-mirror-changed", payload: z.o
 export const BOARD_CHANGED = boardChanged.name;
 export type BoardChanged = z.infer<typeof boardChanged.payload>;
 
+const listeners = new WeakMap<object, Set<(channel: string, payload: unknown) => void>>();
+/** In-process listeners hear the same signals as board pages, without a second polling loop. */
+export function onSquadronSignal<T>(realtime: object, signal: SquadronSignal<T>, listener: (payload: T) => void): () => void {
+  let set = listeners.get(realtime);
+  if (!set) listeners.set(realtime, set = new Set());
+  const receive = (channel: string, payload: unknown) => {
+    if (channel !== signal.name) return;
+    const result = signal.payload.safeParse(payload);
+    if (result.success) listener(result.data);
+  };
+  set.add(receive);
+  return () => { set.delete(receive); };
+}
+
 export function publishSquadronSignal<T>(realtime: { publish(channel: string, payload: unknown): void }, signal: SquadronSignal<T>, payload: T): void {
   realtime.publish(signal.name, payload);
+  for (const listener of listeners.get(realtime) ?? []) listener(signal.name, payload);
 }
 
 export type SquadronSignalRead<T> = { ok: true; payload: T } | { ok: false; diagnostic: string };

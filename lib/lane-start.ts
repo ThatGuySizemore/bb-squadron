@@ -29,8 +29,8 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   }
   const refuse = (specId: string, action: string) =>
     new Error(`${specId} was started outside Squadron, so Squadron doesn't ${action} it. Open its thread to follow it.`);
-  const starting = new Map<string, Promise<{ threadId: string }>>();
-  async function start(projectId: string, specId: string) {
+  const starting = new Map<string, Promise<{ threadId: string } | null>>();
+  async function start(projectId: string, specId: string, startedBy: "owner" | "autopilot", allowed?: () => Promise<boolean>) {
     const snapshot = await sources.tracker.getSnapshot(projectId);
     const leads = await readLeadThreads(bb, projectId);
     const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
@@ -51,10 +51,11 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const route = resolveLeadRoute(checkout.settings.settings, spec.labels.map((label) => label.name));
     const { holdLabels } = checkout.settings.settings;
     const ownerPath = (id: "playbook" | "machine-profile") => doctor.configurationFiles.find((file) => file.id === id)?.path;
+    if (allowed && !await allowed()) return null;
     const thread = await bb.sdk.threads.spawn({
       projectId, title: `Lead ${spec.identifier}`, visibility: "visible",
       providerId: route.family === "claude" ? "claude-code" : "codex", model: route.model, reasoningLevel: route.effort, serviceTier: "default",
-      pluginMetadata: { role: "lead", specId: spec.id },
+      pluginMetadata: { role: "lead", specId: spec.id, startedBy },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
       prompt: ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
         ...(snapshot.kind === "linear" ? [] : ["Read docs/agents/issue-tracker.md and update the spec and its tickets as that file describes. Tell workers to do the same."]),
@@ -104,6 +105,16 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });
     return { number: pr.number };
   }
+  /** Both owner and Autopilot use this path, including the in-flight dedupe and first message. */
+  function startLane(projectId: string, specId: string, startedBy: "owner" | "autopilot", allowed?: () => Promise<boolean>) {
+    const key = JSON.stringify([projectId, specId]);
+    let running = starting.get(key);
+    if (!running) {
+      running = start(projectId, specId, startedBy, allowed).finally(() => { starting.delete(key); });
+      starting.set(key, running);
+    }
+    return running;
+  }
   const fromBoard = (context: { experimental_caller: { kind: string } }, action: string) => {
     if (context.experimental_caller.kind !== "client") throw new Error(`${action} a lane from the Squadron board.`);
   };
@@ -122,13 +133,15 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     },
     "lane.start": ({ projectId, specId }, context) => {
       fromBoard(context, "Start");
-      const key = JSON.stringify([projectId, specId]);
-      let running = starting.get(key);
-      if (!running) {
-        running = start(projectId, specId).finally(() => { starting.delete(key); });
-        starting.set(key, running);
-      }
-      return running;
+      return startLane(projectId, specId, "owner").then((result): Promise<{ threadId: string }> | { threadId: string } => {
+        // An owner click outlives an automatic start cancelled by Off or a lower limit.
+        if (result) return result;
+        return startLane(projectId, specId, "owner").then((retried) => {
+          if (!retried) throw new Error("Read the board and try Start again.");
+          return retried;
+        });
+      });
     },
   });
+  return { start: startLane };
 }

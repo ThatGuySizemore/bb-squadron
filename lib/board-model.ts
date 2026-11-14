@@ -1,4 +1,5 @@
 // The board runtime schema is also the source of its public TypeScript types.
+import { autopilotStateSchema } from "./autopilot-contract.js";
 import { liveStepSchema } from "./live-step.js";
 import { z } from "zod";
 import { doctorReportSchema } from "./doctor-contract.js";
@@ -42,6 +43,7 @@ const lane = z.object({
 });
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
 const boardSchema = z.object({
+  autopilot: autopilotStateSchema.optional(),
   doctor: doctorReportSchema.optional(),
   tick: z.number(), laneCapacity: z.number(), workersPerLane: z.number(), autoStart: z.boolean(),
   lanes: z.array(lane),

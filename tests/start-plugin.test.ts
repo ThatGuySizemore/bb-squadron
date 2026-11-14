@@ -41,7 +41,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
         registrySkillId: null, scope: "plugin" as const,
       }))) }) },
       threads: {
-        list: async (args) => [...threads.values()].filter((thread) => !args?.parentThreadId || thread.parentThreadId === args.parentThreadId)
+        list: async (args) => [...threads.values()].filter((thread) => (!args?.projectId || thread.projectId === args.projectId) && (!args?.parentThreadId || thread.parentThreadId === args.parentThreadId))
           .map((thread) => ({ ...thread, environmentBranchName: "spec/fix-5" })),
         getPluginMetadata: async ({ threadId }) => metadata.get(threadId) ?? {},
         defaultExecutionOptions: async ({ threadId }) => ({ ...routes.get(threadId)!, permissionMode: "auto", serviceTier: "default", source: "client/turn/start" }),
@@ -85,7 +85,7 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
   assert.equal(args.serviceTier, "default");
   assert.equal(args.visibility, "visible");
   assert.equal(args.title, "Lead FIX-5");
-  assert.deepEqual(args.pluginMetadata, { role: "lead", specId: "fix-5" });
+  assert.deepEqual(args.pluginMetadata, { role: "lead", specId: "fix-5", startedBy: "owner" });
   assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: {
     type: "managed-worktree", baseBranch: { kind: "default" },
   } });
@@ -494,4 +494,165 @@ test("Doctor warns when both rule files exist and Start prefers house-rules.md",
 test("missing House rules warn without blocking Start or creating an owner file", async (t) => {
   await houseRulesCase(t, [], "warning",
     "Optional: create {directory}/house-rules.md from the bundled starter template. This file doesn't block Start.", "house-rules.md");
+});
+
+
+test("Autopilot defaults Off with three lanes, validates owner controls, and survives reload per project", async (t) => {
+  const linear = workspace({ issues: () => Response.json({ data: { issues: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } }) });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  t.after(() => fetch.mock.restore());
+  const { bb, harness } = host();
+  t.after(() => harness.lifecycle.dispose());
+  await plugin(bb);
+  const read = (projectId = "proj-one") => harness.behavior.callRpc("autopilot.get", { projectId });
+  assert.deepEqual(await read(), { status: "off", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 2 });
+  assert.deepEqual(await read(), { status: "on", laneLimit: 2, consecutiveStops: 0, pauseReason: null });
+  assert.deepEqual(await read("proj-two"), { status: "off", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+  for (const laneLimit of [0, 11, 1.5]) await assert.rejects(harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", laneLimit }));
+  await assert.rejects(harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "off" },
+    { experimental_caller: { kind: "plugin", pluginId: "other" } }), /board/);
+  const reloaded = await harness.lifecycle.reload(plugin);
+  t.after(() => reloaded.harness.lifecycle.dispose());
+  assert.deepEqual(await reloaded.harness.behavior.callRpc("autopilot.get", { projectId: "proj-one" }),
+    { status: "on", laneLimit: 2, consecutiveStops: 0, pauseReason: null });
+});
+
+
+test("Autopilot starts one Ready spec per watcher cycle through Start and stops at its lane limit", async (t) => {
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: {
+    ...workspaceIssues.data.issues, nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-1"
+      ? { ...node, inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } : node),
+  } } }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  const cycle = harness.behavior.runService("board-watcher");
+  t.after(() => cycle.controller.abort());
+  for (let i = 0; i < 200 && native.count === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  cycle.controller.abort(); await cycle.done;
+  assert.equal(native.count, 1);
+  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.laneCapacity, 1);
+  assert.equal(board.autoStart, true);
+  // A manual start still uses precisely the same first message, and may exceed the limit.
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  assert.equal(native.count, 2);
+  assert.deepEqual(native.metadata.get("thr_lead_2"), { role: "lead", specId: "fix-5", startedBy: "owner" });
+  const spawns = harness.inspection.sdk.callsTo("threads.spawn").map(([args]) => args as { prompt: string });
+  assert.equal(spawns[0].prompt.replace("FIX-1", "FIX-5"), spawns[1].prompt);
+});
+
+/** A fixture with two unblocked Ready specs, in the board's existing order. */
+function twoReady() {
+  return Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-1"
+      ? { ...node, inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } : node),
+  } } });
+}
+async function watcherCycle(harness: ReturnType<typeof host>["harness"]) {
+  const cycle = harness.behavior.runService("board-watcher");
+  try { await new Promise((resolve) => setTimeout(resolve, 40)); }
+  finally { cycle.controller.abort(); await cycle.done; }
+}
+
+test("a board signal starts only one lane with room for more, and the next watcher cycle fills the next slot", async (t) => {
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: [...workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-1"
+      ? { ...node, inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } : node),
+      { ...workspaceIssues.data.issues.nodes[3], id: "fix-7", identifier: "FIX-7" },
+      { ...workspaceIssues.data.issues.nodes[4], id: "fix-8", identifier: "FIX-8", parent: { id: "fix-7" } }],
+  } } }));
+  await watcherCycle(harness);
+  assert.equal(native.count, 0, "Off never starts a lane");
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 2 });
+  for (let i = 0; i < 200 && native.count < 1; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(native.count, 1, "the start's own board signal cannot fill a second slot");
+  await watcherCycle(harness);
+  assert.equal(native.count, 2);
+  assert.deepEqual([...native.metadata.values()].map((item) => item.specId), ["fix-1", "fix-5"]);
+  await watcherCycle(harness);
+  assert.equal(native.count, 2);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-7"], "the third Ready spec waits at the limit");
+});
+
+test("a hand-started lane waiting on an owner question retains its Autopilot slot", async (t) => {
+  const { harness, native } = await setup(t, twoReady);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-1" });
+  const waiting = { ...native.threads.get("thr_lead_1")!, status: "idle" as const, hasPendingInteraction: true };
+  native.threads.set(waiting.id, waiting);
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 1);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes[0].needs?.[0].kind, "waiting", "the real pending interaction derives the question");
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-5"]);
+});
+
+test("Doctor refuses automatic starts", async (t) => {
+  const { harness, native } = await setup(t, twoReady);
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
+  await watcherCycle(harness);
+  assert.equal(native.count, 0);
+  assert.deepEqual(await harness.behavior.callRpc("autopilot.get", { projectId: "proj-one" }),
+    { status: "on", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+});
+
+test("an enabled project restarts its watcher without opening the board", async (t) => {
+  const { harness, native } = await setup(t, twoReady);
+  // Keep the first instance from starting; the replacement has working Doctor fixtures.
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 0);
+  const reloaded = await harness.lifecycle.reload(plugin);
+  t.after(() => reloaded.harness.lifecycle.dispose());
+  await watcherCycle(reloaded.harness);
+  assert.equal(native.count, 1);
+  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
+});
+
+
+test("outside lanes do not consume an Autopilot slot", async (t) => {
+  const { harness, native } = await setup(t, twoReady);
+  native.threads.set("outside", makeThreadResponse({ id: "outside", title: "Lead FIX-1", projectId: "proj-one", status: "active" }));
+  const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(before.lanes[0].outside, true);
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 1);
+  assert.equal(native.metadata.get("thr_lead_1")?.specId, "fix-5");
+});
+
+test("stopped hand-started lanes free their Autopilot slot", async (t) => {
+  const { harness, native } = await setup(t, twoReady);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-1" });
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 2);
+});
+
+test("an Off action cancels an automatic start still checking Doctor", async (t) => {
+  const { harness, native } = await setup(t, twoReady);
+  let release!: () => void;
+  let checking!: () => void;
+  const entered = new Promise<void>((resolve) => { checking = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  harness.sdk.stub("skills.list", async () => {
+    checking(); await gate;
+    return { skills: ["claude-code", "codex"].flatMap((provider) => skillNames.map((name) => ({
+      id: `${provider}-${name}`, name: `mattpocock-skills:${name}`, description: null,
+      filePath: `/plugins/${provider}/${name}/SKILL.md`, manageable: false, pluginId: "mattpocock-skills", provider,
+      registrySkillId: null, scope: "plugin" as const,
+    }))) };
+  });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
+  await entered;
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "off" });
+  release();
+  await watcherCycle(harness);
+  assert.equal(native.count, 0);
 });

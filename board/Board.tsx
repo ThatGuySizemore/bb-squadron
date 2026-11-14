@@ -1,3 +1,5 @@
+import { Autopilot, type AutopilotChange } from "./Autopilot.js";
+import { autopilotContract } from "../lib/autopilot-contract.js";
 import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isActiveTicket } from "../lib/ticket-activity.js";
 import type { LiveStep } from "../lib/live-step.js";
@@ -1004,13 +1006,15 @@ interface BoardViewProps {
   tracker?: TrackerInfo;
   /** False until the live board's first read, so the formation mark never counts lanes it hasn't read. */
   lanesKnown?: boolean;
+  autopilotSaving?: boolean;
+  onAutopilotChange?: (patch: AutopilotChange) => void;
   footer?: ReactNode;
   /** The full page, or a thread's side panel: always the narrow layout, with thread links opening in the main view. */
   placement?: Placement;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, autopilotSaving = false, onAutopilotChange, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const [howOpen, setHowOpen] = useState(false);
@@ -1098,6 +1102,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         </header>
         {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
         <TrackerLine board={board} tracker={tracker} now={Date.now()} />
+        {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
         <PathStrip counts={counts} onJump={jump} />
 
@@ -1319,7 +1324,7 @@ const POLL_MS = LIVE_STEP_MS;
 /** The real board for the project the owner picked, read from the reader. `context` is the project the
  * surface opens on: BB's sidebar selection on the full page, the thread's project in its side panel. */
 export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwitch: ReactNode; context: string | null; placement?: Placement }) {
-  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof setupContract & typeof laneContract>();
+  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof setupContract & typeof laneContract & typeof autopilotContract>();
   const open = useOpen();
   const [listed, setListed] = useState<PickerProjects | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
@@ -1343,6 +1348,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     setListed((value) => value && { ...value, lastPick: id });
     void rpc.call("board.pick", { projectId: id }).catch(() => undefined);
   }, [rpc]);
+  const [autopilotSaving, setAutopilotSaving] = useState(false);
   const [settingUp, setSettingUp] = useState(false);
   const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [planning, setPlanning] = useState<string | null>(null);
@@ -1404,6 +1410,13 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     if (payload.projectId === projectId) void load(true);
   }, invalid);
   useSquadronSignal(linearConnectionChanged, () => { loadSoon(); }, invalid);
+  const changeAutopilot = useCallback(async (patch: AutopilotChange) => {
+    if (!projectId || autopilotSaving) return;
+    setAutopilotSaving(true);
+    try { await rpc.call("autopilot.set", { projectId, ...patch }); }
+    catch (error) { toast(error instanceof Error && error.message ? error.message : "Couldn't save Autopilot. Try again."); }
+    finally { await load(); setAutopilotSaving(false); }
+  }, [rpc, projectId, autopilotSaving, load]);
   const setUp = useCallback(async () => {
     if (!projectId || settingUp) return;
     setSettingUp(true);
@@ -1471,6 +1484,8 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
       lanesKnown={board !== null}
       onSetUp={() => void setUp()}
       settingUp={settingUp}
+      autopilotSaving={autopilotSaving}
+      onAutopilotChange={(patch) => void changeAutopilot(patch)}
       diagnostic={diagnostic}
       board={board ?? EMPTY_BOARD}
       demo={false}

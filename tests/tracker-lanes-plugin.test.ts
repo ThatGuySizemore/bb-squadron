@@ -109,7 +109,7 @@ test("Start in GitHub uses the recorded reader and seeds the Lead with the repo'
   const seed = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string; pluginMetadata: unknown };
   assert.match(seed.prompt, /Spec: https:\/\/github.example\/fixture\/repo\/issues\/1/);
   assert.match(seed.prompt, /docs\/agents\/issue-tracker\.md/);
-  assert.deepEqual(seed.pluginMetadata, { role: "lead", specId: "I_1" });
+  assert.deepEqual(seed.pluginMetadata, { role: "lead", specId: "I_1", startedBy: "owner" });
   assert.deepEqual((await board()).lanes[0]?.tickets.map(({ id, state }) => [id, state]).sort((a, b) => a[0].localeCompare(b[0])),
     [["#2", "working"], ["#3", "done"], ["#4", "working"], ["#5", "blocked"]]);
 });

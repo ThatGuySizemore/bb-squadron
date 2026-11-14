@@ -233,7 +233,7 @@ Small, quiet, near-square; colour only when the owner is the one acting.
 - **Plain:** ground fill, hairline border. Hover tints the fill to foreground 6%.
 - **Primary** (Plan a spec, Start, Resume in a tail card): solid board ink with ground text. Hover mixes it 86% toward the ground.
 - **Amber** (Merge, Answer in thread, Resume in Needs you): solid amber with on-amber text. Only for actions the owner alone can take.
-- **Danger** (Cancel): transparent, red-ink text, border red at 45% over the hairline; set 14px apart from the other lane actions. Hover tints red at 9%.
+- **Danger** (demo-only Cancel): transparent, red-ink text, border red at 45% over the hairline; set 14px apart from the other lane actions. Hover tints red at 9%.
 - **Focus:** a 2px sky-ink outline, offset 2px, on every focusable element.
 - **Disabled:** 42% opacity, not-allowed cursor; the reason sits beside the button as muted text.
 
@@ -251,13 +251,16 @@ The board is a single BB nav page; it adds no navigation of its own. Every peg, 
 
 ### Live board controls
 
-The live Linear board is the default. The demo switch opts into the existing simulation and shows the amber "Synthetic data" tag. Spec A keeps Start disabled with its reason; lane controls and animated lane examples belong to the demo until live lane execution ships.
+The live Linear board is the default. Plan opens a planning thread; Start opens a Lead for a ready, unblocked spec when Doctor passes, and otherwise shows its disabled reason. Live lanes offer Stop, Resume and Merge. The demo switch opts into the existing simulation and shows the amber "Synthetic data" tag; Cancel belongs only to that simulation.
+
+- **Header count:** live mode counts all lanes that haven't landed as "N lanes on the board", including In review and stopped lanes. It shows no capacity or formation mark. The demo keeps its capacity count and formation mark.
+- **Stop and Resume:** a live lane that hasn't landed offers Resume when no lane thread is running, and Stop otherwise. This fact is read from BB independently of the PR state, so an open PR still reads In review while its stopped lane appears in Needs you. A thread failure or question explains the stop once; an `accept:owner` PR ready to merge shows its merge need instead of a bare stop.
 
 - **Linear status line:** a wrapping line under the header in 12px muted ink. The bound "Team · Project" uses board ink at 600; a failed read uses red ink. It shows connection, binding, catch-up or current state and the time of the last read.
 - **Setup rows:** the existing amber Needs-you row and kind tag, with connection or binding controls.
 - **Issue-title links:** Ready and Unplanned titles are plain text at rest, underlined on hover with a 3px underline offset and a 1px rule-ink underline. They retain the global 2px sky focus outline. Ready titles are 13.5px at 600; Unplanned titles are 13px. Unplanned parent context wraps beside the title in 12px muted ink and leaves the Linear parent unchanged.
 - **Binding picker:** native team and project selects, 28px high, 2px corners, ground fill and hairline border, 12px at 600, maximum width 220px. Controls wrap with 6px gaps. Disabled controls use 42% opacity. Progress is muted text; errors wrap on their own line in red ink. The global sky focus outline applies.
-- **Doctor:** a quiet header button with `aria-expanded` and `aria-controls`. Open checks occupy a full-width, flat region after Needs you, with 12px padding and a hairline border. Each row shows the check name, a Pass or Fix tag and a plain explanation. Fix tags have dashed borders; their text uses board ink. At 650px the explanation moves below the name and tag. Loading and error text and Check again use the existing body and button styles. No popover, shadow or header restyling.
+- **Doctor:** a quiet header button with `aria-expanded` and `aria-controls`. Open checks occupy a full-width, flat region after Needs you, with 12px padding and a hairline border. Each row shows the check name, a Pass, Warning or Fix tag and a plain explanation. Warning and Fix tags have dashed borders; their text uses board ink. A "Configuration files" list follows, with a linked file name, Present or Missing tag and its path on each row. At 650px explanations and file paths move below their name and tag. Loading and error text and Check again use the existing body and button styles. No popover, shadow or header restyling.
 
 - **Lane detail:** a live lane's spec title in its tail card opens the spec in Linear with the issue-title link treatment, keeping the Title voice. The PR link names a draft, merged or closed PR in muted text after its number. Its checks dot is green, red or blinking amber, and hollow (a 1px rule-ink stroke) when there are no checks or none are known yet. The lane state reads In review while the PR is open. Child threads of the Lead that match no ticket sit under the rail after a muted "Other threads" label, as issue-title links that open the thread beside the board. A waiting peg names its open blockers in its "after" line and has no after line when nothing blocks it.
 - **Merge:** the existing amber button, in the tail card's actions only while the lane's PR is open with passing checks, and in the lane's Needs-you row when `accept:owner` holds that PR. While it runs it reads "Merging…", every lane action waits, and a status line beside it says "Squash-merging the PR". A toast names the merged PR or the plugin's reason. When the board first sees that lane Landed, its tail number stamps and the burst plays once on the sortie line; a lane already Landed when the board opens goes straight to the Landed list. Under reduced motion the landed lane is a still green state.
@@ -280,7 +283,7 @@ A ticket on the sortie line. Square, ground fill, 1px hairline, 190px wide with 
 One segment per ticket in lane order, 6px tall. Hollow (1px rule-ink outline) for waiting and ready; sky through a 50% dither for working and review; solid green for in branch and done; amber or red at double height (12px) for needs you and stopped. The tall segment is the form cue that something on this line is stuck.
 
 ### Formation mark
-Three pixel chevrons in a V beside the page title, one per lane slot; flying slots fill sky, empty slots fill hairline. It carries an accessible label ("2 of 3 lanes flying").
+Demo only: three pixel chevrons in a V beside the page title, one per lane slot; flying slots fill sky, empty slots fill hairline. It carries an accessible label ("2 of 3 lanes flying"). Live mode has no lane cap and omits the mark.
 
 ### Motion
 All motion is stepped except the burst: border march 600ms `steps(3)`, dither cycle 2.4s `steps(1)`, Needs-you pulse 3.6s, PR-checks-pending blink 1s `steps(1)`, failed glitch 460ms `steps(1)` once, landed stamp 420ms `steps(3)` from 1.3x scale, switch knob 160ms `steps(3)`, and the landing burst: 28 green pixels (2px and 4px) sweeping 120–880px along the line over 950ms `cubic-bezier(0.16, 1, 0.3, 1)`, staggered by 35ms. Hover transitions are 120–140ms. Under `prefers-reduced-motion` every animation and transition is removed, only the first dither layer shows (at 40%), and the burst and the Ready-row hover dither are hidden.

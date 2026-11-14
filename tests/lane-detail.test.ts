@@ -258,3 +258,99 @@ test("a spec the Lead closed after its merge stays a Landed lane with its done t
     { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;
   assert.deepEqual(elsewhere.lanes, [], "a spec moved out of the bound project leaves the board");
 });
+
+test("Cancel is a demo-only control and never appears on a live lane", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const board = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()] })).board;
+  const html = (demo: boolean) => renderToStaticMarkup(createElement(BoardView, {
+    board, demo, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+  }));
+  assert.doesNotMatch(html(false), />Cancel<\/button>/);
+  assert.match(html(true), />Cancel<\/button>/, "the synthetic simulation keeps Cancel");
+});
+
+test("the live header counts lanes on the board without a capacity or empty formation mark", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const board = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()] })).board;
+  const header = (lanes: typeof board.lanes, demo = false) => {
+    const html = renderToStaticMarkup(createElement(BoardView, {
+      board: { ...board, lanes, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null,
+      dispatch: () => undefined, onPlan: () => undefined,
+    }));
+    return /<header[\s\S]*?<\/header>/.exec(html)![0];
+  };
+  assert.match(header([]), /0 lanes on the board/);
+  assert.match(header(board.lanes), /1 lane on the board/);
+  const mixed = [board.lanes[0],
+    { ...board.lanes[0], specId: "FIX-10", state: "pr-open" as const },
+    { ...board.lanes[0], specId: "FIX-20", state: "stopped" as const },
+    { ...board.lanes[0], specId: "FIX-30", state: "landed" as const }];
+  assert.match(header(mixed), /3 lanes on the board/);
+  assert.doesNotMatch(header(mixed), /of 0|lanes flying|sq-formation/);
+  assert.match(header(board.lanes, true), /1 of 3 lanes flying/);
+  assert.match(header(board.lanes, true), /aria-label="1 of 3 lanes flying"/);
+});
+
+test("a stopped Lead with an open PR stays In review and in Needs you until it runs again", async () => {
+  const { needsYou } = await import("../lib/board-model.js");
+  const quiet = { ...lead(), thread: { ...lead().thread, status: "idle" as const } };
+  const board = (currentLead: LeadThread, checks: "pending" | "failing" | "passing" = "pending",
+    state: "open" | "merged" = "open", owner = false) => {
+    const [spec, ...tickets] = laneIssues();
+    if (owner) spec.labels.push({ id: "owner", name: "accept:owner", color: "#888888" });
+    return deriveBoard(input(snapshot([spec, ...tickets]), {
+      leads: [currentLead], pullRequests: { env_lead: pr(state, checks) },
+    })).board;
+  };
+  for (const checks of ["pending", "failing", "passing"] as const) {
+    const stopped = board(quiet, checks);
+    assert.equal(stopped.lanes[0].state, "pr-open");
+    assert.deepEqual(needsYou(stopped).map(({ kind, specId, threadId }) => [kind, specId, threadId]),
+      [["stopped", "FIX-1", "thr_lead"]]);
+  }
+  assert.deepEqual(needsYou(board(lead())), [], "Resume clears the stopped need while the PR remains open");
+  const failed = { ...quiet, thread: { ...quiet.thread, status: "error" as const } };
+  assert.deepEqual(needsYou(board(failed)).map(({ kind }) => kind), ["failed"], "a failure explains the stop once");
+  assert.deepEqual(needsYou(board(quiet, "passing", "open", true)).map(({ kind }) => kind), ["merge"],
+    "an accept:owner PR ready to merge needs only its merge");
+  assert.deepEqual(needsYou(board(quiet, "passing", "merged")), [], "a landed lane needs no Resume");
+});
+
+test("an In review lane row offers Stop while running and Resume while stopped", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const row = (status: "active" | "idle", checks: "pending" | "failing" | "passing", owner = false) => {
+    const currentLead = { ...lead(), thread: { ...lead().thread, status } };
+    const [spec, ...tickets] = laneIssues();
+    if (owner) spec.labels.push({ id: "owner", name: "accept:owner", color: "#888888" });
+    const board = deriveBoard(input(snapshot([spec, ...tickets]), {
+      leads: [currentLead], pullRequests: { env_lead: pr("open", checks) },
+    })).board;
+    const html = renderToStaticMarkup(createElement(BoardView, {
+      board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+    }));
+    return /<article class="sq-line"[\s\S]*?<\/article>/.exec(html)![0];
+  };
+  for (const checks of ["pending", "failing"] as const) {
+    const running = row("active", checks);
+    assert.match(running, /data-lane="pr-open">In review</);
+    assert.match(running, />Stop<\/button>/);
+    assert.doesNotMatch(running, />Resume<\/button>/);
+    const stopped = row("idle", checks);
+    assert.match(stopped, /data-lane="pr-open">In review</);
+    assert.match(stopped, />Resume<\/button>/);
+    assert.doesNotMatch(stopped, />Stop<\/button>/);
+  }
+  const ownerMerge = row("idle", "passing", true);
+  assert.match(ownerMerge, />Merge<\/button>/);
+  assert.match(ownerMerge, />Resume<\/button>/, "a merge-ready PR doesn't hide the stopped Lead's Resume");
+  assert.doesNotMatch(ownerMerge, />Stop<\/button>/);
+});

@@ -294,8 +294,9 @@ function LaneActionButton({ type, specId, acting, tone, dispatch }: {
   );
 }
 
-function SortieLine({ lane, dispatch, landing, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; acting?: LaneAction | null }) {
+function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting?: LaneAction | null }) {
   const open = useOpen();
+  const stopped = lane.stopped ?? lane.state === "stopped";
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
@@ -342,13 +343,13 @@ function SortieLine({ lane, dispatch, landing, acting = null }: { lane: Lane; di
         {lane.state !== "landed" ? (
           <div className="sq-actions">
             {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
-            {lane.state === "stopped" ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
-            {lane.state === "flying" ? <LaneActionButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
-            <span className="sq-isolated">
+            {stopped ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {(demo ? lane.state === "flying" : !stopped) ? <LaneActionButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {demo ? <span className="sq-isolated">
               <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
                 Cancel
               </Btn>
-            </span>
+            </span> : null}
           </div>
         ) : null}
       </div>
@@ -624,7 +625,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
         <header className="sq-head">
           <div className="sq-head-title">
             <h1>Squadron</h1>
-            <FormationMark flying={flying.length} capacity={board.laneCapacity} />
+            {demo ? <FormationMark flying={flying.length} capacity={board.laneCapacity} /> : null}
             {demo ? (
               <span className="sq-tag" data-tone="amber">
                 Synthetic data
@@ -632,7 +633,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             ) : null}
           </div>
           <p className="sq-head-counts sq-num">
-            {flying.length} of {board.laneCapacity} lanes flying · {openTickets} tickets open · {items.length} {items.length === 1 ? "needs" : "need"} you
+            {demo ? `${flying.length} of ${board.laneCapacity} lanes flying` : `${flying.length} ${flying.length === 1 ? "lane" : "lanes"} on the board`} · {openTickets} tickets open · {items.length} {items.length === 1 ? "needs" : "need"} you
           </p>
           <div className="sq-head-actions">
             {demo ? (
@@ -674,7 +675,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           {onLine.length === 0 ? (
             <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
           ) : (
-            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} acting={acting} />)
+            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} demo={demo} acting={acting} />)
           )}
         </section>
 

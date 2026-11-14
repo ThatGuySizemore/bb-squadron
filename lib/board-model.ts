@@ -11,6 +11,8 @@ const ticket = z.object({
 const lane = z.object({
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
+  /** No lane thread is running, independent of the PR's In review state. Derived only. */
+  stopped: z.boolean().optional(),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
   pr: z.object({
     number: z.number(), checks: z.enum(["pending", "passing", "failing", "none", "unknown"]), url: z.string(),
@@ -98,7 +100,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       items.push({ key: `${need.kind}:${need.threadId}`, kind: need.kind, specId: lane.specId, text: need.text, threadId: need.threadId });
     }
     // A failure or a question already says why the lane isn't moving.
-    if (lane.state === "stopped" && !lane.needs?.length) {
+    if ((lane.stopped ?? lane.state === "stopped") && lane.state !== "landed" && lane.state !== "merge-waits" && !lane.needs?.length) {
       items.push({
         key: `stopped:${lane.specId}`,
         kind: "stopped",

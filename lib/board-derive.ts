@@ -113,6 +113,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
       branch: lead.branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped ? "stopped" : "flying"),
+      stopped,
       ...(needs.length ? { needs } : {}),
       minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
       ...(pr && checks ? { pr: { number: pr.number, state: pr.state, url: pr.url, checks } } : {}),

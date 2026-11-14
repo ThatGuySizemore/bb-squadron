@@ -1066,3 +1066,26 @@ test("a returning Lead cannot hide the previous lane's unchecked merge from the 
   assert.equal(board.lanes[0].leadThreadId, "thr_lead_2");
   assert.equal(native.threads.get("thr_lead_2")?.status, "active");
 });
+
+test("a merged Outside lane also checks shared main without changing the stop brake or its threads", async (t) => {
+  const linear = workspace({ issues: fourReady });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  let checks = 0;
+  const { bb, harness, native } = host(undefined, undefined, settingsFile, () => {
+    checks++;
+    return { passed: false, logPath: "/scratch/outside.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) };
+  });
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  native.threads.set("outside", makeThreadResponse({ id: "outside", title: "Lead FIX-7", environmentId: "env_outside", projectId: "proj-one", status: "active" }));
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_outside: lanePr("merged") }));
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(checks, 1);
+  assert.equal(board.autopilot?.status, "paused");
+  assert.equal(board.autopilot?.consecutiveStops, 0);
+  assert.equal(native.count, 0);
+  assert.equal(native.threads.get("outside")?.status, "active");
+  assert.equal(harness.inspection.sdk.callsTo("threads.sendMessage").length, 0);
+});

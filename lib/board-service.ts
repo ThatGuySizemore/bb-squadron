@@ -117,8 +117,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       board.autopilot = snapshot.error || snapshot.syncedAt === null
         ? await sources.autopilot.get(projectId) : await sources.autopilot.observe(projectId, board);
       if (!snapshot.error && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
-        // Check all Squadron environments, including an older Lead hidden by a returning lane.
-        const merges = leads.filter((lead) => !lead.outside).flatMap(({ thread }) => {
+        // Main is shared: include Outside merges and older Leads hidden by returning lanes.
+        const merges = leads.flatMap(({ thread }) => {
           const row = thread.environmentId ? pullRequests?.[thread.environmentId] : undefined;
           return row?.outcome === "available" && row.pullRequest.state === "merged" ? [row.pullRequest] : [];
         });

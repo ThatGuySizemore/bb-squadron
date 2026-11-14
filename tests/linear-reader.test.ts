@@ -69,7 +69,7 @@ test("a complete recorded issue walk exposes labels, states and sub-issues throu
     if (operation !== "SquadronIssues") return undefined;
     assert.deepEqual(variables.filter, {
       team: { id: { eq: "team-one" } }, project: { id: { eq: "linear-one" } },
-      state: { type: { nin: ["completed", "canceled"] } },
+      state: { type: { nin: ["completed", "canceled", "duplicate"] } },
     });
     assert.equal(variables.after, pages.length === 2 ? null : "issues-page-two");
     return Response.json(pages.shift());
@@ -109,7 +109,7 @@ test("every Scope key narrows the issue filter, and a View walks the view's own 
   assert.deepEqual((await mirror.sync("proj-one")).scope, { name: "WordWell · reader" });
   assert.deepEqual(api.requests.find((request) => request.operation === "SquadronIssues")?.variables.filter, {
     project: { initiatives: { some: { id: { eq: "init-one" } } } }, labels: { some: { id: { eq: "label-reader" } } },
-    state: { type: { nin: ["completed", "canceled"] } },
+    state: { type: { nin: ["completed", "canceled", "duplicate"] } },
   });
   scope = { view: "https://linear.app/fixture/view/agent-work-0123456789ab" };
   const viewed = await mirror.sync("proj-one");
@@ -119,7 +119,7 @@ test("every Scope key narrows the issue filter, and a View walks the view's own 
   assert.deepEqual(api.requests.filter((request) => request.operation === "SquadronViews").map((request) => request.variables.after),
     [null, "views-two"], "the views walk pages until the slug matches");
   assert.deepEqual(api.requests.find((request) => request.operation === "SquadronViewIssues")?.variables, {
-    view: "view-one", filter: { state: { type: { nin: ["completed", "canceled"] } } }, after: null,
+    view: "view-one", filter: { state: { type: { nin: ["completed", "canceled", "duplicate"] } } }, after: null,
   });
 });
 

@@ -74,10 +74,11 @@ test("ticket states read Linear through the default status mapping", () => {
     spec, withStatus(two, "In Progress"), withStatus(three, "In Review"), withStatus(twelve, "Done", "completed"),
     withStatus(issue("FIX-13", { parent: "FIX-1" }), "Backlog", "backlog"),
     withStatus(issue("FIX-14", { parent: "FIX-1" }), "Canceled", "canceled"),
+    withStatus(issue("FIX-15", { parent: "FIX-1" }), "Duplicate", "duplicate"),
   ]), { leads: [lead()] }));
   assert.deepEqual(ticketStates(board), [
     ["FIX-2", "working"], ["FIX-3", "branch"], ["FIX-12", "done"], ["FIX-13", "blocked"],
-  ], "Todo-like statuses wait, and cancelled tickets leave the lane");
+  ], "Todo-like statuses wait, and cancelled and duplicate tickets leave the lane");
 });
 
 test("ticket states follow a custom status mapping", () => {

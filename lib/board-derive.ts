@@ -2,7 +2,7 @@
 import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type TrackerStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
-import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
+import { ACCEPT_OWNER, READY_FOR_AGENT, isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread, WorkerThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
@@ -114,7 +114,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       (input.repository.mergedBranchUpdatedAt[branch] ?? 0) > lead.thread.createdAt;
     const localLanded = noRemote && (mergedLaneWork || spec.state.type === "completed");
     const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
-    const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
+    const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue));
     const laneById = new Map(laneSnapshot.issues.map((issue) => [issue.id, issue]));
     const ids = new Set(issues.map((issue) => issue.id));
     const workers = lead.workers ?? [];

@@ -5,6 +5,8 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { doctorHostContract } from "./lib/doctor-contract.js";
 import { setupFiles } from "./lib/doctor.js";
+import { localMarkdownHostContract } from "./lib/local-markdown-contract.js";
+import { readLocalMarkdown } from "./lib/local-markdown-host.js";
 
 /** Discard command output. Neither tokens nor gh diagnostics cross the host boundary. */
 async function githubLogin(signal: AbortSignal): Promise<boolean> {
@@ -37,8 +39,9 @@ async function regularSkillFile(path: string): Promise<boolean> {
 
 export function createDoctorHost(checkLogin: (signal: AbortSignal) => Promise<boolean> = githubLogin, home: () => string = homedir) {
   return experimental_defineHostEntry({
-    contract: doctorHostContract,
+    contract: { ...doctorHostContract, ...localMarkdownHostContract },
     handlers: {
+      readLocalMarkdown: (input) => readLocalMarkdown(input),
       inspectFiles: async ({ checkoutPath, skillPaths }) => {
         const homePath = home();
         const [repoRulesExists, playbookExists, machineProfileExists, setup, skills] = await Promise.all([

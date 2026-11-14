@@ -937,6 +937,28 @@ button.sq-peg:hover {
   font-size: 12.5px;
   line-height: 1.3;
 }
+.sq-live-step {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sq-muted);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+}
+.sq-live-step[data-status="error"] .sq-live-status {
+  color: var(--sq-red-ink);
+}
+.sq-live-step[data-status="waiting-for-host"] .sq-live-status {
+  color: var(--sq-amber-ink);
+}
+.sq-lead .sq-live-step {
+  margin-top: 4px;
+  max-width: 100%;
+}
 .sq-peg-foot {
   display: flex;
   align-items: center;

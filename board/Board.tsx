@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import type { LiveStep } from "../lib/live-step.js";
+import { LIVE_STEP_MS } from "../lib/live-step.js";
+import type { ReactNode, Ref } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
@@ -169,6 +171,20 @@ const PR_CHECKS: Record<PullRequest["checks"], string> = {
   passing: "checks pass", failing: "checks fail", pending: "checks running", none: "no checks", unknown: "checks unknown",
 };
 
+/** Shared by the current pegs and compact rows. Activity stays quieter than the title. */
+export function LiveStepLine({ activity }: { activity?: LiveStep }) {
+  const status = activity?.status;
+  const state = status === "error" ? "Error" : status === "waiting-for-host" ? "Waiting for machine"
+    : status === "pending" ? "Queued" : status === "provisioning" ? "Preparing" : status === "starting" ? "Starting"
+      : status === "stopping" ? "Stopping" : null;
+  const minutes = activity?.since == null ? null : Math.max(0, Math.floor((Date.now() - activity.since) / 60_000));
+  return <span className="sq-live-step" data-status={status}>
+    {state ? <span className="sq-live-status">{state} · </span> : null}
+    <span className="sq-live-text">{activity?.step ?? "No recent activity"}</span>
+    {minutes !== null ? <span className="sq-num"> · {formatMinutes(minutes)}</span> : null}
+  </span>;
+}
+
 function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
   const reviewer = laneReviewer(lane);
@@ -216,6 +232,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
           : <span className="sq-peg-state"><Term text={sub} nested={clickable} /></span>}
       </span>
       <span className="sq-peg-title">{ticket.title}</span>
+      {lane.state === "flying" && ["working", "review", "question", "failed"].includes(state) ? <LiveStepLine activity={ticket.liveStep} /> : null}
       {size === "full" ? (
         <span className="sq-peg-foot">
           <AiChip route={state === "review" ? reviewer : ticket.route} />
@@ -231,7 +248,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       data-size={size}
       data-state={state}
       onClick={() => open.thread(ticket.threadId!, `the ${state === "review" ? "reviewer" : "worker"} thread for ${ticket.id}`)}
-      aria-label={`${ticket.id}, ${ticket.title}: ${sub}. Open thread.`}
+      aria-label={`${ticket.id}, ${ticket.title}: ${sub}. ${ticket.liveStep ? `${ticket.liveStep.status}. ${ticket.liveStep.step}. ` : ""}Open thread.`}
     >
       {body}
     </button>
@@ -340,6 +357,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         </h3>
         <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, lane.outside ? `the thread flying ${lane.specId}` : `the Lead thread for ${lane.specId}`)}>
           <AiChip route={lane.lead} prefix="Lead" />
+          {lane.state === "flying" ? <LiveStepLine activity={lane.liveStep} /> : null}
         </button>
         <div className="sq-tail-status">
           <span className="sq-lane-state" data-lane={lane.state}>
@@ -815,6 +833,7 @@ function SectionHead({ id, title, count, amber = false }: { id: string; title: s
 }
 
 interface BoardViewProps {
+  rootRef?: Ref<HTMLDivElement>;
   board: Board;
   dispatch: (a: BoardAction) => void;
   /** The synthetic simulation; the live board passes false. */
@@ -848,7 +867,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const [howOpen, setHowOpen] = useState(false);
@@ -886,7 +905,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
 
   return (
     <PlacementContext.Provider value={placement}>
-    <div className="sq" data-reduced={reduced} data-layout={placement === "panel" ? "narrow" : "wide"}>
+    <div ref={rootRef} className="sq" data-reduced={reduced} data-layout={placement === "panel" ? "narrow" : "wide"}>
       <div className="sq-page">
         <header className="sq-head">
           <div className="sq-brand">
@@ -947,7 +966,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             ) : newSpec()} />
           ) : (
             onLine.map((lane) => (
-              <div key={lane.specId} className="sq-line-wrap" data-leaving={phase.leaving(lane)}>
+              <div key={lane.specId} data-live-lane={lane.state === "flying" ? lane.specId : undefined} className="sq-line-wrap" data-leaving={phase.leaving(lane)}>
                 <SortieLine lane={lane} dispatch={dispatch} landing={phase.landing(lane)} demo={demo} acting={acting} />
               </div>
             ))
@@ -1143,7 +1162,7 @@ export async function mergeFromBoard(deps: {
 }
 
 /** How often the page reads the project it shows. The server polls only shown projects. */
-const POLL_MS = 30_000;
+const POLL_MS = LIVE_STEP_MS;
 
 /** The real board for the project the owner picked, read from the reader. `context` is the project the
  * surface opens on: BB's sidebar selection on the full page, the thread's project in its side panel. */
@@ -1179,13 +1198,21 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const [acting, setActing] = useState<LaneAction | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const request = useRef(0);
   const shown = useRef("");
-  const load = useCallback(async () => {
-    if (!projectId) return;
+  const load = useCallback(async (refreshLive = false) => {
+    if (!projectId || document.visibilityState === "hidden") return;
+    const root = rootRef.current;
+    const box = root?.getBoundingClientRect();
+    const visibleLaneIds = root && box ? Array.from(root.querySelectorAll<HTMLElement>("[data-live-lane]"))
+      .filter((element) => {
+        const bounds = element.getBoundingClientRect();
+        return bounds.bottom > Math.max(0, box.top) && bounds.top < Math.min(window.innerHeight, box.bottom);
+      }).map((element) => element.dataset.liveLane!) : [];
     const current = ++request.current;
     try {
-      const next = await rpc.call("board", { projectId });
+      const next = await rpc.call("board", { projectId, visibleLaneIds, refreshLive });
       if (current !== request.current) return;
       setFailed(false);
       // Duplicate signals often return the same board; keep the view as it is.
@@ -1200,11 +1227,16 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     void load();
     return () => { request.current++; };
   }, [load]);
+  // After the first board arrives, read just the lanes whose rows are on screen.
+  const laneKey = board?.lanes.filter((lane) => lane.state === "flying").map((lane) => lane.specId).join("\n") ?? "";
+  useEffect(() => { if (laneKey) void load(); }, [laneKey, load]);
   // Poll only the project this page shows, and only while the page is visible.
   useEffect(() => {
     if (!projectId) return;
-    const id = window.setInterval(() => { if (document.visibilityState !== "hidden") void load(); }, POLL_MS);
-    return () => window.clearInterval(id);
+    const id = window.setInterval(() => { void load(); }, POLL_MS);
+    const visible = () => { if (document.visibilityState !== "hidden") void load(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", visible); };
   }, [load, projectId]);
   // Coalesce connection-change signals.
   const pending = useRef<number | undefined>(undefined);
@@ -1217,7 +1249,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const invalid = useCallback((text: string) => { setDiagnostic(text); loadSoon(); }, [loadSoon]);
   useSquadronSignal(boardChanged, (payload) => {
     setDiagnostic(null);
-    if (payload.projectId === projectId) void load();
+    if (payload.projectId === projectId) void load(true);
   }, invalid);
   useSquadronSignal(linearConnectionChanged, () => { loadSoon(); }, invalid);
   const setUp = useCallback(async () => {
@@ -1279,6 +1311,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const shownCounts = board ? { ready: board.ready.length, flying: board.lanes.filter((lane) => lane.state !== "landed").length } : null;
   return (
     <BoardView
+      rootRef={rootRef}
       projectId={projectId}
       tracker={board?.tracker?.kind !== undefined ? { kind: board.tracker.kind, note: board.tracker.message } : row ? { kind: row.tracker, note: row.note } : undefined}
       projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(trackerKind, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}

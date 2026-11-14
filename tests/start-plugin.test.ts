@@ -24,7 +24,9 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
     pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-start-key" },
     sdk: {
-      projects: { get: async ({ projectId }) => ({
+      projects: {
+        list: async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }],
+        get: async ({ projectId }) => ({
         id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId, hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
       }) },

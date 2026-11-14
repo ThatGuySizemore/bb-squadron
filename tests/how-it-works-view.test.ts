@@ -58,7 +58,7 @@ test("the view shows the path from an idea to a merged pull request, who does ea
     ["plan", "Plan"], ["spec", "Spec"], ["ready", "Ready"], ["lane", "Lane"], ["landed", "Landed"],
   ]);
   assert.deepEqual(stops(html).map(({ who }) => who), [
-    "You and an agent",
+    "You and the Helper",
     "The agent splits it into tickets",
     "Squadron shows it once a ticket can start",
     "A Lead and its workers build it",

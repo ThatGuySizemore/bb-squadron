@@ -1,10 +1,11 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Route } from "./board-model.js";
+import { STOP_MESSAGE } from "./lane-contract.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
 type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 /** The thread list adds whether a thread waits on the owner and whether its queued work failed. */
-type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork" | "updatedAt">>;
+type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork" | "updatedAt" | "activity">>;
 
 /** A child thread of a Lead: one of its workers, or its reviewer. */
 export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status" | "runtime"> & Attention;
@@ -12,6 +13,8 @@ export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status
 /** BB owns these records. Squadron reads them afresh rather than storing lanes. */
 export interface LeadThread {
   specId: string;
+  /** Epoch milliseconds of a normal terminal turn, never a generic row update. */
+  idleSince?: number;
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
   route: Route;
@@ -62,10 +65,34 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: thread.id });
       if (metadata.role !== "lead" || typeof metadata.specId !== "string" || !metadata.specId) continue;
       const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
-      leads.push({ specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
+      const idleSince = await readIdleSince(bb, thread);
+      leads.push({ ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
         workers: await readWorkers(bb, projectId, thread.id),
         route: threadRoute(thread.providerId, execution) });
     }
     if (threads.length < 200) return leads;
   }
+}
+
+/** Unknown history retains the existing Stopped fallback. No assistant text is classified. */
+async function readIdleSince(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<number | undefined> {
+  if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return;
+  try {
+    const [terminal, requests] = await Promise.all([
+      bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/completed", "system/thread/interrupted", "turn/started"] }),
+      bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["client/turn/requested"] }),
+    ]);
+    const end = terminal[0];
+    const request = requests[0];
+    // The board/CLI Stop sends this exact fixed input. A normal wind-down completion stays Stopped.
+    if (request?.type === "client/turn/requested" && request.data.input?.some((part) => part.type === "text" && part.text === STOP_MESSAGE)) return;
+    if (end?.type === "turn/completed" && end.data.status === "completed" && Number.isFinite(end.createdAt)) return end.createdAt;
+  } catch { /* Unreadable lifecycle isn't evidence of a normal idle Lead. */ }
+}
+
+/** A live turn or work running behind one must finish before a quiet Question. */
+export function isRunningThread(thread: { status: string } & Attention): boolean {
+  return ["active", "starting", "pending", "stopping"].includes(thread.status) || thread.queuedWork === "waiting" ||
+    (thread.activity?.activeBackgroundAgentCount ?? 0) > 0 || (thread.activity?.activeBackgroundCommandCount ?? 0) > 0 ||
+    (thread.activity?.activeWorkflowCount ?? 0) > 0;
 }

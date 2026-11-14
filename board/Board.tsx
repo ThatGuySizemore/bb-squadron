@@ -22,6 +22,7 @@ import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
 import { Term } from "./Term.js";
 import { HowItWorks } from "./HowItWorks.js";
+import { HelperControl } from "./HelperControl.js";
 import { currentProject, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 import type { ProjectCounts } from "../lib/board-contract.js";
 import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
@@ -1028,6 +1029,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   const [howOpen, setHowOpen] = useState(false);
   const howId = useId();
   const howButton = useRef<HTMLButtonElement>(null);
+  const navigate = useBbNavigate();
   const reduced = usePrefersReducedMotion();
   const ownRef = useRef<HTMLDivElement | null>(null);
   const layout = boardLayout(placement, useWidth(ownRef));
@@ -1097,6 +1099,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
               </button>
             ) : null}
             {modeSwitch}
+            {!demo ? <HelperControl projectId={projectId ?? null} openThread={(id) => openThread(navigate, placement, id)} /> : null}
             {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
             <button type="button" ref={howButton} className="sq-btn sq-how-open" aria-expanded={howOpen} aria-controls={howOpen ? howId : undefined}
               title="See how an idea becomes a merged pull request, and where you step in" onClick={() => setHowOpen((open) => !open)}>How it works</button>

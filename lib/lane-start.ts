@@ -2,7 +2,6 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
 import { latestLeads, readLeadThreads } from "./lead-threads.js";
-import { readLaneProgress } from "./lane-progress.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { resolveLeadRoute } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
@@ -11,7 +10,7 @@ import { PULL_REQUEST_PLUGIN, readPullRequests } from "./pull-requests.js";
 import { canMerge } from "./board-model.js";
 import { z } from "zod";
 import type { TrackerReader } from "./tracker-contract.js";
-import { repositoryHostContract } from "./repository-contract.js";
+import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 import { readPlanningThreads } from "./planning.js";
 import type { LeadThread } from "./lead-threads.js";
@@ -98,12 +97,19 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   }
   /** Squash-merge the Lead's PR, read afresh, only while it is open with passing checks. */
   async function merge(projectId: string, specId: string) {
-    const environmentId = (await leadOf(projectId, specId, "merge")).thread.environmentId;
+    const lead = await leadOf(projectId, specId, "merge");
+    const environmentId = lead.thread.environmentId;
+    const snapshot = await sources.tracker.getSnapshot(projectId);
+    const progress = await readLaneProgress(bb, snapshot, [lead]);
     const checkout = await readProjectCheckout(bb, projectId);
-    if (checkout) {
-      const repository = await bb.hosts.experimental_client({ contract: repositoryHostContract }).call("readRepositoryState",
-        { checkoutPath: checkout.path, branches: [] }, { hostId: checkout.hostId, timeoutMs: 15_000 }).catch(() => null);
-      if (repository?.hasRemote === false) return tell(projectId, specId, LOCAL_MERGE_MESSAGE, "queue-if-active", "merge");
+    const { board } = deriveBoard({ snapshot, leads: [lead], settings: checkout?.settings ?? null,
+      connection: { status: "connected", message: "" }, now: Date.now(), ...progress });
+    const lane = board.lanes.find((lane) => lane.specId === specId);
+    if (progress.repository?.hasRemote === false) {
+      if (!lane || lane.state === "landed" || !canMerge(lane)) {
+        throw new Error(`${specId} isn't ready for a local merge. Read the board again.`);
+      }
+      return tell(projectId, specId, LOCAL_MERGE_MESSAGE, "queue-if-active", "merge");
     }
     const row = environmentId ? (await readPullRequests(bb, [environmentId]))[environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
@@ -111,6 +117,8 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     if (!canMerge({ pr: { state: pr.state, checks: pr.checks.state === "no_checks" ? "none" : pr.checks.state } })) {
       throw new Error(pr.state === "open" ? `PR #${pr.number} can merge once its checks pass.` : `PR #${pr.number} is ${pr.state}, not open.`);
     }
+    if (lane?.state === "landed") throw new Error(`${specId} has already landed. Read the board again.`);
+    if (!lane) throw new Error(`${specId} isn't ready for a merge. Read the board again.`);
     await bb.sdk.plugins.callRpc({ pluginId: PULL_REQUEST_PLUGIN, method: "merge",
       input: { environmentId, method: "squash" }, outputSchema: z.object({ message: z.string() }) });
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });
@@ -129,23 +137,13 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   const fromBoard = (context: { experimental_caller: { kind: string } }, action: string) => {
     if (context.experimental_caller.kind !== "client") throw new Error(`${action} a lane from the Squadron board.`);
   };
-  bb.rpc.register(laneContract, {
-    "lane.stop": ({ projectId, specId }, context) => {
-      fromBoard(context, "Stop");
-      return tell(projectId, specId, STOP_MESSAGE, "steer-if-active", "stop");
-    },
-    "lane.resume": ({ projectId, specId }, context) => {
-      fromBoard(context, "Resume");
-      return tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume");
-    },
-    "lane.merge": ({ projectId, specId }, context) => {
-      fromBoard(context, "Merge");
-      return merge(projectId, specId);
-    },
-    "lane.start": ({ projectId, specId }, context) => {
-      fromBoard(context, "Start");
+  const actions = {
+    merge,
+    stop: (projectId: string, specId: string) => tell(projectId, specId, STOP_MESSAGE, "steer-if-active", "stop"),
+    resume: (projectId: string, specId: string) => tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume"),
+    start(projectId: string, specId: string) {
       return startLane(projectId, specId, "owner").then((result): Promise<{ threadId: string }> | { threadId: string } => {
-        // An owner click outlives an automatic start cancelled by Off or a lower limit.
+        // An owner action outlives an automatic start cancelled by Off or a lower limit.
         if (result) return result;
         return startLane(projectId, specId, "owner").then((retried) => {
           if (!retried) throw new Error("Read the board and try Start again.");
@@ -153,6 +151,26 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
         });
       });
     },
+  };
+  bb.rpc.register(laneContract, {
+    "lane.stop": ({ projectId, specId }, context) => {
+      fromBoard(context, "Stop");
+      return actions.stop(projectId, specId);
+    },
+    "lane.resume": ({ projectId, specId }, context) => {
+      fromBoard(context, "Resume");
+      return actions.resume(projectId, specId);
+    },
+    "lane.merge": ({ projectId, specId }, context) => {
+      fromBoard(context, "Merge");
+      return actions.merge(projectId, specId);
+    },
+    "lane.start": ({ projectId, specId }, context) => {
+      fromBoard(context, "Start");
+      return actions.start(projectId, specId);
+    },
   });
-  return { start: startLane };
+  return { ...actions, startAutomatic: startLane };
 }
+
+export type LaneActions = Pick<ReturnType<typeof registerLaneStart>, "start" | "stop" | "resume" | "merge">;

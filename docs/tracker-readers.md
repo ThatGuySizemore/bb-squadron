@@ -23,7 +23,7 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 ## Polling
 
-Only the project a board page shows is polled. The page reads its board every 30 s while visible, and `registerBoard` treats a project as shown for 75 s after its last board read. The board watcher refreshes only shown projects. The Linear mirror's poller reads only projects it has read before (a board, Plan or Start read them first) that `isShown` reports. Other readers add no background poller of their own. `board.projectCounts` reads every project once each time the picker opens. Those counts stay in the picker; the header's formation mark counts only the shown project's board. Unknown counts are not invented and other projects have no additional poller.
+The code watcher discovers all BB projects every 30 seconds and reads each project's board inputs, even when no board is open and no Helper is selected. The Linear mirror keeps every discovered Linear project current on its existing poller, including its rate-limit backoff. GitHub and Local markdown reuse their 30-second read caches and add no poller. Pages still read live steps only for visible lanes; background observation never reads those steps. `board.projectCounts` reads every project once each time the picker opens, while the header's formation mark counts only the selected project's board. Unknown counts are not invented. See [ADR-0011](adr/0011-squadron-watches-the-helper-talks.md) for notification delivery and quiet Leads.
 
 ## Detection and Scope
 

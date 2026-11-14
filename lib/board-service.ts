@@ -1,7 +1,7 @@
 // Serves the board from the tracker reader, settings and clock; publishes
 // `board-changed` whenever a project's board model changes.
 import { createLiveStepReader } from "./live-step.js";
-import { setTimeout as delay } from "node:timers/promises";
+import { waitFor } from "./watch-clock.js";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { autopilotLaneCount, type AutopilotControls } from "./autopilot.js";
 import type { registerLaneStart } from "./lane-start.js";
@@ -22,8 +22,9 @@ import { mainCheckHostContract } from "./main-check-contract.js";
 
 export interface BoardSources {
   autopilot?: AutopilotControls;
-  startLane?: ReturnType<typeof registerLaneStart>["start"];
+  startLane?: ReturnType<typeof registerLaneStart>["startAutomatic"];
   connection(): Promise<LinearConnectionState>;
+  observed?(projectId: string, projectName: string, board: Board | null): Promise<void>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   leads?(projectId: string): Promise<LeadThread[]>;
   /** Open planning threads, so a spec being planned shows under Shaping. */
@@ -47,13 +48,14 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 } = {}) {
   const now = options.now ?? Date.now;
-  const wait = options.wait ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
+  const wait = options.wait ?? waitFor;
   const liveSteps = createLiveStepReader(bb, now);
   const lifetime = new AbortController();
   bb.onDispose(() => { lifetime.abort(); });
   const projects = new Map<string, {
     published: string | null;
-    /** When a board page last read this project. Only shown projects are polled. */
+    name?: string;
+    /** When a page last read this project, for a fresh read when it reopens. */
     shownAt?: number;
     connection?: { at: number; value: BoardInput["connection"] };
     settings?: { at: number; value: SettingsResult | null };
@@ -162,8 +164,9 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       do {
         entry.again = false;
         if (lifetime.signal.aborted) return;
+        let board: Board | null = null;
         try {
-          const board = await compute(projectId, false);
+          board = await compute(projectId, false);
           publishIfChanged(projectId, board);
           if (!attempted && sources.autopilot?.isOn(projectId) && sources.startLane) {
             attempted = true;
@@ -181,6 +184,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
           }
         }
         catch (error) { bb.log.warn(`board refresh failed: ${error instanceof Error ? error.name : "unknown"}`); }
+        if (sources.observed && !lifetime.signal.aborted) {
+          const name = entry.name ?? await bb.sdk.projects.get({ projectId }).then((value) => value.name).catch(() => projectId);
+          await sources.observed(projectId, name, board).catch(() => { bb.log.warn("Project notification observation unavailable."); });
+        }
       } while (entry.again);
     };
     const running = entry.refreshing = run().finally(() => { if (entry.refreshing === running) entry.refreshing = undefined; });
@@ -193,8 +200,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return at !== undefined && now() - at < SHOWN_MS;
   }
 
-  const isWatched = (id: string) => isShown(id) || sources.autopilot?.isEnabled(id) === true;
-  bb.onDispose(sources.tracker.onChange((projectId) => { if (isWatched(projectId)) void refresh(projectId); }));
+  bb.onDispose(sources.tracker.onChange((projectId) => { void refresh(projectId); }));
   bb.onDispose(onSquadronSignal(bb.realtime, boardChanged, ({ projectId }) => {
     if (!publishing && sources.autopilot?.isEnabled(projectId)) void refresh(projectId);
   }));
@@ -202,7 +208,9 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   bb.background.service("board-watcher", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);
     while (!stop.aborted) {
-      const ids = new Set([...projects.keys()].filter(isWatched).concat(sources.autopilot?.enabledProjectIds() ?? []));
+      const listed = await bb.sdk.projects.list().catch(() => []);
+      for (const { id, name } of listed) project(id).name = name;
+      const ids = new Set([...listed.map(({ id }) => id), ...sources.autopilot?.enabledProjectIds() ?? []]);
       await Promise.all([...ids].map(refresh));
       try { await wait(WATCH_MS, stop); } catch { return; }
     }
@@ -255,5 +263,11 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     },
   });
 
-  return { refresh, isShown };
+  /** A one-shot CLI read does not mark a board page visible. */
+  async function read(projectId: string): Promise<Board> {
+    await sources.tracker.refresh?.(projectId);
+    return compute(projectId, true);
+  }
+
+  return { refresh, isShown, read };
 }

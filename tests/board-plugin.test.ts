@@ -261,5 +261,5 @@ test("the plugin exposes no Linear write tools or OAuth controls", async (t) => 
   for (const rpc of ["linear.connect", "linear.disconnect", "linear.setup", "linear.outboxResume"]) {
     await assert.rejects(harness.behavior.callRpc(rpc, null), /has no rpc method/);
   }
-  assert.deepEqual(Object.keys(harness.registrations.settingsDescriptors), ["linearApiKey"]);
+  assert.deepEqual(Object.keys(harness.registrations.settingsDescriptors), ["linearApiKey", "dailySummaryTime"]);
 });

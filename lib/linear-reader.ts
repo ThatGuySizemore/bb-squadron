@@ -1,6 +1,6 @@
 // Pagination, complete-walk commits and polling adapted from bb-plugin-linear
 // (MIT, Vedran Burojević). See THIRD_PARTY_NOTICES.md.
-import { setTimeout as delay } from "node:timers/promises";
+import { waitFor } from "./watch-clock.js";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { CLOSED_ISSUE_STATE_TYPES, isOpenIssue } from "./linear-issues.js";
 import { linearMirrorChanged, publishSquadronSignal } from "./realtime-contract.js";
@@ -68,7 +68,7 @@ const empty = (scope: MirrorSnapshot["scope"] = null, error: string | null = nul
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
   /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
   laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
-  /** Which projects the background poller reads: those a board shows. Default: every project read so far. */
+  /** Optional poller selection. Squadron watches every project discovered by the board watcher. */
   shouldPoll?: (bbProjectId: string) => boolean;
   /** The project's Scope. Default: the Scope section of its checkout's docs/agents/squadron.md. */
   scope?: (bbProjectId: string, signal: AbortSignal) => Promise<ScopeSource>;
@@ -76,7 +76,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 } = {}) {
   const now = options.now ?? Date.now;
-  const wait = options.wait ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
+  const wait = options.wait ?? waitFor;
   const lifetime = new AbortController();
   const running = new Set<Promise<unknown>>();
   const inFlight = new Map<string, { key: string; task: Promise<MirrorSnapshot> }>();

@@ -11,23 +11,30 @@ import { readLeadThreads } from "./lib/lead-threads.js";
 import { readPullRequests } from "./lib/pull-requests.js";
 import { registerTracker } from "./lib/tracker-service.js";
 import { createOutsideLaneReader } from "./lib/outside-lanes.js";
+import { registerSquadronCli } from "./lib/squadron-cli.js";
+import { registerHelperNotifier } from "./lib/helper-notifier.js";
+import { registerHelperSummary } from "./lib/helper-summary.js";
+import { registerHelper } from "./lib/helper.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const autopilot = await registerAutopilot(bb);
   const linear = registerLinearAuth(bb);
-  // The existing Linear poller follows shown boards and projects with Autopilot on.
-  let shown: (projectId: string) => boolean = () => false;
   const mirror = registerLinearReader(bb, linear, {
-    laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId),
-    shouldPoll: (projectId) => shown(projectId) || autopilot.isEnabled(projectId) });
+    laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId) });
   const doctor = registerDoctor(bb, () => linear.getConnection(), (projectId) => mirror.scopeProblem(projectId));
   const tracker = registerTracker(bb, mirror);
   const outside = createOutsideLaneReader(bb);
+  const helper = registerHelper(bb);
+  const notifier = registerHelperNotifier(bb, helper);
+  const summary = registerHelperSummary(bb, helper);
   const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
-  const board = registerBoard(bb, { autopilot, startLane: lanes.start, connection: () => linear.getConnection(), tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
+  const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection: () => linear.getConnection(),
+    observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); },
+    tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
-  shown = board.isShown;
+  summary.register(board.read);
   registerPlanning(bb, { tracker, doctor: doctor.read });
+  registerSquadronCli(bb, board, lanes, helper);
   bb.log.info("loaded");
 }

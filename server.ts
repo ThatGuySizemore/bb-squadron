@@ -21,7 +21,7 @@ export default async function plugin(bb: BbPluginApi) {
   const planning = registerPlanning(bb, { connection: () => linear.getConnection(), mirror, outbox });
   bb.agents.configure((context) => ({
     tools: [...outbox.toolsForThread(context.project.id, context.thread.id), ...workers.toolsForThread(context.project.id, context.thread.id)],
-    skills: planning.isBound(context.project.id, context.thread.id) ? ["squadron-planner"] : [],
+    skills: [...(planning.isBound(context.project.id, context.thread.id) ? ["squadron-planner"] : []), ...workers.skillsForThread(context.project.id, context.thread.id)],
   }));
   registerBoard(bb, { connection: () => linear.getConnection(), mirror, writes: (id) => outbox.getHealth(id), lanes });
   bb.experimental_hooks.on("message.dispatch", (context) => {

@@ -15,7 +15,7 @@ _Avoid_: dependency (in UI copy), prerequisite
 
 **Frontier**: The unstarted tickets of a spec whose blockers are resolved, including approved predecessors verified in that lane's integration branch.
 
-**Follow-up**: An issue filed during a lane for something worth doing that should not hold the merge, labelled `follow-up` and linked to its spec.
+**Follow-up**: A deduped real defect outside the spec, filed with `needs-triage` and linked to the spec. Findings inside the ticket or spec belong in the branch's fix round.
 
 **Unplanned**: An open issue that is neither a ready spec nor one of its tickets, including a sub-issue whose parent is closed, outside the project, missing or not ready. It waits in the board's Unplanned row, which names any parent without changing it in Linear, until a planning thread turns it into a spec.
 
@@ -48,7 +48,7 @@ _Avoid_: builder, implementer, subagent
 
 **Two strikes**: A failure gets two fix attempts. After that the lane stops and asks the owner.
 
-**Stop list**: The project's list of problems that block a merge. Anything else becomes a follow-up.
+**Stop list**: The project's list of problems that block a merge. It doesn't make an unfinished requirement or an in-spec review finding a follow-up.
 
 **Quick check**: The project's fast test command, run before every merge into the integration branch and before the PR merges.
 

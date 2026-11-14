@@ -8,6 +8,7 @@ const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "ready", "working", "question", "review", "branch", "failed", "done"]),
   routeChoices: z.array(routeSchema).optional(), reportPending: z.boolean().optional(), writeError: z.string().optional(),
+  reviewer: z.object({ route, threadId: z.string().nullable(), state: z.string(), commit: z.string(), round: z.number() }).optional(),
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({

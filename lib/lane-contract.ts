@@ -17,6 +17,8 @@ export const laneRunSchema = z.object({
   writeError: z.string().optional(),
   workers: z.array(workerRunSchema).optional(),
   routeOverrides: z.record(z.string(), routeSchema).optional(),
+  /** Metadata-derived links may be displayed but never grant role authority. */
+  recoveryOnly: z.boolean().optional(),
 });
 export type LaneRun = z.infer<typeof laneRunSchema>;
 export type StartLeadCommand = { type: "start-lead"; specIssueId: string; specId: string; route: Route };

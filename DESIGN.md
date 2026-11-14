@@ -239,7 +239,7 @@ Small, quiet, near-square; colour only when the owner is the one acting.
 
 ### Chips
 - **Tag:** 11px at 600, 1px 6px padding, hairline border, 2px corners; used for issue labels and `accept:owner`. The amber tag (solid amber, on-amber text) marks "Synthetic data".
-- **AI chip:** the provider's own icon at 12px, then model name and effort in muted ink, 11px. A Lead chip prefixes "Lead ·".
+- **AI chip:** the provider's own icon at 12px, then model name and effort in muted ink, 11px. A Lead chip prefixes "Lead ·". A review peg with a saved reviewer prefixes "Reviewer ·" and shows that reviewer's saved route.
 - **Count:** solid amber, on-amber 11px, 0 6px padding, beside the Needs-you label only when something needs the owner.
 
 ### Cards / Containers
@@ -275,7 +275,7 @@ A ticket on the sortie line. Square, ground fill, 1px hairline, 190px wide with 
 - **Ready:** full size, border at foreground 40%, state in board ink.
 - **Working:** border replaced by a sky 2px-dash march (6px period) that steps round the edge every 600ms; inside, sky dither at levels 2, 3, 5 cycles every 2.4s.
 - **Needs you:** amber border plus amber outline offset 2px (the doubled edge), amber dither 2, 4, 6, 4 cycling.
-- **In review:** solid 1px sky border, still sky dither at level 2 (32%); state reads "Review · model" with the reviewer's chip. Before a reviewer exists, a worker's done report uses "Reported done", the worker's chip and its worker-thread link with the same review border and dither.
+- **In review:** solid 1px sky border, still sky dither at level 2 (32%). A saved reviewer sets the state label to "Starting review", "In review", "Second look", "Fixes requested", "Approved" or "Review unconfirmed" and supplies the reviewer's AI chip. The peg opens the saved reviewer thread when present; without that thread it has no navigation button. Its accessible name includes the saved family, model and effort. Before a saved reviewer exists, a worker's done report uses "Reported done", the worker's chip and its worker-thread link when present, with the same review border and dither. Never infer a reviewer from the worker's route.
 - **In branch / Done:** compact (84px, id and state only), green border (70% for in branch, full for done), still green dither at 22%.
 - **Stopped:** 2px red border, red dither at level 4 (26%), and one 460ms stepped glitch (horizontal shifts and slice clips) when it fails.
 

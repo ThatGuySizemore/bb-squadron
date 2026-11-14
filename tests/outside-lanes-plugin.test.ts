@@ -178,6 +178,10 @@ test("an outside lane has no lane buttons, and Start, Stop, Resume and Merge ref
   harness.sdk.stub("threads.send", async (input) => { sent.push(input); throw new Error("must not send"); });
   for (const method of ["lane.stop", "lane.resume", "lane.merge", "lane.start"] as const) {
     await assert.rejects(harness.behavior.callRpc(method, { projectId: "project", specId: "bb-bot" }), /started outside Squadron/, method);
+    const result = await harness.behavior.runCli([method.slice(5), "bb-bot"], { projectId: "project" });
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /started outside Squadron/);
+    assert.equal(result.stderr.trim().split("\n").length, 1);
   }
   assert.deepEqual(sent, []);
   assert.deepEqual(harness.inspection.sdk.callsTo("threads.spawn"), []);

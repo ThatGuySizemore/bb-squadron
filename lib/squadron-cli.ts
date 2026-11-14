@@ -1,4 +1,5 @@
 import { cliCommand, defineCli, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
+import type { LaneActions } from "./lane-start.js";
 import { needsYou, type Board, type NeedsYouItem, type NeedsYouKind } from "./board-model.js";
 import { helperCommands } from "./helper-cli.js";
 import type { registerHelper } from "./helper.js";
@@ -21,8 +22,8 @@ function openNeeds(board: Board): NeedsYouItem[] {
 
 const incomplete = (board: Board | null) => !board || board.tracker?.state !== "current";
 
-/** Register once; later Helper and lane commands belong in this same command table. */
-export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, helper: ReturnType<typeof registerHelper>) {
+/** One command table for board reads, shared lane actions and Helper selection. */
+export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>) {
   const options = { project: { type: "string", description: "Narrow to a project ID or unique name; otherwise show all projects." } } as const;
   async function projects(selected?: string) {
     const all = await bb.sdk.projects.list();
@@ -39,11 +40,46 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
       project, value: await board.read(project.id).catch(() => null),
     })));
   }
+  async function actionProject(selected: string | undefined, callerProject: string | undefined) {
+    if (selected === undefined && callerProject) return callerProject;
+    const matches = await projects(selected);
+    if (!matches.length) throw new PluginCliError("No projects.");
+    if (matches.length > 1) throw new PluginCliError("Choose a project with --project.");
+    return matches[0].id;
+  }
+  function actionCommand(action: keyof LaneActions, summary: string) {
+    return cliCommand({
+      summary,
+      options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." } },
+      positionals: [{ name: "spec", description: "Spec identifier.", required: true }],
+      async run({ options, positionals }, context) {
+        try {
+          const projectId = await actionProject(options.project, context.projectId);
+          const result = await actions[action](projectId, positionals.spec);
+          const specId = oneLine(positionals.spec);
+          if ("number" in result) return { exitCode: 0, stdout: `Squash-merged PR #${result.number} for ${specId}.\n` };
+          const messages = {
+            start: `Started ${specId}.`,
+            stop: `Asked the Lead for ${specId} to wind down.`,
+            resume: `Asked the Lead for ${specId} to carry on from its last summary.`,
+            merge: `Asked the Lead for ${specId} to merge locally.`,
+          };
+          return { exitCode: 0, stdout: `${messages[action]} @thread:${result.threadId}\n` };
+        } catch (error) {
+          return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
+        }
+      },
+    });
+  }
   const boardLink = () => `${bb.server.experimental_appUrl?.replace(/\/$/, "") ?? ""}/plugins/squadron/board`;
   bb.cli.register(defineCli({
-    name: "squadron", summary: "See your projects and what needs you.",
+    name: "squadron", summary: "See your projects and act on their specs.",
     commands: {
       ...helperCommands(helper),
+      start: actionCommand("start", "Start a spec's Lead."),
+      stop: actionCommand("stop", "Ask a spec's Lead to wind down."),
+      resume: actionCommand("resume", "Ask a spec's Lead to carry on."),
+      merge: actionCommand("merge", "Merge where the board offers Merge. Only the owner's own words approve."),
       needs: cliCommand({
         summary: "Show what needs you, with links.",
         options,

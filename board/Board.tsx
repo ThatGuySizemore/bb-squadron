@@ -379,7 +379,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           {progress}
           <div className="sq-air-band" aria-hidden="true">{air}</div>
           {active.length ? <div className="sq-active">{active.map((t) => <Peg key={t.id} ticket={t} lane={lane} />)}</div> : null}
-          <details className="sq-all"><summary>{lane.tickets.length === 1 ? "1 ticket" : `All ${lane.tickets.length} tickets`}</summary><ol>
+          <details className="sq-all"><summary>{lane.tickets.length === 1 ? "1 " : `All ${lane.tickets.length} `}<Term text={lane.tickets.length === 1 ? "ticket" : "tickets"} word="Ticket" nested /></summary><ol>
             {lane.tickets.map((t) => (
               <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}><Term text={TICKET_LABEL[t.state]} /></span></li>
             ))}
@@ -535,7 +535,7 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
         ) : null}
         {held.length ? (
           <details className="sq-waits">
-            <summary>{held.length} held</summary>
+            <summary>{held.length} <Term text="held" word="Held" nested /></summary>
             <ul className="sq-ready-waiting" aria-label={`Held tickets of ${spec.id}, which the Lead skips`}>
               {held.map((ticket) => (
                 <li key={ticket.id} title={ticket.title}>
@@ -578,7 +578,7 @@ function ShapingRow({ spec, onPlan, opening }: { spec: ShapingSpec; onPlan: Plan
       <div className="sq-row-actions">
         <Btn tone="primary" disabled={opening} title={opening ? undefined : `${label} for ${spec.id}`}
           onClick={() => (spec.action === "resume" ? onPlan(spec.id) : onPlan(spec.id, "tickets"))}>
-          {opening ? "Opening…" : label}
+          {opening ? "Opening…" : spec.action === "resume" ? label : <>Plan <Term text="tickets" word="Ticket" nested /></>}
         </Btn>
       </div>
     </li>
@@ -861,7 +861,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
   // New spec starts the path from nothing; one planning thread opens at a time.
   const newSpec = (tone: "primary" | "plain" = "plain") => (
     <Btn tone={tone} disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : "Plan a new spec from nothing"} onClick={() => onPlan()}>
-      {planning === "" ? "Opening…" : "New spec"}
+      {planning === "" ? "Opening…" : <>New <Term text="spec" word="Spec" nested /></>}
     </Btn>
   );
   const doctor = doctorStatus(board);

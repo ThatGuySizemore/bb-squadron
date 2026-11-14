@@ -57,6 +57,16 @@ export function textOf(node: Element): string {
   return texts(node).map((text) => text.text).join("");
 }
 
+/** A control's shown label, excluding the separate hover definition. */
+export function visibleText(node: Element): string {
+  return texts(node).filter((text) => {
+    for (let parent: Element | null = text.parent; parent; parent = parent.parent) {
+      if (parent.attrs.role === "tooltip") return false;
+    }
+    return true;
+  }).map((text) => text.text).join("");
+}
+
 /** Everything the owner can read: text, plus the titles and labels a pointer or screen reader shows. */
 export function readable(html: string): string[] {
   const root = parse(html);

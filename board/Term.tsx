@@ -36,11 +36,18 @@ function OwnerTerm({ word, text, nested }: { word: OwnerWord; text: string; nest
     const host = nested ? anchor.parentElement?.closest<HTMLElement>("button, a, summary") ?? anchor : anchor;
     const isOpen = () => popover.matches(":popover-open");
     const cancel = () => { if (hiding.current !== null) { window.clearTimeout(hiding.current); hiding.current = null; } };
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") hide(); };
+    // Dismiss the definition before an enclosing view handles Escape in React.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && isOpen()) {
+        event.preventDefault();
+        event.stopPropagation();
+        hide();
+      }
+    };
     // The definition belongs to where the word sits; a scroll moves the word away from it.
     const hide = () => {
       cancel();
-      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("keydown", onKey, true);
       window.removeEventListener("scroll", hide, true);
       if (isOpen()) popover.hidePopover();
     };
@@ -49,7 +56,7 @@ function OwnerTerm({ word, text, nested }: { word: OwnerWord; text: string; nest
       cancel();
       if (!isOpen()) {
         popover.showPopover();
-        document.addEventListener("keydown", onKey);
+        document.addEventListener("keydown", onKey, true);
         window.addEventListener("scroll", hide, true);
       }
       // Below the word, or above it near the bottom; always inside the window.

@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Board, Lane, Route, Ticket } from "../lib/board-model.js";
+import { elements, parse, visibleText } from "./fixtures/owner-text.js";
 
 const route: Route = { family: "claude", model: "claude-opus-5-5", effort: "high" };
 const ticket = (id: string, state: Ticket["state"], extra: Partial<Ticket> = {}): Ticket =>
@@ -57,8 +58,8 @@ test("in the side panel a flying lane shows its active pegs and an All N tickets
   const active = /<div class="sq-active">([\s\S]*?)<\/div><details/.exec(panel)?.[1] ?? "";
   assert.deepEqual([...active.matchAll(/class="sq-peg-id">([^<]+)</g)].map((m) => m[1]), ["FIX-3", "FIX-4"],
     "only tickets an agent is on, or that need the owner, are pegs");
-  const all = /<details class="sq-all"><summary>([^<]+)<\/summary>([\s\S]*?)<\/details>/.exec(panel);
-  assert.equal(all?.[1], "All 4 tickets");
+  const all = /<details class="sq-all"><summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/.exec(panel);
+  assert.equal(all && visibleText(parse(all[1])), "All 4 tickets");
   assert.deepEqual([...(all?.[2] ?? "").matchAll(/<li data-state="([^"]+)"><span class="sq-id">([^<]+)<\/span><span>([^<]+)<\/span><span data-st="[^"]+">(?:<span[^>]*data-term="[^"]+"[^>]*>)?([^<]+)</g)]
     .map((m) => m.slice(1)), [
     ["done", "FIX-2", "Ticket FIX-2", "Done"], ["working", "FIX-3", "Ticket FIX-3", "Working"],
@@ -68,7 +69,7 @@ test("in the side panel a flying lane shows its active pegs and an All N tickets
   assert.match(panel, /1\/4 in branch/, "the progress strip stays");
   const single = await render(createElement(BoardView, { ...props, placement: "panel",
     board: { ...board, lanes: [{ ...lane, tickets: [ticket("FIX-2", "working")] }] } }));
-  assert.match(single, /<summary>1 ticket<\/summary>/);
+  assert.ok(elements(parse(single)).some((element) => element.tag === "summary" && visibleText(element) === "1 ticket"));
 
   const page = await render(createElement(BoardView, props));
   assert.match(page, /class="sq"[^>]*data-layout="wide"/);

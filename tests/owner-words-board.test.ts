@@ -63,13 +63,19 @@ function closest(node: Element | null, match: (element: Element) => boolean): El
   return null;
 }
 
-test("every owner word the board shows as a label carries its definition for hover and focus", async () => {
-  for (const placement of ["page", "panel"] as const) {
-    const root = parse(await render(placement));
-    const shown = new Set<string>();
-    for (const text of texts(root)) {
-      const word = text.text.trim();
-      if (!Object.hasOwn(OWNER_WORDS, word) || closest(text.parent, (element) => element.attrs.role === "tooltip")) continue;
+function ownerWordsInLabel(text: string) {
+  return (Object.keys(OWNER_WORDS) as (keyof typeof OWNER_WORDS)[])
+    .filter((word) => new RegExp(`\\b${word}s?\\b`, "i").test(text));
+}
+
+function assertDefinitions(root: Element, placement: string) {
+  const shown = new Set<string>();
+  for (const text of texts(root)) {
+    if (closest(text.parent, (element) => element.attrs.role === "tooltip")) continue;
+    const label = text.text.trim();
+    const words = Object.hasOwn(OWNER_WORDS, label) || closest(text.parent, (element) => INTERACTIVE.has(element.tag))
+      ? ownerWordsInLabel(label) : [];
+    for (const word of words) {
       shown.add(word);
       const term = closest(text.parent, (element) => "data-term" in element.attrs);
       assert.ok(term, `${placement}: "${word}" is shown with no definition`);
@@ -84,11 +90,27 @@ test("every owner word the board shows as a label carries its definition for hov
         assert.equal(term.attrs["aria-describedby"], tip!.attrs.id, `${placement}: "${word}" is described by its definition`);
       }
     }
+  }
+  return shown;
+}
+
+test("every owner word the board shows as a label carries its definition for hover and focus", async () => {
+  for (const placement of ["page", "panel"] as const) {
+    const root = parse(await render(placement));
+    const shown = assertDefinitions(root, placement);
     // The fixture shows these words as labels, so the check above really ran on them.
     for (const word of ["Needs you", "Flying", "Ready", "Shaping", "Landed", "Held", "House rules"]) {
       assert.ok(shown.has(word), `${placement}: the fixture shows ${word}`);
     }
   }
+});
+
+test("owner-word label coverage rejects longer, lowercase and plural labels without definitions", () => {
+  for (const [label, expected] of [["New spec", "Spec"], ["Plan tickets", "Ticket"], ["2 held", "Held"], ["ready", "Ready"]]) {
+    assert.deepEqual(ownerWordsInLabel(label), [expected], label);
+    assert.throws(() => assertDefinitions(parse(`<button>${label}</button>`), "fixture"), /shown with no definition/, label);
+  }
+  assert.deepEqual(ownerWordsInLabel("Already ticketed"), [], "only whole words are terms");
 });
 
 test("nothing the owner reads on the board or in Doctor uses a retired word", async () => {

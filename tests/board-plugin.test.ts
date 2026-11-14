@@ -16,6 +16,7 @@ const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e-key" }) {
   return createFakePluginHost({
     pluginId: "squadron",
+    experimental_hostEntry: true,
     settings,
     sdk: {
       projects: { get: async () => ({
@@ -26,6 +27,17 @@ function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e
         assert.equal(path, "/repo/docs/agents/squadron.md");
         return { content: settingsFile, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: settingsFile.length };
       } },
+      skills: { list: async () => ({ skills: ["claude-code", "codex"].flatMap((provider) =>
+        ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"].map((name) => ({
+          id: `${provider}-${name}`, name: `mattpocock-skills:${name}`, description: null,
+          filePath: `/plugins/${provider}/${name}/SKILL.md`, manageable: false,
+          pluginId: "mattpocock-skills", provider, registrySkillId: null, scope: "plugin" as const,
+        }))) }) },
+    },
+    experimental_callHostRpc: async ({ method, input }) => method === "githubLogin" ? { authenticated: true } : {
+      homePath: "/owner", repoRulesExists: true, playbookExists: true, machineProfileExists: true,
+      setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
+      regularSkillFiles: (input as { skillPaths: string[] }).skillPaths,
     },
   });
 }
@@ -57,7 +69,7 @@ test("install, bind a recorded workspace, sync it and read the real board throug
   assert.equal(board.linear?.project, "Fixture team · Fixture project");
   assert.deepEqual(board.ready.map(({ id, ticketCount, blockedBy, startReason, routes }) => ({ id, ticketCount, blockedBy, startReason, models: routes.map((route) => route.model) })), [
     { id: "FIX-1", ticketCount: 2, blockedBy: ["OUT-10"], startReason: "Waits on OUT-10 (outside this project)", models: ["gpt-6.1-sol", "claude-opus-5-5"] },
-    { id: "FIX-5", ticketCount: 1, blockedBy: [], startReason: "Squadron can't start lanes yet. This version only reads Linear.", models: ["gpt-6.1-sol"] },
+    { id: "FIX-5", ticketCount: 1, blockedBy: [], startReason: null, models: ["gpt-6.1-sol"] },
   ]);
   assert.deepEqual(board.unplanned.map((row) => [row.id, row.title]), [["FIX-9", "Linear webhooks"]]);
   assert.deepEqual(board.lanes, []);
@@ -172,6 +184,7 @@ test("the board page renders the RPC board model: Ready, Unplanned, reasons and 
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardPage, BoardView } = await import("../board/Board.js");
+  const { DoctorChecks } = await import("../board/Doctor.js");
   const linear = workspace();
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const { bb, harness } = host();
@@ -184,11 +197,17 @@ test("the board page renders the RPC board model: Ready, Unplanned, reasons and 
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
-    "Squadron can&#x27;t start lanes yet. This version only reads Linear.", "Doctor checks", "Linear webhooks", "No lanes flying."]) {
+    "Doctor checks", "Linear webhooks", "No lanes flying."]) {
     assert.ok(html.includes(text), `the board shows ${text}`);
   }
-  assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Start<\/button>/g) ?? []).length, 2, "both Start buttons are disabled");
+  assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Start<\/button>/g) ?? []).length, 1, "the blocked spec's Start button is disabled");
   assert.ok(!html.includes("Synthetic data"), "the real board carries no synthetic label");
+
+  assert.ok(board.doctor);
+  const doctorHtml = renderToStaticMarkup(createElement(DoctorChecks, { report: board.doctor }));
+  for (const text of ["Repo rules", "Project settings", "Playbook", "Machine profile", "Present", "/owner/.bb-squadron/playbook.md"]) {
+    assert.ok(doctorHtml.includes(text), `Doctor shows ${text}`);
+  }
 
   const page = renderToStaticMarkup(createElement(BoardPage));
   assert.ok(page.includes('aria-checked="false"') && page.includes("Synthetic demo"), "the demo is a switch, off by default");

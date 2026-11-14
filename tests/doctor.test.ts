@@ -4,37 +4,62 @@ import { test } from "node:test";
 import { doctor } from "../lib/doctor.js";
 
 const settingsMarkdown = readFileSync("tests/fixtures/squadron.md", "utf8");
-const skills = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
+const names = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
+const readyInput = {
+  skills: { claude: names, gpt: names }, settingsMarkdown,
+  setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
+  linearConnected: true, ghAuthenticated: true,
+  configurationFiles: [
+    { id: "repo-rules" as const, name: "Repo rules", path: "/repo/AGENTS.md", hostId: "host", exists: true },
+    { id: "project-settings" as const, name: "Project settings", path: "/repo/docs/agents/squadron.md", hostId: "host", exists: true },
+    { id: "playbook" as const, name: "Playbook", path: "/owner/.bb-squadron/playbook.md", hostId: "host", exists: true },
+    { id: "machine-profile" as const, name: "Machine profile", path: "/owner/.bb-squadron/machine.md", hostId: "host", exists: true },
+  ],
+};
 
-test("Doctor's public output lists a pass for each ready check", () => {
-  const report = doctor({ skills, settingsMarkdown, linearConnected: true, ghAuthenticated: true });
-  assert.deepEqual(report, {
-    ready: true,
-    checks: [
-      { id: "skills", name: "Matt's setup", status: "pass", message: "All six planning, build and review skills are available." },
-      { id: "settings", name: "Squadron settings", status: "pass", message: "Quick check, stop list, limits and routes are ready." },
-      { id: "linear", name: "Linear connection", status: "pass", message: "Linear is connected." },
-      { id: "github", name: "GitHub login", status: "pass", message: "gh is signed in on this repo's machine." },
-    ],
-  });
+test("Doctor passes each required check and links all four configuration files", () => {
+  const report = doctor(readyInput);
+  assert.equal(report.ready, true);
+  assert.deepEqual(report.checks.map(({ id, status }) => [id, status]), [
+    ["skills", "pass"], ["setup", "pass"], ["settings", "pass"], ["linear", "pass"], ["github", "pass"],
+    ["playbook", "pass"], ["machine-profile", "pass"],
+  ]);
+  assert.deepEqual(report.configurationFiles, readyInput.configurationFiles);
 });
 
-test("Doctor gives the owner a plain fix for every failed check", () => {
-  assert.deepEqual(doctor({ skills: ["tdd"], settingsMarkdown: null, linearConnected: false, ghAuthenticated: false }), {
-    ready: false,
-    checks: [
-      { id: "skills", name: "Matt's setup", status: "fix", message: "Install Matt Pocock's skills for this repo: grill-with-docs, to-spec, to-tickets, implement-spec, code-review." },
-      { id: "settings", name: "Squadron settings", status: "fix", message: "Create docs/agents/squadron.md with Quick check, Stop list, Limits and Routes sections." },
-      { id: "linear", name: "Linear connection", status: "fix", message: "Connect Linear in Squadron settings, or reconnect if the connection failed." },
-      { id: "github", name: "GitHub login", status: "fix", message: "Install GitHub CLI if needed, then run gh auth login on this repo's machine." },
-    ],
-  });
+test("each failing check names a fix, including a plugin missing in just one provider", () => {
+  const cases = [
+    { input: { ...readyInput, skills: { claude: names } }, id: "skills", text: "Codex:" },
+    { input: { ...readyInput, skills: { gpt: names } }, id: "skills", text: "Claude Code:" },
+    ...readyInput.setupFiles.map((path) => ({ input: { ...readyInput, setupFiles: readyInput.setupFiles.filter((found) => found !== path) }, id: "setup", text: path })),
+    { input: { ...readyInput, settingsMarkdown: null }, id: "settings", text: "Create docs/agents/squadron.md" },
+    { input: { ...readyInput, settingsMarkdown: settingsMarkdown.replace(/## Routes[\s\S]*?(?=## Final review)/, "") }, id: "settings", text: "Add the Routes section" },
+    { input: { ...readyInput, linearConnected: false }, id: "linear", text: "secret settings" },
+    { input: { ...readyInput, ghAuthenticated: false }, id: "github", text: "gh auth login" },
+  ];
+  for (const sample of cases) {
+    const report = doctor(sample.input);
+    assert.equal(report.ready, false, sample.id);
+    const failed = report.checks.find((check) => check.id === sample.id);
+    assert.equal(failed?.status, "fix");
+    assert.ok(failed?.message.includes(sample.text), failed?.message);
+    assert.equal(report.checks.filter((check) => check.status === "fix").length, 1);
+  }
 });
 
-test("Doctor tells the owner which settings section to add", () => {
-  const report = doctor({ skills, settingsMarkdown: settingsMarkdown.replace(/## Routes[\s\S]*/, ""), linearConnected: true, ghAuthenticated: true });
-  assert.equal(report.ready, false);
-  assert.deepEqual(report.checks[1], {
-    id: "settings", name: "Squadron settings", status: "fix", message: "Add the Routes section to docs/agents/squadron.md.",
-  });
+test("missing owner files warn without blocking Start, and their contents aren't needed", () => {
+  for (const id of ["playbook", "machine-profile"]) {
+    const report = doctor({ ...readyInput, configurationFiles: readyInput.configurationFiles.map((file) => ({ ...file, exists: file.id !== id })) });
+    assert.equal(report.ready, true);
+    assert.equal(report.checks.find((check) => check.id === id)?.status, "warning");
+    assert.equal(report.configurationFiles.find((file) => file.id === id)?.exists, false);
+  }
+});
+
+test("only routed providers need the plugin when final review uses the same family", () => {
+  const settings = settingsMarkdown.replace(/\| `ui` .+\n/, "").replace("\nother\n", "\nsame\n");
+  assert.equal(doctor({ ...readyInput, settingsMarkdown: settings, skills: { gpt: names } }).ready, true);
+  const other = doctor({ ...readyInput, settingsMarkdown: settings.replace("\nsame\n", "\nother\n"), skills: { gpt: names } });
+  assert.equal(other.ready, false);
+  assert.match(other.checks[0].message, /Claude Code:/);
 });

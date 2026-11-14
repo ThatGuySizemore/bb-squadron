@@ -21,8 +21,8 @@ test("ready-for-agent specs show under Ready with their tickets, and parentless 
     { id: "FIX-4", title: "Webhooks", labels: ["v2"] },
   ]);
   assert.deepEqual(board.lanes, []);
-  assert.equal(board.laneCapacity, 3);
-  assert.equal(board.workersPerLane, 2);
+  assert.equal(board.laneCapacity, 0);
+  assert.equal(board.workersPerLane, 0);
 });
 
 test("open blockers across specs, inside or outside the project, hold Start with the reason", () => {
@@ -142,4 +142,22 @@ test("connecting Linear and choosing a project wait on the owner before anything
   assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [
     { kind: "setup", text: "Choose the Linear team and project for this BB project." },
   ]);
+});
+
+test("Start uses the Doctor's first failing fix and owner-file warnings don't block it", () => {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })]);
+  const doctor = {
+    ready: false, configurationFiles: [], checks: [
+      { id: "skills" as const, name: "Matt's plugin", status: "fix" as const, message: "Install Matt's plugin in Codex." },
+      { id: "github" as const, name: "GitHub login", status: "fix" as const, message: "Run gh auth login." },
+    ],
+  };
+  assert.equal(deriveBoard(input(snap, { doctor })).board.ready[0].startReason, "Install Matt's plugin in Codex.");
+  const warnings = { ready: true, configurationFiles: [], checks: [
+    { id: "playbook" as const, name: "Playbook", status: "warning" as const, message: "Optional playbook is missing." },
+    { id: "machine-profile" as const, name: "Machine profile", status: "warning" as const, message: "Optional machine profile is missing." },
+  ] };
+  const board = deriveBoard(input(snap, { doctor: warnings })).board;
+  assert.equal(board.ready[0].startReason, null);
+  assert.deepEqual(board.doctor, warnings);
 });

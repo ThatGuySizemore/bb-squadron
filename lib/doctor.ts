@@ -1,48 +1,78 @@
-export interface DoctorCheck {
-  id: "skills" | "settings" | "linear" | "github";
+import { parseSquadronSettings } from "./squadron-settings.js";
+import type { Family } from "./board-model.js";
+
+export interface ConfigurationFile {
+  id: "repo-rules" | "project-settings" | "playbook" | "machine-profile";
   name: string;
-  status: "pass" | "fix";
+  path: string;
+  hostId: string;
+  exists: boolean;
+}
+export interface DoctorCheck {
+  id: "skills" | "setup" | "settings" | "linear" | "github" | "playbook" | "machine-profile";
+  name: string;
+  status: "pass" | "fix" | "warning";
   message: string;
 }
-export interface DoctorReport { ready: boolean; checks: DoctorCheck[] }
+export interface DoctorReport { ready: boolean; checks: DoctorCheck[]; configurationFiles: ConfigurationFile[] }
 export interface DoctorInput {
-  skills: readonly string[];
+  /** Only installed plugin skills, with symlinked files excluded by the host. */
+  skills: Partial<Record<Family, readonly string[]>>;
+  setupFiles: readonly string[];
   settingsMarkdown: string | null;
   linearConnected: boolean;
   ghAuthenticated: boolean;
+  configurationFiles: ConfigurationFile[];
 }
+
+export const requiredSkills = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
+export const setupFiles = ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"];
 
 /** Public, secret-free output shared by the board and preflight callers. */
 export function doctor(input: DoctorInput): DoctorReport {
-  const requiredSkills = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
-  const missingSkills = requiredSkills.filter((name) => !input.skills.includes(name));
   const parsed = input.settingsMarkdown === null ? null : parseSquadronSettings(input.settingsMarkdown);
+  const families = new Set<Family>(parsed?.ok ? parsed.settings.routes.map((route) => route.family) : ["claude", "gpt"]);
+  // An other-family final review also needs its provider's skills installed.
+  if (parsed?.ok && parsed.settings.finalReviewFamily === "other") {
+    for (const family of [...families]) families.add(family === "claude" ? "gpt" : "claude");
+  }
+  const missingSkills = [...families].flatMap((family) => {
+    const missing = requiredSkills.filter((name) => !input.skills[family]?.includes(name));
+    return missing.length ? [`${family === "claude" ? "Claude Code" : "Codex"}: ${missing.join(", ")}`] : [];
+  });
+  const missingSetup = setupFiles.filter((path) => !input.setupFiles.includes(path));
   const checks: DoctorCheck[] = [
     {
-      id: "skills", name: "Matt's setup", status: missingSkills.length ? "fix" : "pass",
+      id: "skills", name: "Matt's plugin", status: missingSkills.length ? "fix" : "pass",
       message: missingSkills.length
-        ? `Install Matt Pocock's skills for this repo: ${missingSkills.join(", ")}.`
-        : "All six planning, build and review skills are available.",
+        ? `Install Matt Pocock's skills plugin in ${missingSkills.join("; ")}. Hand-copied or symlinked skills don't count.`
+        : "Matt's plugin is installed in every required provider.",
     },
     {
-      id: "settings", name: "Squadron settings", status: parsed?.ok ? "pass" : "fix",
-      message: parsed?.ok ? "Quick check, stop list, limits and routes are ready."
+      id: "setup", name: "Matt's setup files", status: missingSetup.length ? "fix" : "pass",
+      message: missingSetup.length ? `Run Matt's setup to create ${missingSetup.join(", ")}.` : "Issue tracker, triage labels and domain docs are present.",
+    },
+    {
+      id: "settings", name: "Project settings", status: parsed?.ok ? "pass" : "fix",
+      message: parsed?.ok ? "Quick check, stop list, time limits, routes, final review and status mapping are ready."
         : parsed ? parsed.issues.map((issue) => issue.message).join(" ")
-        : "Create docs/agents/squadron.md with Quick check, Stop list, Limits and Routes sections.",
+        : "Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes, Final review and Status mapping sections.",
     },
     {
-      id: "linear", name: "Linear connection", status: input.linearConnected ? "pass" : "fix",
-      message: input.linearConnected ? "Linear is connected." : "Connect Linear in Squadron settings, or reconnect if the connection failed.",
+      id: "linear", name: "Linear key", status: input.linearConnected ? "pass" : "fix",
+      message: input.linearConnected ? "The Linear key works." : "Set a working Linear personal API key in BB's secret settings.",
     },
     {
       id: "github", name: "GitHub login", status: input.ghAuthenticated ? "pass" : "fix",
       message: input.ghAuthenticated ? "gh is signed in on this repo's machine."
         : "Install GitHub CLI if needed, then run gh auth login on this repo's machine.",
     },
+    ...(["playbook", "machine-profile"] as const).map((id): DoctorCheck => {
+      const file = input.configurationFiles.find((file) => file.id === id);
+      const name = id === "playbook" ? "Playbook" : "Machine profile";
+      return { id, name, status: file?.exists ? "pass" : "warning",
+        message: file?.exists ? `${name} is present.` : `Optional: create ${file?.path ?? (id === "playbook" ? "~/.bb-squadron/playbook.md" : "~/.bb-squadron/machine.md")} from the bundled starter template. This file doesn't block Start.` };
+    }),
   ];
-  return {
-    ready: checks.every((check) => check.status === "pass"), checks,
-  };
+  return { ready: checks.every((check) => check.status !== "fix"), checks, configurationFiles: input.configurationFiles };
 }
-import { parseSquadronSettings } from "./squadron-settings.js";
-

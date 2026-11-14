@@ -9,8 +9,8 @@ import { registerPlanning } from "./lib/planning.js";
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
   const mirror = registerLinearReader(bb, linear);
-  registerDoctor(bb, () => linear.getConnection());
-  registerBoard(bb, { connection: () => linear.getConnection(), mirror });
+  const doctor = registerDoctor(bb, () => linear.getConnection());
+  registerBoard(bb, { connection: () => linear.getConnection(), mirror, doctor: doctor.read });
   registerPlanning(bb, { mirror });
   bb.log.info("loaded");
 }

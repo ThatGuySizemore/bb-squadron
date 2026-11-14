@@ -3,11 +3,13 @@ import type { Blocker, Board, LinearStatus, ReadySpec, Route, UnplannedIssue } f
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
+import type { DoctorReport } from "./doctor.js";
 
 export interface BoardInput {
   snapshot: MirrorSnapshot;
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
+  doctor?: DoctorReport;
   /** The board clock for derived lane state. */
   now: number;
 }
@@ -55,8 +57,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const ticketBlockers = tickets.map(openBlockers);
     const blockers = [...new Map([...specBlockers, ...ticketBlockers.flat()].map((blocker) => [blocker.id, blocker])).values()]
       .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
-    let startReason: string;
-    if (specBlockers.length) {
+    let startReason: string | null;
+    const doctorFix = input.doctor?.checks.find((check) => check.status === "fix");
+    if (doctorFix) {
+      startReason = doctorFix.message;
+    } else if (specBlockers.length) {
       startReason = `Waits on ${list(specBlockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
     } else if (!tickets.length) {
       startReason = "Has no open tickets. Plan its tickets first.";
@@ -68,8 +73,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
         ? `Fix docs/agents/squadron.md first: ${[...new Set(sections)].join(", ")}. Open Doctor for details.`
         : "Couldn't read docs/agents/squadron.md. Open Doctor for details.";
     } else {
-      // Spec B starts lanes here, after the lane-capacity check.
-      startReason = "Squadron can't start lanes yet. This version only reads Linear.";
+      startReason = input.doctor ? null : "Squadron can't start lanes yet. This version only reads Linear.";
     }
     return {
       id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length,
@@ -111,9 +115,10 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   }
   return {
     board: {
+      ...(input.doctor ? { doctor: input.doctor } : {}),
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
         project: binding ? `${binding.team.name} · ${binding.project.name}` : null },
-      tick: 0, laneCapacity: settings?.limits.lanesAtOnce ?? 0, workersPerLane: settings?.limits.workersPerLane ?? 0,
+      tick: 0, laneCapacity: 0, workersPerLane: 0,
       autoStart: false, lanes: [], ready, unplanned,
     },
   };

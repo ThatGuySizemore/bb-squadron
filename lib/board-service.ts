@@ -10,9 +10,11 @@ import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
+import type { DoctorReport } from "./doctor.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
+  doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   mirror: {
     getSnapshot(bbProjectId: string): MirrorSnapshot;
     onChange(listener: (bbProjectId: string) => void): () => void;
@@ -36,6 +38,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     published: string | null;
     connection?: { at: number; value: BoardInput["connection"] };
     settings?: { at: number; value: SettingsResult | null };
+    doctor?: { at: number; value: DoctorReport };
     /** The refresh in progress, and whether another signal arrived during it. */
     refreshing?: Promise<void>;
     again?: boolean;
@@ -64,9 +67,11 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const at = now();
     if (fresh || !entry.connection || at - entry.connection.at > REUSE_MS) entry.connection = { at, value: await connection() };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
+    if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
     const { board } = deriveBoard({
       snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
       settings: entry.settings.value, now: now(),
+      doctor: entry.doctor?.value,
     });
     return board;
   }

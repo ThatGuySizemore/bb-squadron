@@ -10,12 +10,10 @@ npm run check
 
 - The plugin fails to build or load.
 
-## Limits
+## Time limits
 
 | Setting | Value |
 |---|---|
-| Lanes at once | 3 |
-| Workers per lane | 3 |
 | Lane time limit | 8 h |
 | Worker time limit | 3 h |
 
@@ -26,3 +24,11 @@ npm run check
 | (default) | GPT | gpt-6.1-sol | high |
 | `ui` | Claude | claude-opus-5-5 | high |
 | `data` | GPT | gpt-6.1-sol | medium |
+
+## Final review
+
+other
+
+## Status mapping
+
+Default.

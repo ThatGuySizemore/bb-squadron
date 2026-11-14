@@ -1,5 +1,6 @@
 // The board runtime schema is also the source of its public TypeScript types.
 import { z } from "zod";
+import { doctorReportSchema } from "./doctor-contract.js";
 
 const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
 const ticket = z.object({
@@ -16,6 +17,7 @@ const lane = z.object({
 });
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
 const boardSchema = z.object({
+  doctor: doctorReportSchema.optional(),
   tick: z.number(), laneCapacity: z.number(), workersPerLane: z.number(), autoStart: z.boolean(),
   lanes: z.array(lane),
   ready: z.array(z.object({

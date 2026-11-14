@@ -10,7 +10,7 @@ import { PULL_REQUEST_PLUGIN, readPullRequests } from "./pull-requests.js";
 import { canMerge } from "./board-model.js";
 import { z } from "zod";
 import type { TrackerReader } from "./tracker-contract.js";
-import { repositoryHostContract } from "./repository-contract.js";
+import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 import { readPlanningThreads } from "./planning.js";
 import type { LeadThread } from "./lead-threads.js";
@@ -86,12 +86,19 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   }
   /** Squash-merge the Lead's PR, read afresh, only while it is open with passing checks. */
   async function merge(projectId: string, specId: string) {
-    const environmentId = (await leadOf(projectId, specId, "merge")).thread.environmentId;
-    const checkout = await readProjectCheckout(bb, projectId);
-    if (checkout) {
-      const repository = await bb.hosts.experimental_client({ contract: repositoryHostContract }).call("readRepositoryState",
-        { checkoutPath: checkout.path, branches: [] }, { hostId: checkout.hostId, timeoutMs: 15_000 }).catch(() => null);
-      if (repository?.hasRemote === false) return tell(projectId, specId, LOCAL_MERGE_MESSAGE, "queue-if-active", "merge");
+    const lead = await leadOf(projectId, specId, "merge");
+    const environmentId = lead.thread.environmentId;
+    const snapshot = await sources.tracker.getSnapshot(projectId);
+    const progress = await readLaneProgress(bb, snapshot, [lead]);
+    if (progress.repository?.hasRemote === false) {
+      const checkout = await readProjectCheckout(bb, projectId);
+      const { board } = deriveBoard({ snapshot, leads: [lead], settings: checkout?.settings ?? null,
+        connection: { status: "connected", message: "" }, now: Date.now(), ...progress });
+      const lane = board.lanes.find((lane) => lane.specId === specId);
+      if (!lane || lane.state === "landed" || !canMerge(lane)) {
+        throw new Error(`${specId} isn't ready for a local merge. Read the board again.`);
+      }
+      return tell(projectId, specId, LOCAL_MERGE_MESSAGE, "queue-if-active", "merge");
     }
     const row = environmentId ? (await readPullRequests(bb, [environmentId]))[environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
@@ -107,21 +114,11 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   const fromBoard = (context: { experimental_caller: { kind: string } }, action: string) => {
     if (context.experimental_caller.kind !== "client") throw new Error(`${action} a lane from the Squadron board.`);
   };
-  bb.rpc.register(laneContract, {
-    "lane.stop": ({ projectId, specId }, context) => {
-      fromBoard(context, "Stop");
-      return tell(projectId, specId, STOP_MESSAGE, "steer-if-active", "stop");
-    },
-    "lane.resume": ({ projectId, specId }, context) => {
-      fromBoard(context, "Resume");
-      return tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume");
-    },
-    "lane.merge": ({ projectId, specId }, context) => {
-      fromBoard(context, "Merge");
-      return merge(projectId, specId);
-    },
-    "lane.start": ({ projectId, specId }, context) => {
-      fromBoard(context, "Start");
+  const actions = {
+    merge,
+    stop: (projectId: string, specId: string) => tell(projectId, specId, STOP_MESSAGE, "steer-if-active", "stop"),
+    resume: (projectId: string, specId: string) => tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume"),
+    start(projectId: string, specId: string) {
       const key = JSON.stringify([projectId, specId]);
       let running = starting.get(key);
       if (!running) {
@@ -130,5 +127,26 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
       }
       return running;
     },
+  };
+  bb.rpc.register(laneContract, {
+    "lane.stop": ({ projectId, specId }, context) => {
+      fromBoard(context, "Stop");
+      return actions.stop(projectId, specId);
+    },
+    "lane.resume": ({ projectId, specId }, context) => {
+      fromBoard(context, "Resume");
+      return actions.resume(projectId, specId);
+    },
+    "lane.merge": ({ projectId, specId }, context) => {
+      fromBoard(context, "Merge");
+      return actions.merge(projectId, specId);
+    },
+    "lane.start": ({ projectId, specId }, context) => {
+      fromBoard(context, "Start");
+      return actions.start(projectId, specId);
+    },
   });
+  return actions;
 }
+
+export type LaneActions = ReturnType<typeof registerLaneStart>;

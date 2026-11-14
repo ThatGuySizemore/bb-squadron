@@ -213,10 +213,116 @@ test("CLI help, usage errors and an empty install stay short and don't run lane 
   assert.equal(help.exitCode, 0);
   assert.match(help.stdout, /bb squadron status/);
   assert.match(help.stdout, /bb squadron needs/);
-  assert.doesNotMatch(help.stdout, /bb squadron (helper|start|stop|resume|merge)/);
+  assert.match(help.stdout, /bb squadron start/);
+  assert.doesNotMatch(help.stdout, /bb squadron helper/);
   assert.deepEqual(await harness.behavior.runCli(["status"]), { exitCode: 0, stdout: "No projects.\n", stderr: "" });
   for (const args of [["needs", "--project"], ["status", "--unknown"], ["helper", "use"], ["start", "FIX-5"]]) {
     assert.equal((await harness.behavior.runCli(args)).exitCode, 1);
   }
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+});
+
+
+test("start uses the caller's project and shares the board's existing Lead", async (t) => {
+  const { harness } = await setup(t);
+  const [started, boardStart] = await Promise.all([
+    harness.behavior.runCli(["start", "FIX-5"], { projectId: "proj-one" }),
+    harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }),
+  ]);
+  assert.deepEqual(started, { exitCode: 0, stderr: "", stdout: "Started FIX-5. @thread:thr_lead_1\n" });
+  assert.deepEqual(boardStart, { threadId: "thr_lead_1" });
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 1);
+});
+
+
+test("stop and resume send the board's fixed messages, while RPC caller restrictions remain", async (t) => {
+  const { harness } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  harness.sdk.stub("threads.send", async () => ({ ok: true, delivery: "sent" }));
+  for (const action of ["stop", "resume"] as const) {
+    assert.equal((await harness.behavior.runCli([action, "FIX-5"], { projectId: "proj-one" })).exitCode, 0);
+    const cliSend = harness.inspection.sdk.callsTo("threads.send").at(-1);
+    await harness.behavior.callRpc(`lane.${action}`, { projectId: "proj-one", specId: "FIX-5" });
+    assert.deepEqual(harness.inspection.sdk.callsTo("threads.send").at(-1), cliSend);
+  }
+  const before = harness.inspection.sdk.callsTo("threads.send").length;
+  for (const action of ["start", "stop", "resume", "merge"]) {
+    await assert.rejects(harness.behavior.callRpc(`lane.${action}`, { projectId: "proj-one", specId: "FIX-5" },
+      { experimental_caller: { kind: "plugin", pluginId: "other" } }), /from the Squadron board/);
+  }
+  assert.equal(harness.inspection.sdk.callsTo("threads.send").length, before);
+});
+
+
+test("merge uses the board's PR path and refuses missing, pending, failing and closed PRs", async (t) => {
+  const { harness } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  let pr: { number: number; state: string; checks: { state: string } } | undefined;
+  harness.sdk.stub("plugins.callRpc", async (args: { method: string }) => args.method === "merge"
+    ? { message: "Merged." } : pr ? { env_lead_1: { outcome: "available", pullRequest: pr } } : {});
+  const run = () => harness.behavior.runCli(["merge", "FIX-5"], { projectId: "proj-one" });
+  const cases = [
+    [undefined, "FIX-5 has no pull request to merge yet."],
+    [{ number: 7, state: "open", checks: { state: "no_checks" } }, "PR #7 can merge once its checks pass."],
+    [{ number: 7, state: "open", checks: { state: "pending" } }, "PR #7 can merge once its checks pass."],
+    [{ number: 7, state: "open", checks: { state: "failing" } }, "PR #7 can merge once its checks pass."],
+    [{ number: 7, state: "closed", checks: { state: "passing" } }, "PR #7 is closed, not open."],
+    [{ number: 7, state: "merged", checks: { state: "passing" } }, "PR #7 is merged, not open."],
+  ] as const;
+  for (const [row, reason] of cases) {
+    pr = row;
+    assert.deepEqual(await run(), { exitCode: 1, stdout: "", stderr: `${reason}\n` });
+    await assert.rejects(harness.behavior.callRpc("lane.merge", { projectId: "proj-one", specId: "FIX-5" }), { message: reason });
+  }
+  assert.equal(harness.inspection.sdk.callsTo("plugins.callRpc").filter(([args]) => (args as { method: string }).method === "merge").length, 0);
+  pr = { number: 7, state: "open", checks: { state: "passing" } };
+  assert.deepEqual(await run(), { exitCode: 0, stdout: "Squash-merged PR #7 for FIX-5.\n", stderr: "" });
+  const merges = harness.inspection.sdk.callsTo("plugins.callRpc").filter(([args]) => (args as { method: string }).method === "merge");
+  assert.equal(merges.length, 1);
+  assert.deepEqual((merges[0][0] as { input: unknown }).input, { environmentId: "env_lead_1", method: "squash" });
+});
+
+
+test("actions select explicit or caller projects and refuse ambiguity without effects", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("projects.list", async () => [
+    { id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 },
+    { id: "proj-two", name: "Shared", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 },
+    { id: "proj-three", name: "Shared", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 },
+  ]);
+  for (const action of ["start", "stop", "resume", "merge"]) {
+    for (const [args, reason] of [
+      [[action, "FIX-5"], "Choose a project with --project."],
+      [[action, "FIX-5", "--project", "Shared"], 'More than one project matches "Shared". Use its project ID.'],
+      [[action, "FIX-5", "--project", "Missing"], 'No project matches "Missing".'],
+    ] as const) {
+      assert.deepEqual(await harness.behavior.runCli([...args]), { exitCode: 1, stdout: "", stderr: `${reason}\n` });
+    }
+    assert.equal((await harness.behavior.runCli([action, "FIX-5", "--owner-approved"], { projectId: "proj-one" })).exitCode, 1);
+  }
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+  assert.equal(harness.inspection.sdk.callsTo("threads.send").length, 0);
+  assert.equal((await harness.behavior.runCli(["start", "FIX-5", "--project", "Fixture"], { projectId: "proj-two" })).exitCode, 0);
+  assert.equal((harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { projectId: string }).projectId, "proj-one");
+});
+
+test("CLI Start prints the board's refusal and never spawns for an unready spec", async (t) => {
+  const { harness } = await setup(t);
+  const reason = "FIX-9 isn't a ready spec in this project's tracker. Read the board again.";
+  assert.deepEqual(await harness.behavior.runCli(["start", "FIX-9"], { projectId: "proj-one" }),
+    { exitCode: 1, stdout: "", stderr: `${reason}\n` });
+  await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" }), { message: reason });
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+});
+
+
+test("CLI Start keeps Doctor's board refusal and single-project actions need no project flag", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as import("../lib/board-model.js").Board;
+  const reason = board.ready.find((spec) => spec.id === "FIX-5")!.startReason;
+  assert.ok(reason);
+  assert.deepEqual(await harness.behavior.runCli(["start", "FIX-5"]), { exitCode: 1, stdout: "", stderr: `${reason}\n` });
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
 });

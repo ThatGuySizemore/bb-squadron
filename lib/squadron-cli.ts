@@ -10,7 +10,10 @@ const incomplete = (board: Board | null) => !board || board.tracker?.state !== "
 
 /** Board reads, shared lane and Autopilot controls, and Helper selection. */
 export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>, autopilot: AutopilotControls) {
-  const options = { project: { type: "string", description: "Narrow to a project ID or unique name; otherwise show all projects." } } as const;
+  const options = {
+    project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
+    all: { type: "boolean", description: "Show every project." },
+  } as const;
   async function projects(selected?: string) {
     const all = await bb.sdk.projects.list();
     if (selected === undefined) return all;
@@ -21,8 +24,13 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
     if (matches.length > 1) throw new PluginCliError(`More than one project matches "${selected}". Use its project ID.`);
     return matches;
   }
-  async function readProjects(selected?: string) {
-    return Promise.all((await projects(selected)).map(async (project) => ({
+  async function readProjects(selection: { project?: string; all?: boolean }, callerProject?: string) {
+    if (selection.all && selection.project !== undefined)
+      throw new PluginCliError("Use either --project or --all.");
+    const selected = selection.project ?? callerProject;
+    if (!selection.all && selected === undefined)
+      throw new PluginCliError("Choose a project with --project or use --all.");
+    return Promise.all((await projects(selection.all ? undefined : selected)).map(async (project) => ({
       project, value: await board.read(project.id).catch(() => null),
     })));
   }
@@ -110,8 +118,8 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
       needs: cliCommand({
         summary: "Show what needs you, with links.",
         options,
-        async run({ options }) {
-          const rows = await readProjects(options.project);
+        async run({ options }, context) {
+          const rows = await readProjects(options, context.projectId);
           const lines = rows.map(({ project, value }) => {
             if (!value) return [`${oneLine(project.name)} | Setup | Project | ${unreadable} | ${boardLink(bb)}`];
             return openNeeds(value).map((item) => needLine(project.name, value, item, boardLink(bb)));
@@ -121,10 +129,10 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
         },
       }),
       status: cliCommand({
-        summary: "Show every project's progress.",
+        summary: "Show your project's progress.",
         options,
-        async run({ options }) {
-          const rows = await readProjects(options.project);
+        async run({ options }, context) {
+          const rows = await readProjects(options, context.projectId);
           const lines = rows.map(({ project, value }) => {
             if (!value) return `${oneLine(project.name)} | Tracker: ${unreadable} | Ready ? | Shaping ? | Flying ? | Landed today ? | Needs you ?`;
             return `${oneLine(project.name)} | Tracker: ${oneLine(value.tracker?.message ?? "Not read yet.")} | Ready ${incomplete(value) ? "?" : value.ready.length} | Shaping ${incomplete(value) ? "?" : value.shaping.length} | Flying ${value.lanes.filter((lane) => lane.state !== "landed").length} | Landed today ${value.lanes.filter((lane) => lane.state === "landed" && lane.landedAt !== undefined && new Date(lane.landedAt).toDateString() === new Date().toDateString()).length} | Needs you ${openNeeds(value).length}`;

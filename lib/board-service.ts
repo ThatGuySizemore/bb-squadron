@@ -13,6 +13,7 @@ import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import type { TrackerReader } from "./tracker-contract.js";
+import { readLaneProgress } from "./lane-progress.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
@@ -78,6 +79,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
     const leads = await sources.leads?.(projectId);
+    const progress = await readLaneProgress(bb, snapshot, leads ?? [], lifetime.signal);
     const planning = await sources.planning?.(projectId);
     const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
     const { board } = deriveBoard({
@@ -85,6 +87,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
       leads, planning,
+      ...progress,
       pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
     return board;
@@ -145,8 +148,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const note = snapshot.error ?? (snapshot.kind === "linear" && !snapshot.project ? "Choose its Linear project on its board."
         : snapshot.syncedAt === null ? "Not read yet." : null);
       if (note) return { id: projectId, tracker: snapshot.kind, ready: null, flying: null, note };
+      const leads = await sources.leads?.(projectId);
+      const progress = await readLaneProgress(bb, snapshot, leads ?? [], lifetime.signal);
       const { board } = deriveBoard({ snapshot, connection: { status: "connected", message: "" }, settings: null, now: now(),
-        leads: await sources.leads?.(projectId) });
+        leads, ...progress });
       return { id: projectId, tracker: snapshot.kind, ready: board.ready.length,
         flying: board.lanes.filter((lane) => lane.state !== "landed").length, note: null };
     } catch {

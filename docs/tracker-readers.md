@@ -63,8 +63,20 @@ Enterprise reads remain separate hand checks.
 
 `registerLocalMarkdownReader` in `lib/local-markdown-reader.ts` reads the selected BB project's default checkout through the read-only `readLocalMarkdown` host method. It coalesces reads and reuses a complete snapshot for 30 seconds. It adds no background poller; the board watcher requests snapshots through `TrackerReader`. A failed read keeps the last complete data and timestamp and supplies a safe diagnostic.
 
-`localMarkdownHostContract` in `lib/local-markdown-contract.ts` takes `{ checkoutPath, bbProjectId, projectName }` and returns a `TrackerSnapshot`. `readLocalMarkdown` in `lib/local-markdown-host.ts` supplies the implementation. It reads `.scratch/<feature>/spec.md` and `issues/NN-*.md` on disk. Integration-branch reads are the subsequent lanes ticket's scope.
+`localMarkdownHostContract` in `lib/local-markdown-contract.ts` takes `{ checkoutPath, bbProjectId, projectName, branch? }` and returns a `TrackerSnapshot`. `readLocalMarkdown` in `lib/local-markdown-host.ts` supplies the implementation. Without `branch` it reads `.scratch/<feature>/spec.md` and `issues/NN-*.md` on disk. With `branch` it resolves the commit, lists its regular files with `git ls-tree`, and reads their contents with `git show`. It never switches the checkout or writes files.
 
 Issue IDs and `path` are repository-relative paths. Spec identifiers are feature slugs; ticket identifiers are `<feature>/NN`. Ticket `parentId` is the spec path. File URLs point to each markdown file. Both plain `Status:` / `Blocked by:` and bold `**Status:**` / `**Blocked by:**` metadata work. `Blocked by: NN, NN` resolves within the same feature, while `None` may have an explanatory suffix. Metadata in appended Comments is ignored. No source file is written.
 
 Status names preserve the source text. Done, resolved and closed are completed, in-progress and claimed are Working, and all other or missing statuses are Waiting. `ready-for-agent` also supplies the readiness label. `tests/local-markdown-reader.test.ts` drives the host with a temporary git fixture and observes snapshots and board output, including different main and integration-branch content, the 30-second refresh, and retention after host failure.
+
+## Lanes across trackers
+
+Lane Start, Stop, Resume and Merge use `TrackerReader`, including its opaque spec IDs in Lead metadata. For GitHub and Local markdown, the Start seed tells the Lead and its workers to update tickets as `docs/agents/issue-tracker.md` describes. Plugin code exposes no tracker writes.
+
+`readLaneProgress` supplies two optional inputs to `deriveBoard`: `laneSnapshots`, keyed by opaque spec ID, and `repository`. Local lane snapshots read the Lead's integration branch; the project snapshot remains the main checkout's state of record. A completed branch ticket still open or absent on main is In branch. A ticket already completed on main is Done. Commit messages never determine ticket state.
+
+`repositoryHostContract.readRepositoryState({ checkoutPath, branches })` returns only `hasRemote`, `mainUpdatedAt` and `mergedBranches`. It uses local Git ancestry against `refs/heads/main`, exposes no remote URLs and performs no remote operation. A failed read is unknown, never evidence of no remote. A no-remote lane lands when its branch is an ancestor of main or its main-checkout spec is completed, including when completion removes the ready label. Its completed tickets then read Done. A verified no-remote Local markdown checkout needs no GitHub login in Doctor.
+
+No-remote Merge sends `LOCAL_MERGE_MESSAGE` to the lane's own Lead and returns `{ threadId }`. Remote Merge retains the passing-checks PR gate and returns `{ number }`. The board only offers local Merge after all tickets reach In branch or Done. The Lead applies repo checks and review requirements before merging. Sending an order is not evidence of landing.
+
+`tests/tracker-lanes-plugin.test.ts` drives Start and Merge through the SDK testing host, using a temporary no-remote Git fixture and recorded GitHub responses. It checks branch-only progress, local merge messages without Git writes, landing by ancestry or a completed spec, and stale Status lines that remain Waiting despite completion claims in commit messages. Stale live example statuses remain a separate, unproven hand check.

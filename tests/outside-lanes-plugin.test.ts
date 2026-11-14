@@ -171,3 +171,19 @@ test("an outside lane has no lane buttons, and Start, Stop, Resume and Merge ref
   assert.deepEqual(sent, []);
   assert.deepEqual(harness.inspection.sdk.callsTo("threads.spawn"), []);
 });
+
+test("matching names a spec as a whole identifier and prefers the thread whose title names it", async () => {
+  const { matchOutsideLanes } = await import("../lib/outside-lanes.js");
+  const spec = (id: string, title: string) => ({ id: `uuid-${id}`, identifier: id, title, description: null, url: "", updatedAt: "",
+    parentId: null, state: { id: "s", name: "Todo", type: "unstarted" }, labels: [], assignees: [], inProject: true });
+  const thread = (id: string, title: string, firstMessage: string, createdAt: number, parentThreadId: string | null = null) =>
+    ({ id, title, firstMessage, createdAt, parentThreadId, squadron: false });
+  const lanes = matchOutsideLanes([spec("SIZE-947", "Squadron connects nothing to something"), spec("SIZE-94", "Older spec")], [
+    thread("thr_helper", "Evaluate squadron implementation", "Brief the Lead for SIZE-947.", 1),
+    thread("thr_lead", "Lead · Connect (SIZE-947)", "You are the Lead for SIZE-947. The integration branch `connect` exists.", 2),
+    thread("thr_worker", "Worker SIZE-957", "Build SIZE-957 for SIZE-947.", 3, "thr_lead"),
+  ]);
+  assert.deepEqual([...lanes], [["uuid-SIZE-947", "thr_lead"]], "SIZE-94 isn't named by SIZE-947, and the titled Lead wins over an older mention");
+  const { namedIntegrationBranches } = await import("../lib/outside-lanes.js");
+  assert.deepEqual(namedIntegrationBranches("You are the Lead. The integration branch `connect` already exists on origin."), ["connect"]);
+});

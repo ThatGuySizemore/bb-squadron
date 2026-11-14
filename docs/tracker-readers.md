@@ -80,3 +80,15 @@ Lane Start, Stop, Resume and Merge use `TrackerReader`, including its opaque spe
 No-remote Merge sends `LOCAL_MERGE_MESSAGE` to the lane's own Lead and returns `{ threadId }`. Remote Merge retains the passing-checks PR gate and returns `{ number }`. The board only offers local Merge after all tickets reach In branch or Done. The Lead applies repo checks and review requirements before merging. Sending an order is not evidence of landing.
 
 `tests/tracker-lanes-plugin.test.ts` drives Start and Merge through the SDK testing host, using a temporary no-remote Git fixture and recorded GitHub responses. It checks branch-only progress, local merge messages without Git writes, landing by ancestry or a completed spec, and stale Status lines that remain Waiting despite completion claims in commit messages. Stale live example statuses remain a separate, unproven hand check.
+
+## Outside lanes
+
+`createOutsideLaneReader` in [`lib/outside-lanes.ts`](../lib/outside-lanes.ts) finds lanes started outside Squadron. It lists the BB project's non-archived threads and reads each one's first message once, through `threads.events.list`. A thread counts when its title or first message names an open spec by identifier, repository path or title, as a whole word: `SIZE-94` never matches `SIZE-947`, and `bb-bot` never matches `bb-bots-sidebar`. Specs that already have a Squadron Lead or an open planning thread are skipped.
+
+Threads Squadron started are excluded: their origin is the plugin or they carry its metadata. So are the threads under them. A thread under another thread naming the same spec is that lane's worker, not a lane of its own. When several threads name a spec, a title match wins, then the oldest.
+
+The reader returns `LeadThread` rows with `outside: true` and `branchCandidates`: branches the first message names as the integration branch ("Integration branch: `integration/bb-bot`"), then the thread's own worktree branch. For Local markdown, `readLaneProgress` reads the first candidate that resolves and returns it in `BoardInput.branches`. Ticket states then come from that branch's `Status:` lines, exactly as for Squadron's lanes. Commit messages never decide them.
+
+`deriveBoard` marks the lane `outside`. It is Flying, PR open or Landed, never Stopped or merge-waits, and has no `localMerge`. `canMerge` is false, and `needsYou` offers no Resume or Merge for it. The board shows a "Started outside Squadron" tag and a read-only line in place of the actions. Start, Stop, Resume and Merge reject an outside lane's spec, and Squadron sends nothing to its thread.
+
+`tests/outside-lanes-plugin.test.ts` drives this through the SDK testing host, using a bb-bot-shaped thread and a temporary no-remote Git fixture with an integration branch.

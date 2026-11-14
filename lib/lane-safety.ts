@@ -23,6 +23,7 @@ export function registerLaneSafety(bb: BbPluginApi, lanes: LaneService,
   /** Caller already holds workers.withLane. Never changes review/worker fields. */
   async function strikeInLane(run: LaneRun, event: StrikeEvent) {
     const latest = current(run.bbProjectId, run.id);
+    if (latest.recoveryOnly) throw new Error("Recovery-only metadata grants no strike authority.");
     const result = evaluateStrike(latest, strikeEventSchema.parse(event), now());
     lanes.save({ ...latest, safety: result.run.safety });
     if (result.stopReason) await lifecycle.stopInLane(current(run.bbProjectId, run.id), result.stopReason);
@@ -34,7 +35,7 @@ export function registerLaneSafety(bb: BbPluginApi, lanes: LaneService,
    * reach here. Helper sends, lifecycle saves and status reads never do. */
   function actionInLane(projectId: string, laneId: string, threadId: string) {
     const run = current(projectId, laneId);
-    if (run.state !== "flying" && run.state !== "starting") return;
+    if (run.recoveryOnly || (run.state !== "flying" && run.state !== "starting")) return;
     if (threadId !== run.leadThreadId && !run.workers?.some((item) => item.threadId === threadId && item.state === "working")) return;
     const safety = run.safety ?? { strikes: [], actions: {}, nudges: {} };
     safety.actions[threadId] = (safety.actions[threadId] ?? 0) + 1;
@@ -46,7 +47,19 @@ export function registerLaneSafety(bb: BbPluginApi, lanes: LaneService,
     const limits = checkout.settings.settings.limits;
     for (const lane of lanes.list(projectId)) {
       await workers.withLane(lane.id, async () => {
-        const run = current(projectId, lane.id);
+        let run = current(projectId, lane.id);
+        if (run.recoveryOnly || (run.state !== "flying" && run.state !== "starting")) return;
+        // BB does not replay dispatch events missed while unloaded. A missing
+        // queued row proves neither dispatch nor cancellation: nudge afresh.
+        for (const [threadId, checkpoint] of Object.entries(run.safety?.nudges ?? {})) {
+          if (!checkpoint.queuedMessageId || checkpoint.stoppedAt !== run.stoppedAt) continue;
+          const rows = await bb.sdk.threads.queuedMessages.list({ threadId });
+          if (rows.some((row) => row.id === checkpoint.queuedMessageId)) continue;
+          const latest = current(projectId, lane.id);
+          if (latest.safety?.nudges[threadId]?.queuedMessageId !== checkpoint.queuedMessageId) continue;
+          delete latest.safety.nudges[threadId]; lanes.save(latest);
+        }
+        run = current(projectId, lane.id);
         const result = evaluateTimeLimits(run, limits, now());
         if (!result.commands.length) return;
         for (const command of result.commands) {
@@ -69,7 +82,7 @@ export function registerLaneSafety(bb: BbPluginApi, lanes: LaneService,
   }
   async function queuedNudge(threadId: string, queueId: string, dispatched: boolean) {
     for (const projectId of lanes.projects()) for (const run of lanes.list(projectId)) {
-      if (run.safety?.nudges[threadId]?.queuedMessageId !== queueId) continue;
+      if (run.recoveryOnly || run.safety?.nudges[threadId]?.queuedMessageId !== queueId) continue;
       await workers.withLane(run.id, async () => {
         const latest = current(projectId, run.id);
         const checkpoint = latest.safety?.nudges[threadId];

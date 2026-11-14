@@ -81,3 +81,8 @@ test("integrated work is never a stuck worker, and stale stopped reports do not 
   run.workers![0].state = "working"; run.state = "stopped";
   assert.equal(evaluateStrike(run, event, 20).count, 0);
 });
+test("metadata-only recovery rows grant neither time nudges nor strike authority", () => {
+  const run = { ...lane(), recoveryOnly: true };
+  assert.deepEqual(evaluateTimeLimits(run, limits, 28_800_001).commands, []);
+  assert.equal(evaluateStrike(run, { ticketId: "FIX-2", eventId: "metadata", kind: "stuck", summary: "Untrusted metadata." }, 10).count, 0);
+});

@@ -13,7 +13,7 @@ export function evaluateStrike(lane: LaneRun, event: StrikeEvent, now: number): 
   // Working red tests and compilation errors have no reported deliverable.
   const eligible = event.kind === "stuck" ? ["working", "spawning", "failed"].includes(worker.state)
     : !!event.commit && worker.commit === event.commit && worker.state === "reported";
-  if (run.state !== "flying" || duplicate || !eligible) return { run, count: count() };
+  if (run.recoveryOnly || run.state !== "flying" || duplicate || !eligible) return { run, count: count() };
   safety.strikes.push({ ...event, at: now });
   return { run, count: count(), ...(count() >= 2 ? { stopReason: `${event.ticketId} has two strikes. ${event.summary}` } : {}) };
 }
@@ -22,7 +22,7 @@ export type TimeCommand = { type: "nudge" | "stop"; threadId: string; text: stri
 export function evaluateTimeLimits(lane: LaneRun, limits: SquadronSettings["limits"], now: number): { run: LaneRun; commands: TimeCommand[] } {
   const run = structuredClone(lane);
   const commands: TimeCommand[] = [];
-  if (run.state !== "flying" && run.state !== "starting") return { run, commands };
+  if (run.recoveryOnly || (run.state !== "flying" && run.state !== "starting")) return { run, commands };
   const safety = run.safety ??= { strikes: [], actions: {}, nudges: {} };
   const targets = [
     { threadId: run.leadThreadId, label: run.specId, startedAt: run.startedAt, limit: limits.laneTimeLimitMs },

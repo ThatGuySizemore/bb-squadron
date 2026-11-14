@@ -40,6 +40,7 @@ export async function laneHost(t: import("node:test").TestContext, options: { qu
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const queued = new Map<string, number>();
   const reusedEnvironments = new Map<string, string>();
+  const nudgeQueue = new Map<string, ReturnType<typeof makeQueueEntry>>();
   const nudgeRows: ReturnType<typeof makeQueueEntry>[] = [];
   const sends: Array<{ threadId: string; text: string }> = [];
   const pushes: Push[] = [];
@@ -64,7 +65,7 @@ export async function laneHost(t: import("node:test").TestContext, options: { qu
       } },
       threads: {
         queuedMessages: {
-          list: async ({ threadId }) => Array.from({ length: queued.get(threadId) ?? 0 }, (_, i) => makeQueueEntry({ id: `queued-${threadId}-${i}`, threadId })),
+          list: async ({ threadId }) => [...Array.from({ length: queued.get(threadId) ?? 0 }, (_, i) => makeQueueEntry({ id: `queued-${threadId}-${i}`, threadId })), ...[...nudgeQueue.values()].filter((row) => row.threadId === threadId)],
           send: async ({ threadId }) => {
             queued.set(threadId, Math.max(0, (queued.get(threadId) ?? 0) - 1));
             const value = threads.get(threadId)!;
@@ -76,7 +77,7 @@ export async function laneHost(t: import("node:test").TestContext, options: { qu
           sends.push({ threadId: args.threadId, text: args.input.map((part) => "text" in part ? part.text : "").join("") });
           if (options.queueNudges && args.input.some((part) => "text" in part && part.text.includes("Act at once"))) {
             const entry = makeQueueEntry({ id: `nudge-${nudgeRows.length}`, threadId: args.threadId });
-            nudgeRows.push(entry);
+            nudgeRows.push(entry); nudgeQueue.set(entry.id, entry);
             return { ok: true as const, delivery: "queued" as const, queuedMessage: entry };
           }
           return { ok: true as const, delivery: "sent" as const };
@@ -113,5 +114,5 @@ export async function laneHost(t: import("node:test").TestContext, options: { qu
     await harness.inspection.registrations.hooks["message.dispatch"]!(makeMessageDispatchHookContext({ thread: { id: threadId }, project: { id: "proj-one" },
       initiator: from.initiator, senderThreadId: from.senderThreadId ?? null, ...(from.originPluginId ? { originPluginId: from.originPluginId } : {}) }));
   const settle = async () => { for (let i = 0; i < 20; i++) await new Promise((resolve) => setTimeout(resolve, 2)); };
-  return { nudgeRows, safety, startWriteHeld, bb: bb as BbPluginApi, harness, call, board, rpc, dispatch, settle, mutations, threads, queued, sends, pushes, levels };
+  return { nudgeQueue, nudgeRows, safety, startWriteHeld, bb: bb as BbPluginApi, harness, call, board, rpc, dispatch, settle, mutations, threads, queued, sends, pushes, levels };
 }

@@ -160,3 +160,22 @@ test("saved review failures require a Lead summary, preserve B3 one fix/second l
   assert.equal(result.count, 2); assert.equal(result.stopped, true);
   assert.match((await host.board()).lanes[0].stopReason!, /Lead: F1 is unresolved at review round 1/);
 });
+
+test("a queued nudge whose dispatch was missed during reload gets a fresh nudge before any stop", async (t) => {
+  let now = 1_000_000;
+  const options = { now: () => now, queueNudges: true };
+  const host = await laneHost(t, options); await host.rpc("lanes.start");
+  await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  now += 10_800_001; await host.safety.check("proj-one");
+  host.nudgeQueue.clear(); // BB dispatched or canceled it while Squadron was unloaded.
+  options.queueNudges = false;
+  let recovered!: Awaited<ReturnType<typeof import("../server.js").registerSquadron>>;
+  const next = await host.harness.lifecycle.reload(async (api) => { recovered = await (await import("../server.js")).registerSquadron(api, { now: () => now }); });
+  now += 60_000; await recovered.safety.check("proj-one");
+  assert.equal(host.sends.filter((item) => item.text.includes("Act at once")).length, 2);
+  let board = await next.harness.behavior.callRpc("board", { projectId: "proj-one" }) as import("../lib/board-model.js").Board;
+  assert.equal(board.lanes[0].state, "flying");
+  now += 60_000; await recovered.safety.check("proj-one");
+  board = await next.harness.behavior.callRpc("board", { projectId: "proj-one" }) as import("../lib/board-model.js").Board;
+  assert.equal(board.lanes[0].state, "stopped");
+});

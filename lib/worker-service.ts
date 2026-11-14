@@ -33,7 +33,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
   }
   function binding(projectId: string, threadId: string) {
     for (const lane of lanes.list(projectId)) {
-      if (lane.state === "landed" || lane.recoveryOnly) continue;
+      if (lane.state === "landed" || lane.state === "canceled" || lane.recoveryOnly) continue;
       if (lane.leadThreadId === threadId) return { lane, role: "Lead" as const, worker: null };
       const worker = lane.workers?.find((item) => item.threadId === threadId);
       if (worker) return { lane, role: "Worker" as const, worker };
@@ -203,7 +203,48 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       return { workerId: worker.id, threadId: worker.threadId, branch: worker.branch, ...(worker.writeError ? { message: worker.writeError } : {}) };
     });
   }
+  async function ask(text: string, context: PluginAgentToolContext) {
+    const bound = await authorize(context);
+    if (bound.role !== "Worker") throw new Error("Only workers ask the owner through Squadron. The Lead keeps the lane going and reads answers in its workers' threads.");
+    return serialize(bound.lane.id, async () => {
+      await authorize(context);
+      const run = current(context.projectId, bound.lane.id);
+      const worker = run.workers?.find((item) => item.threadId === context.threadId);
+      if (run.state !== "flying" || !worker || worker.state !== "working") throw new Error("Only a working worker in a flying lane can ask the owner.");
+      if (worker.question && worker.question.text !== text) throw new Error("Your earlier question is still open. Wait for the owner's answer in this thread.");
+      worker.question ??= { id: randomUUID(), text, askedAt: now() };
+      saveWorkers(run);
+      return { state: "question", question: worker.question.text,
+        message: "Your question is in the owner's Needs you. Finish your turn now; the owner answers in this thread. The rest of the lane keeps going." };
+    });
+  }
+  /** BB's dispatch checkpoint saw a message reach a thread. Only the owner's own
+   * typed message clears a worker's question: no sender thread, no plugin origin. */
+  function ownerMessage(projectId: string, threadId: string, from: { initiator: string; senderThreadId: string | null; originPluginId?: string | null }) {
+    if (from.initiator !== "user" || from.senderThreadId !== null || from.originPluginId) return;
+    const bound = binding(projectId, threadId);
+    if (!bound?.worker?.question) return;
+    void serialize(bound.lane.id, async () => {
+      const run = current(projectId, bound.lane.id);
+      const worker = run.workers?.find((item) => item.threadId === threadId);
+      if (!worker?.question) return;
+      delete worker.question;
+      saveWorkers(run);
+    }).catch((error) => { bb.log.warn(`Lane ${bound.lane.id} worker ${bound.worker?.id} answer: ${diagnostic(error)}`); });
+  }
+  // BB's Send-now dispatches a queued row without the message.dispatch pass.
+  // The row's dispatch event carries its author, so the same owner-only rule
+  // applies; BB supplies the thread's project.
+  bb.events.on("message.dispatched", async ({ entry }) => {
+    if (entry.initiator !== "user" || entry.senderThreadId !== null || entry.originPluginId) return;
+    try {
+      const thread = await bb.sdk.threads.get({ threadId: entry.threadId, signal: lifetime.signal });
+      if (!thread.projectId || !isActiveProjectThread(thread, entry.threadId, thread.projectId)) return;
+      ownerMessage(thread.projectId, entry.threadId, entry);
+    } catch (error) { if (!lifetime.signal.aborted) bb.log.warn(`Owner answer: ${diagnostic(error)}`); }
+  });
   async function report(input: z.infer<typeof reportSchema>, context: PluginAgentToolContext) {
+    if (input.type === "question") return ask(input.text, context);
     const bound = await authorize(context);
     return serialize(bound.lane.id, async () => {
       await authorize(context);
@@ -212,6 +253,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       const worker = input.type === "done" ? run.workers?.find((item) => item.threadId === context.threadId)
         : run.workers?.find((item) => item.ticketId === input.ticketId);
       if (!worker || (input.type === "done" ? bound.role !== "Worker" : bound.role !== "Lead")) throw new Error("This report is not authorized for this role or ticket.");
+      if (input.type === "done" && worker.question) throw new Error("Your question is still open. Wait for the owner's answer in this thread before reporting done.");
       const env = await environment(run, worker);
       if (!env || !worker.branch) throw new Error("The worker's worktree is still provisioning. Retry this report when it is ready.");
       if (worker.commit && worker.commit !== input.commit && (input.type === "integrated" || worker.state === "integrated")) throw new Error("This report names a different commit. A fresh review is required.");
@@ -247,7 +289,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
   }
   bb.agents.registerTool({ name: "squadron_spawn_worker", description: "Start one frontier ticket as a child worker, within this Lead's bound lane and worker cap.",
     parameters: spawnWorkerSchema, execute: async ({ ticketId }, context) => JSON.stringify(await spawn(ticketId, context)) });
-  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests. The bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
+  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests, or ask the owner a question that waits in Needs you. The bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
     parameters: reportSchema, execute: async (input, context) => JSON.stringify(await report(input, context)) });
   bb.agents.registerTool({ name: "squadron_status", description: "Read this thread's trusted Squadron lane, workers and frontier. No Linear write.", parameters: z.object({}).strict(),
     execute: async (_input, context) => {
@@ -264,7 +306,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
     } });
   bb.rpc.register(workerContract, { "workers.route": async ({ projectId, specId, ticketId, route }, context) => {
     if (context.experimental_caller.kind !== "client") throw new Error("Change routes from the Squadron board.");
-    const run = lanes.list(projectId).find((item) => item.specId === specId);
+    const run = lanes.list(projectId).find((item) => item.specId === specId && item.state !== "canceled");
     if (!run) throw new Error("This lane no longer exists.");
     return serialize(run.id, async () => {
       const latest = current(projectId, run.id);
@@ -329,5 +371,5 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       }
     }
   }
-  return { toolsForThread, canDispatch, withLane: serialize, reconcileInLane };
+  return { toolsForThread, canDispatch, ownerMessage, withLane: serialize, reconcileInLane };
 }

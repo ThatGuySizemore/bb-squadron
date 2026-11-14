@@ -8,14 +8,14 @@ const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "ready", "working", "question", "review", "branch", "failed", "done"]),
   routeChoices: z.array(routeSchema).optional(), reportPending: z.boolean().optional(), writeError: z.string().optional(),
-  minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
+  minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), questionId: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string().nullable(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
   pr: z.object({ number: z.number(), checks: z.enum(["pending", "passing", "failing"]), url: z.string() }).optional(),
-  stopReason: z.string().optional(), landedAt: z.number().optional(),
+  stopReason: z.string().optional(), stoppedAt: z.number().optional(), landedAt: z.number().optional(),
   writeError: z.string().optional(),
 });
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
@@ -26,6 +26,10 @@ const boardSchema = z.object({
     id: z.string(), title: z.string(), ticketCount: z.number(), routes: z.array(route), blockedBy: z.array(z.string()),
     acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
     startReason: z.string().nullable().optional(),
+    /** The integration branch kept from a lane the owner canceled. */
+    keptBranch: z.string().optional(),
+    /** A Linear write the Helper couldn't queue when the owner canceled its lane. */
+    writeError: z.string().optional(),
   })),
   unplanned: z.array(z.object({
     id: z.string(), title: z.string(), labels: z.array(z.string()), url: z.string().optional(), under: z.string().optional(),
@@ -61,6 +65,8 @@ export type NeedsYouKind = "setup" | "question" | "stopped" | "write" | "merge";
 
 export interface NeedsYouItem {
   key: string;
+  /** Identity for its one push: a recurrence of the same key after it cleared gets a new one. */
+  notifyKey: string;
   kind: NeedsYouKind;
   /** The spec or issue the item is about, or "" when none. */
   specId: string;
@@ -75,9 +81,9 @@ export interface NeedsYouItem {
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
 export function needsYou(board: Board): NeedsYouItem[] {
-  const items: NeedsYouItem[] = [];
+  const items: Array<Omit<NeedsYouItem, "notifyKey"> & { notifyKey?: string }> = [];
   if (board.linear?.state === "disconnected" || board.linear?.state === "unbound") {
-    items.push({ key: "setup", kind: "setup", specId: "", text: board.linear.message, threadId: null });
+    items.push({ key: "setup", notifyKey: `setup:${board.linear.state}`, kind: "setup", specId: "", text: board.linear.message, threadId: null });
   }
   for (const write of board.writes?.blocked ?? []) {
     items.push({
@@ -91,6 +97,9 @@ export function needsYou(board: Board): NeedsYouItem[] {
     items.push({ key: "write:more", kind: "write", specId: "", threadId: null,
       text: more > 0 ? `${more} more Linear ${more === 1 ? "write" : "writes"} couldn't go through. Retry the ones above first.`
         : "More Linear writes couldn't go through. Retry the ones above first." });
+  }
+  for (const spec of board.ready) {
+    if (spec.writeError) items.push({ key: `lane-write:${spec.id}`, kind: "write", specId: spec.id, threadId: null, text: spec.writeError });
   }
   for (const lane of board.lanes) {
     if (lane.writeError) items.push({ key: `lane-write:${lane.specId}`, kind: "write", specId: lane.specId,
@@ -107,6 +116,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
     if (lane.state === "stopped") {
       items.push({
         key: `stopped:${lane.specId}`,
+        notifyKey: `stopped:${lane.specId}:${lane.stoppedAt ?? 0}`,
         kind: "stopped",
         specId: lane.specId,
         text: lane.stopReason ?? "The lane stopped.",
@@ -119,6 +129,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       if (ticket.state === "question" && ticket.threadId) {
         items.push({
           key: `question:${ticket.id}`,
+          notifyKey: `question:${ticket.id}:${ticket.questionId ?? ""}`,
           kind: "question",
           specId: lane.specId,
           ticketId: ticket.id,
@@ -129,7 +140,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
     }
   }
   const order: Record<NeedsYouKind, number> = { setup: 0, stopped: 1, question: 2, write: 3, merge: 4 };
-  return items.sort((a, b) => order[a.kind] - order[b.kind]);
+  return items.map((item) => ({ ...item, notifyKey: item.notifyKey ?? item.key })).sort((a, b) => order[a.kind] - order[b.kind]);
 }
 
 /** Tickets grouped into columns by dependency depth, blockers first. */

@@ -10,6 +10,8 @@ import { registerRestart } from "./lib/restart-service.js";
 import { registerWorkers } from "./lib/worker-service.js";
 import { registerLanes } from "./lib/lane-service.js";
 import { registerSignedCommentAvatars } from "./lib/linear-avatar.js";
+import { registerNeedsYouNotifications } from "./lib/needs-you-notifier.js";
+import { registerLifecycle } from "./lib/lane-lifecycle.js";
 
 export default async function plugin(bb: BbPluginApi) {
   registerSignedCommentAvatars(bb);
@@ -20,13 +22,16 @@ export default async function plugin(bb: BbPluginApi) {
   const lanes = registerLanes(bb, { connection: () => linear.getConnection(), mirror, doctor, outbox });
   const workers = registerWorkers(bb, { connection: () => linear.getConnection(), mirror, outbox }, lanes);
   registerRestart(bb, { mirror }, lanes, workers);
+  registerLifecycle(bb, { mirror, outbox }, lanes, workers);
   const planning = registerPlanning(bb, { connection: () => linear.getConnection(), mirror, outbox });
   bb.agents.configure((context) => ({
     tools: [...outbox.toolsForThread(context.project.id, context.thread.id), ...workers.toolsForThread(context.project.id, context.thread.id)],
     skills: planning.isBound(context.project.id, context.thread.id) ? ["squadron-planner"] : [],
   }));
-  registerBoard(bb, { connection: () => linear.getConnection(), mirror, writes: (id) => outbox.getHealth(id), lanes });
+  const needsYou = registerNeedsYouNotifications(bb, lanes);
+  registerBoard(bb, { connection: () => linear.getConnection(), mirror, writes: (id) => outbox.getHealth(id), lanes, needsYou });
   bb.experimental_hooks.on("message.dispatch", (context) => {
+    workers.ownerMessage(context.project.id, context.thread.id, context);
     if (context.originPluginId !== bb.pluginId) return { action: "proceed" };
     return workers.canDispatch(context.project.id, context.thread.id) || planning.isBound(context.project.id, context.thread.id)
       ? { action: "proceed" } : { action: "reject", message: "Squadron couldn't confirm this thread's active service binding. Check its lane or planning thread before resuming." };

@@ -154,9 +154,12 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
   // Start reconciliation owns the lane fields and preserves that progress.
   function saveStart(run: LaneRun) {
     const latest = list(run.bbProjectId).find((item) => item.id === run.id);
-    const ownerHeld = latest && (latest.state === "landed" || "canceledAt" in latest || "stoppedAt" in latest);
-    save({ ...latest, ...run, writeError: run.writeError, stopReason: run.stopReason, startFailure: run.startFailure, ...(ownerHeld ? { state: latest.state, stopReason: latest.stopReason } : {}), ...(latest?.workers ? { workers: latest.workers } : {}),
-      ...(latest?.routeOverrides ? { routeOverrides: latest.routeOverrides } : {}) });
+    // The owner's Stop or Cancel during a start pass wins over that pass.
+    const owner = latest && (latest.state === "canceled" || (latest.state === "stopped" && latest.stoppedAt !== undefined && latest.stoppedAt !== run.stoppedAt));
+    save({ ...latest, ...run, writeError: run.writeError, stopReason: run.stopReason, startFailure: run.startFailure, ...(latest?.workers ? { workers: latest.workers } : {}),
+      ...(latest?.routeOverrides ? { routeOverrides: latest.routeOverrides } : {}),
+      ...(owner ? { state: latest.state, stopReason: latest.stopReason, stoppedAt: latest.stoppedAt, canceledAt: latest.canceledAt } : {}) });
+    if (owner) Object.assign(run, { state: latest.state });
   }
 
   async function missingStartReceipt(run: LaneRun) {
@@ -166,10 +169,27 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     }
     return false;
   }
-  async function queueStartWrites(run: LaneRun): Promise<LaneRun> {
+
+  // The owner's Cancel ends a lane's start effects. A start write already
+  // being queued is tracked so Cancel can wait for it before choosing its own.
+  const startWriting = new Map<string, Promise<LaneRun>>();
+  const canceled = (run: LaneRun) => list(run.bbProjectId).find((item) => item.id === run.id)?.state === "canceled";
+  function queueStartWrites(run: LaneRun): Promise<LaneRun> {
+    const running = writeStart(run);
+    startWriting.set(run.id, running);
+    void running.finally(() => { if (startWriting.get(run.id) === running) startWriting.delete(run.id); }).catch(() => undefined);
+    return running;
+  }
+  /** Resolves once no start write for this lane is in flight. Trusted lifecycle use. */
+  async function settleStartWrites(laneId: string): Promise<void> {
+    await startWriting.get(laneId)?.catch(() => undefined);
+  }
+  async function writeStart(run: LaneRun): Promise<LaneRun> {
     if (await missingStartReceipt(run)) return run;
+
     let phase = "queue-status";
     try {
+      if (canceled(run)) return run;
       if (!run.startStateId) throw new Error("The lane's In Progress state is unavailable.");
       // Reusing a key reconciles a call that queued successfully before its
       // response was lost. Receipt IDs never assert successful delivery.
@@ -177,6 +197,7 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
         operation: { type: "status", issueId: run.specIssueId, stateId: run.startStateId } });
       run.startWrites = { ...run.startWrites, status: status.id };
       saveStart(run);
+      if (canceled(run)) return run;
       phase = "queue-comment";
       const avatar = avatarUrl();
       const comment = await sources.outbox.enqueue({ bbProjectId: run.bbProjectId, expectedWorkspaceId: run.workspaceId, dedupeKey: `lane:${run.id}:started-comment`,
@@ -189,6 +210,8 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     } catch (error) {
       if (lifetime.signal.aborted) return run;
       warn(run, phase, error);
+      // After Cancel the Lead is not active; Cancel reports its own writes.
+      if (canceled(run)) return run;
       run.writeError = `The Helper couldn't queue the ${phase === "queue-status" ? "spec status" : "signed Lead comment"}. The Lead remains active. Check the Linear connection and lane write receipts before retrying.`;
       saveStart(run);
     }
@@ -362,6 +385,6 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       try { await delay(15_000, undefined, { signal: stop }); } catch { return; }
     }
   } });
-  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile, saveRecovered, projects, setRecoveryGate, withProject: serialize };
+  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile, saveRecovered, projects, setRecoveryGate, withProject: serialize, settleStartWrites };
 }
 export type LaneService = ReturnType<typeof registerLanes>;

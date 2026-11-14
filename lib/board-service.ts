@@ -13,6 +13,7 @@ import type { OutboxHealth } from "./linear-outbox-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
 import type { LaneService } from "./lane-service.js";
+import type { NeedsYouNotifications } from "./needs-you-notifier.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
@@ -24,6 +25,8 @@ export interface BoardSources {
   /** The outbox's safe health read for one BB project. */
   writes?(bbProjectId: string): Promise<OutboxHealth>;
   lanes?: Pick<LaneService, "list" | "onChange" | "autoStart">;
+  /** Sees every computed board, to push each new Needs-you item once. */
+  needsYou?: Pick<NeedsYouNotifications, "observe">;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -80,6 +83,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       settings: entry.settings.value, writes, now: now(), startedAt, lanes: sources.lanes?.list(projectId),
       autoStart: sources.lanes?.autoStart(projectId),
     });
+    try { sources.needsYou?.observe(projectId, board); }
+    catch (error) { bb.log.warn(`Needs-you notifications: ${error instanceof Error ? error.name : "unknown"}`); }
     for (const command of commands) {
       if (command.type === "sync" && !entry.catchingUp && !lifetime.signal.aborted) {
         // A failed read is recorded on the snapshot; either way the board is read again.

@@ -1,0 +1,294 @@
+import type { BbPluginApi } from "@get-bb/plugin-sdk";
+// Adapter patterns adapted from bb-plugin-linear (MIT). See THIRD_PARTY_NOTICES.md.
+import { createHash, randomBytes } from "node:crypto";
+import { z } from "zod";
+import { linearContract, type LinearConnectionState } from "./linear-contract.js";
+import { linearConnectionChanged, publishSquadronSignal } from "./realtime-contract.js";
+
+const messages = {
+  not_connected: "Connect Linear in Squadron settings.",
+  authentication: "Linear rejected the credential. Reconnect in Squadron settings.",
+  unavailable: "Linear is unavailable. Try again shortly.",
+  invalid_response: "Linear returned an invalid response. Try again shortly.",
+  graphql: "Linear could not complete the request.",
+  configuration: "Configure the Squadron OAuth app in settings first.",
+  rate_limited: "Linear's request budget is exhausted. Try again after the reset.",
+  workspace_changed: "Reconnect to the queued write's original Linear workspace before retrying.",
+  auth_mode_changed: "The queued write needs explicit recovery after the Linear auth mode changed.",
+} as const;
+
+export class LinearRequestError extends Error {
+  readonly name = "LinearRequestError";
+  constructor(readonly code: keyof typeof messages, readonly retryAfterMs: number | null = null) { super(messages[code]); }
+}
+
+const identityResponse = z.object({
+  viewer: z.object({ id: z.string(), name: z.string() }),
+  organization: z.object({ id: z.string(), name: z.string() }),
+});
+const credentialsSchema = z.object({ accessToken: z.string().min(1), refreshToken: z.string().min(1), expiresAt: z.number().finite() });
+const tokenResponseSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive(), token_type: z.literal("Bearer") });
+
+export interface LinearAuth {
+  /** Public reads reuse identity for at most a minute. throwOnFailure forces
+   * verification for scoped delivery/recovery; cached identity grants no write. */
+  getConnection(options?: { throwOnFailure: boolean }): Promise<LinearConnectionState>;
+  graphql<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal, expected?: { workspaceId: string; mode: "app" | "personal" }): Promise<T>;
+}
+
+export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fetch; now?: () => number } = {}): LinearAuth {
+  const request = options.fetch ?? fetch;
+  const now = options.now ?? Date.now;
+  const lifetime = new AbortController();
+  const requestSignal = (signal?: AbortSignal) => AbortSignal.any([
+    lifetime.signal, AbortSignal.timeout(20_000), ...(signal ? [signal] : []),
+  ]);
+  const settings = bb.settings.define({
+    linearApiKey: { type: "string", label: "Linear personal API key", secret: true },
+    linearOAuthClientId: { type: "string", label: "Linear OAuth client ID", default: "" },
+    linearOAuthClientSecret: { type: "string", label: "Linear OAuth client secret", secret: true },
+    linearCredentials: { type: "string", label: "Linear app credentials", description: "Managed by Connect Linear. Access token, refresh token and expiry are stored together.", secret: true },
+  });
+  const pending = new Map<string, { verifier: string; redirectUri: string; expiresAt: number }>();
+  let refreshing: Promise<string> | null = null;
+  let generation = 0;
+  let identityCache: { generation: number; at: number; value: LinearConnectionState } | null = null;
+  let identityPending: { generation: number; promise: Promise<LinearConnectionState> } | null = null;
+  let budgetResetAt = 0;
+  let expectedTokenWrite: string | null = null;
+  let credentialWrites: Promise<unknown> = Promise.resolve();
+  function writeCredential<T>(write: () => Promise<T>): Promise<T> {
+    const result = credentialWrites.then(write);
+    credentialWrites = result.catch(() => undefined);
+    return result;
+  }
+  async function setInternalCredentials(value: string, reconnect = false) {
+    // A new OAuth installation can belong to another workspace. Token renewal
+    // keeps the existing identity, but reconnect invalidates all in-flight work.
+    if (reconnect) { generation++; pending.clear(); }
+    identityCache = null;
+    expectedTokenWrite = value;
+    try { await settings.experimental_set({ linearCredentials: value }); }
+    finally { expectedTokenWrite = null; }
+  }
+  settings.onChange((next, previous) => {
+    identityCache = null;
+    // Match only our exact token update. An external change during that write
+    // must still invalidate stale work, even while experimental_set is pending.
+    const internal = expectedTokenWrite !== null && next.linearCredentials === expectedTokenWrite &&
+      next.linearApiKey === previous.linearApiKey &&
+      next.linearOAuthClientId === previous.linearOAuthClientId &&
+      next.linearOAuthClientSecret === previous.linearOAuthClientSecret;
+    if (!internal) { generation++; pending.clear(); budgetResetAt = 0; }
+    publishSquadronSignal(bb.realtime, linearConnectionChanged, null);
+  });
+  function parseCredentials(value: string) {
+    try { return credentialsSchema.parse(JSON.parse(value)); }
+    catch { throw new LinearRequestError("authentication"); }
+  }
+  async function authorization(): Promise<string> {
+    const config = await settings.get();
+    if (!config.linearCredentials) {
+      if (!config.linearApiKey) throw new LinearRequestError("not_connected");
+      return config.linearApiKey;
+    }
+    const credential = parseCredentials(config.linearCredentials);
+    if (credential.expiresAt > now() + 60_000) return `Bearer ${credential.accessToken}`;
+    if (!refreshing) {
+      const expectedGeneration = generation;
+      refreshing = (async () => {
+        try {
+          if (!config.linearOAuthClientId || !config.linearOAuthClientSecret) throw new LinearRequestError("configuration");
+          const response = await request("https://api.linear.app/oauth/token", {
+            method: "POST", signal: requestSignal(), headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: credential.refreshToken,
+              client_id: config.linearOAuthClientId, client_secret: config.linearOAuthClientSecret }).toString(),
+          });
+          if (response.status === 429) {
+            const retry = Number(response.headers.get("retry-after"));
+            const delay = retry > 0 && Number.isFinite(retry) ? retry * 1000 : 60_000;
+            budgetResetAt = Math.max(budgetResetAt, now() + delay);
+            throw new LinearRequestError("rate_limited", budgetResetAt - now());
+          }
+          if ([400, 401, 403].includes(response.status)) throw new LinearRequestError("authentication");
+          if (!response.ok) throw new LinearRequestError("unavailable");
+          const token = tokenResponseSchema.parse(await response.json());
+          await writeCredential(async () => {
+            const current = await settings.get();
+            if (generation !== expectedGeneration || current.linearCredentials !== config.linearCredentials) throw new LinearRequestError("not_connected");
+            await setInternalCredentials(JSON.stringify({
+              accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: now() + token.expires_in * 1000,
+            }));
+          });
+          return `Bearer ${token.access_token}`;
+        } catch (error) {
+          if (error instanceof LinearRequestError) throw error;
+          throw new LinearRequestError("unavailable");
+        }
+        finally { refreshing = null; }
+      })();
+    }
+    return refreshing;
+  }
+  const callbackPath = `/api/v1/plugins/${bb.pluginId}/http/linear/callback`;
+  const redirectUri = () => new URL(callbackPath, bb.server.experimental_appUrl ?? bb.server.loopbackBaseUrl).href;
+  async function connect() {
+    const config = await settings.get();
+    if (!config.linearOAuthClientId || !config.linearOAuthClientSecret) throw new LinearRequestError("configuration");
+    pending.clear();
+    const state = randomBytes(32).toString("base64url");
+    const verifier = randomBytes(32).toString("base64url");
+    const callback = redirectUri();
+    pending.set(state, { verifier, redirectUri: callback, expiresAt: now() + 600_000 });
+    const url = new URL("https://linear.app/oauth/authorize");
+    url.search = new URLSearchParams({
+      client_id: config.linearOAuthClientId, redirect_uri: callback, response_type: "code",
+      actor: "app", scope: "read,write", state,
+      code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256",
+    }).toString();
+    return { url: url.href };
+  }
+  // OAuth callbacks arrive from Linear, outside BB's local-origin check. The
+  // random, short-lived, one-use state binds this route to a local Connect call.
+  bb.http.route("GET", "/linear/callback", async (context) => {
+    context.header("Cache-Control", "no-store");
+    context.header("Referrer-Policy", "no-referrer");
+    const state = context.req.query("state") ?? "";
+    const attempt = pending.get(state);
+    pending.delete(state);
+    if (!attempt || attempt.expiresAt <= now() || !context.req.query("code") || context.req.query("error")) {
+      return context.text("Linear connection was not completed. Return to Squadron settings and try again.", 400);
+    }
+    try {
+      const expectedGeneration = generation;
+      const config = await settings.get();
+      if (!config.linearOAuthClientId || !config.linearOAuthClientSecret) throw new LinearRequestError("configuration");
+      const response = await request("https://api.linear.app/oauth/token", {
+        method: "POST", signal: requestSignal(), headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "authorization_code", code: context.req.query("code")!,
+          client_id: config.linearOAuthClientId, client_secret: config.linearOAuthClientSecret,
+          redirect_uri: attempt.redirectUri, code_verifier: attempt.verifier,
+        }).toString(),
+      });
+      if (!response.ok) throw new LinearRequestError("authentication");
+      const token = tokenResponseSchema.parse(await response.json());
+      await writeCredential(async () => {
+        if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
+        await setInternalCredentials(JSON.stringify({
+          accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: now() + token.expires_in * 1000,
+        }), true);
+      });
+      return context.text("Linear connected. Return to Squadron settings.");
+    } catch {
+      return context.text("Linear connection failed. Return to Squadron settings and try again.", 400);
+    }
+  }, { auth: "none" });
+  bb.onDispose(() => { generation++; pending.clear(); lifetime.abort(); });
+  async function graphql<T>(query: string, variables: Record<string, unknown> = {}, signal?: AbortSignal, expected?: { workspaceId: string; mode: "app" | "personal" }): Promise<T> {
+    if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());
+    const expectedGeneration = generation;
+    if (expected) {
+      const connection = await getConnection({ throwOnFailure: true });
+      if (connection.status !== "connected") throw new LinearRequestError("not_connected");
+      if (connection.workspace?.id !== expected.workspaceId) throw new LinearRequestError("workspace_changed");
+      if (connection.mode !== expected.mode) throw new LinearRequestError("auth_mode_changed");
+    }
+    if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());
+    const header = await authorization();
+    if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
+    signal?.throwIfAborted();
+    let response: Response;
+    try {
+      response = await request("https://api.linear.app/graphql", {
+        method: "POST", signal: requestSignal(signal),
+        headers: { "Content-Type": "application/json", Authorization: header },
+        body: JSON.stringify({ query, variables }),
+      });
+    } catch { throw new LinearRequestError("unavailable"); }
+    for (const bucket of ["requests", "complexity"]) {
+      const remaining = response.headers.get(`x-ratelimit-${bucket}-remaining`);
+      if (remaining !== null && Number(remaining) <= 0) {
+        const reset = Number(response.headers.get(`x-ratelimit-${bucket}-reset`));
+        budgetResetAt = Math.max(budgetResetAt, Number.isFinite(reset) && reset > now() ? reset : now() + 60_000);
+      }
+    }
+    if (response.status === 429) {
+      const retry = Number(response.headers.get("retry-after"));
+      budgetResetAt = Math.max(budgetResetAt, now() + (retry > 0 && Number.isFinite(retry) ? retry * 1000 : 60_000));
+      throw new LinearRequestError("rate_limited", budgetResetAt - now());
+    }
+    if (response.status === 401 || response.status === 403) {
+      identityCache = null;
+      throw new LinearRequestError("authentication");
+    }
+    let body: { data?: T; errors?: unknown[] };
+    try { body = await response.json(); }
+    catch { throw new LinearRequestError("invalid_response"); }
+    if (!body || typeof body !== "object") throw new LinearRequestError("invalid_response");
+    if (Array.isArray(body.errors) && body.errors.length) {
+      if (body.errors.some((error) => error && typeof error === "object" && "extensions" in error &&
+        error.extensions && typeof error.extensions === "object" && "code" in error.extensions && error.extensions.code === "RATELIMITED")) {
+        budgetResetAt = Math.max(budgetResetAt, now() + 60_000);
+        throw new LinearRequestError("rate_limited", budgetResetAt - now());
+      }
+      throw new LinearRequestError("graphql");
+    }
+    if (!response.ok) throw new LinearRequestError("unavailable");
+    if (!body.data) throw new LinearRequestError("invalid_response");
+    return body.data;
+  }
+  async function getConnection(options?: { throwOnFailure: boolean }): Promise<LinearConnectionState> {
+    // Never read the previous credential halfway through an OAuth replacement
+    // and associate that identity with the replacement's generation.
+    await credentialWrites;
+    const expectedGeneration = generation;
+    const { linearApiKey, linearCredentials } = await settings.get();
+    const mode = linearCredentials ? "app" : "personal";
+    if (!linearApiKey && !linearCredentials) return { status: "disconnected", mode: null, actor: null, workspace: null, message: "Connect Linear in Squadron settings." };
+    try {
+      if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
+      if (!options?.throwOnFailure && identityCache?.generation === generation && now() - identityCache.at < 60_000) return identityCache.value;
+      if (!identityPending || identityPending.generation !== generation) {
+        const promise = (async (): Promise<LinearConnectionState> => {
+          const result = identityResponse.safeParse(await graphql(
+            "query SquadronIdentity { viewer { id name } organization { id name } }",
+          ));
+          if (!result.success) throw new LinearRequestError("invalid_response");
+          if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
+          const data = result.data;
+          const value: LinearConnectionState = {
+            status: "connected", mode,
+            workspace: { id: data.organization.id, name: data.organization.name },
+            actor: { id: data.viewer.id, name: data.viewer.name },
+            message: mode === "app" ? "Writes go out as the Squadron app." : `Writes go out under ${data.viewer.name}'s name.`,
+          };
+          identityCache = { generation, at: now(), value };
+          return value;
+        })();
+        const pending = identityPending = { generation, promise };
+        void promise.finally(() => { if (identityPending === pending) identityPending = null; }).catch(() => undefined);
+      }
+      return await identityPending.promise;
+    } catch (error) {
+      if (generation === expectedGeneration) identityCache = null;
+      if (options?.throwOnFailure) throw error;
+      return { status: "failed", mode, actor: null, workspace: null,
+        message: error instanceof LinearRequestError ? error.message : messages.unavailable };
+    }
+  }
+  async function disconnect() {
+    generation++;
+    pending.clear();
+    await writeCredential(() => settings.experimental_set({ linearApiKey: null, linearCredentials: null }));
+    return getConnection();
+  }
+  bb.rpc.register(linearContract, {
+    "linear.connection": () => getConnection(), "linear.connect": connect, "linear.disconnect": disconnect,
+    "linear.setup": async () => {
+      const config = await settings.get();
+      return { callbackUrl: redirectUri(), oauthConfigured: Boolean(config.linearOAuthClientId && config.linearOAuthClientSecret) };
+    },
+  });
+  return { graphql, getConnection };
+}

@@ -36,7 +36,7 @@ Runs inside the BB desktop app as a plugin page in the left sidebar, beside agen
 
 ## Evidence on Hand
 
-No real lane data exists yet. The prototype uses labelled synthetic specs and tickets; it must not invent customers, metrics or claims.
+The board defaults to the bound Linear project's mirror. No real lane execution data exists yet. The optional demo uses labelled synthetic specs and tickets. Adapter tests use synthetic response fixtures; live OAuth, delivery and visual acceptance still need separate proof. The UI must not invent customers, metrics or claims.
 
 ## Product Principles
 

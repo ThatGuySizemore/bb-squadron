@@ -13,6 +13,7 @@
       "icon": "Plane"
     },
     "server": "./server.ts",
+    "host": "./host.ts",
     "app": "./app.tsx"
   },
   "dependencies": {
@@ -49,6 +50,7 @@
   "license": "MIT",
   "private": true,
   "scripts": {
+    "test": "node scripts/test.mjs",
     "check": "tsc --noEmit",
     "build": "bb plugin build"
   }

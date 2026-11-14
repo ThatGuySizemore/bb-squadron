@@ -1,111 +1,94 @@
-// The board's view model. The prototype fills it from lib/fake-board.ts; the
-// live Helper will fill the same shape from Linear, BB threads and GitHub.
+// The board runtime schema is also the source of its public TypeScript types.
+import { z } from "zod";
+import { outboxHealthSchema } from "./linear-outbox-contract.js";
 
-export type Family = "claude" | "gpt";
+const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
+const ticket = z.object({
+  id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
+  state: z.enum(["blocked", "ready", "working", "question", "review", "branch", "failed", "done"]),
+  minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
+});
+const lane = z.object({
+  specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
+  state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
+  minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
+  pr: z.object({ number: z.number(), checks: z.enum(["pending", "passing", "failing"]), url: z.string() }).optional(),
+  stopReason: z.string().optional(), landedAt: z.number().optional(),
+});
+const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
+const boardSchema = z.object({
+  tick: z.number(), laneCapacity: z.number(), workersPerLane: z.number(), autoStart: z.boolean(),
+  lanes: z.array(lane),
+  ready: z.array(z.object({
+    id: z.string(), title: z.string(), ticketCount: z.number(), routes: z.array(route), blockedBy: z.array(z.string()),
+    acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
+    startReason: z.string().nullable().optional(),
+  })),
+  unplanned: z.array(z.object({
+    id: z.string(), title: z.string(), labels: z.array(z.string()), url: z.string().optional(), under: z.string().optional(),
+    priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  })),
+  linear: z.object({
+    state: z.enum(["disconnected", "unbound", "catching-up", "current", "failed"]), message: z.string(),
+    syncedAt: z.number().nullable(), project: z.string().nullable(),
+  }).optional(),
+  writes: outboxHealthSchema.extend({
+    blocked: z.array(outboxHealthSchema.shape.blocked.element.extend({ issueIdentifiers: z.array(z.string()), reasonText: z.string() })),
+  }).optional(),
+});
 
-export interface Route {
-  family: Family;
-  /** Short model name shown on chips, e.g. "Opus 5.5". */
-  model: string;
-  effort: "medium" | "high";
-}
+export { boardSchema };
+export type Route = z.infer<typeof route>;
+export type Family = Route["family"];
+export type Ticket = z.infer<typeof ticket>;
+export type TicketState = Ticket["state"];
+export type Lane = z.infer<typeof lane>;
+export type LaneState = Lane["state"];
+export type PullRequest = NonNullable<Lane["pr"]>;
+export type Blocker = z.infer<typeof blocker>;
+export type Board = z.infer<typeof boardSchema>;
+export type ReadySpec = Board["ready"][number];
+export type UnplannedIssue = Board["unplanned"][number];
+export type LinearStatus = NonNullable<Board["linear"]>;
+export type BoardBlockedWrite = NonNullable<Board["writes"]>["blocked"][number];
+/** Public type retained; delivery failures are WriteDeliveryBlocked errors. */
+export type BlockedWrite = BoardBlockedWrite;
 
-export type TicketState =
-  | "blocked" // waits on an open blocker
-  | "ready" // frontier: nobody on it yet
-  | "working" // a worker thread is building it
-  | "question" // the worker asked the owner something
-  | "review" // a reviewer from the other family is reading it
-  | "branch" // merged into the integration branch (Linear: In Review)
-  | "failed" // two strikes; the lane stopped
-  | "done"; // the spec's PR merged (Linear: Done)
-
-export interface Ticket {
-  id: string;
-  title: string;
-  blockedBy: string[];
-  route: Route;
-  state: TicketState;
-  /** Minutes of agent time so far. */
-  minutes: number;
-  /** The worker thread, once one exists. */
-  threadId?: string;
-  question?: string;
-  failure?: string;
-}
-
-export type LaneState =
-  | "flying"
-  | "stopped"
-  | "spec-review"
-  | "pr-open"
-  | "merge-waits"
-  | "landed";
-
-export interface PullRequest {
-  number: number;
-  checks: "pending" | "passing" | "failing";
-  url: string;
-}
-
-export interface Lane {
-  specId: string;
-  title: string;
-  lead: Route;
-  leadThreadId: string;
-  branch: string;
-  state: LaneState;
-  minutes: number;
-  /** `accept:owner`: the merge waits for the owner. */
-  acceptOwner: boolean;
-  tickets: Ticket[];
-  pr?: PullRequest;
-  stopReason?: string;
-  /** When the PR merged (ms since epoch). */
-  landedAt?: number;
-}
-
-export interface ReadySpec {
-  id: string;
-  title: string;
-  ticketCount: number;
-  routes: Route[];
-  blockedBy: string[];
-  acceptOwner: boolean;
-}
-
-export interface UnplannedIssue {
-  id: string;
-  title: string;
-  /** Linear priority: 1 urgent … 4 low, 0 none. */
-  priority: 0 | 1 | 2 | 3 | 4;
-  labels: string[];
-}
-
-export interface Board {
-  tick: number;
-  laneCapacity: number;
-  workersPerLane: number;
-  autoStart: boolean;
-  lanes: Lane[];
-  ready: ReadySpec[];
-  unplanned: UnplannedIssue[];
-}
-
-export type NeedsYouKind = "question" | "stopped" | "merge";
+export type NeedsYouKind = "setup" | "question" | "stopped" | "write" | "merge";
 
 export interface NeedsYouItem {
   key: string;
   kind: NeedsYouKind;
+  /** The spec or issue the item is about, or "" when none. */
   specId: string;
   ticketId?: string;
   text: string;
-  threadId: string;
+  threadId: string | null;
+  /** The outbox receipt to retry, for a blocked write. */
+  writeId?: string;
+  /** The issue a blocked write touches. It may be a ticket, so it isn't set in pixel type. */
+  issueId?: string;
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
 export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
+  if (board.linear?.state === "disconnected" || board.linear?.state === "unbound") {
+    items.push({ key: "setup", kind: "setup", specId: "", text: board.linear.message, threadId: null });
+  }
+  for (const write of board.writes?.blocked ?? []) {
+    items.push({
+      key: `write:${write.id}`, kind: "write", specId: "", writeId: write.id, threadId: write.threadId,
+      ...(write.issueIdentifiers[0] ? { issueId: write.issueIdentifiers[0] } : {}),
+      text: `A Linear write${write.issueIdentifiers.length ? ` for ${write.issueIdentifiers.join(", ")}` : ""} couldn't go through. ${write.reasonText}`,
+    });
+  }
+  if (board.writes?.hasMore) {
+    const more = Math.max(0, board.writes.blockedCount - board.writes.blocked.length);
+    items.push({ key: "write:more", kind: "write", specId: "", threadId: null,
+      text: more > 0 ? `${more} more Linear ${more === 1 ? "write" : "writes"} couldn't go through. Retry the ones above first.`
+        : "More Linear writes couldn't go through. Retry the ones above first." });
+  }
   for (const lane of board.lanes) {
     if (lane.state === "merge-waits") {
       items.push({
@@ -138,7 +121,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { stopped: 0, question: 1, merge: 2 };
+  const order: Record<NeedsYouKind, number> = { setup: 0, stopped: 1, question: 2, write: 3, merge: 4 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 

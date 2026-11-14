@@ -307,3 +307,39 @@ All motion is stepped except the burst: border march 600ms `steps(3)`, dither cy
 - **Don't** introduce a neutral as a literal hex or a fifth state hue.
 - **Don't** use the pixel font for prose, buttons or ticket ids, and don't load a web font.
 - **Don't** put white text on amber; use on-amber.
+
+## Proposed direction: the live dithered board (SIZE-948 comp)
+
+**Status: proposed, waiting on the owner's approval on SIZE-948.** Until he approves it, everything above stays the board's in-force system. Once he approves, this section replaces the parts of it named below, and SIZE-956, SIZE-958 and SIZE-959 build to the comp at `comps/live-board/index.html`, which opens in a browser with no build step.
+
+The world stays the Ready-Room Sortie Board: BB's theme neutrals, the four state inks, 5x7 pixel tail numbers, BB's UI font, mono ids, 1px hairlines, 2px pixel rules, square marks, 2px controls, no shadows. What changes is the material and the motion, which become live, and the board's structure, which now covers the whole path.
+
+### Material: canvas dither at device-pixel density
+- Every dither is drawn on canvas with an ordered **Bayer 8x8** threshold, one threshold cell per **device pixel**. Fields are sampled once per CSS pixel and thresholded per device pixel, so on a 2x screen fills read as fine halftone grain, not 2px blocks. This replaces the CSS `--sq-d0` … `--sq-d16` 4x4 tiles.
+- The only inks are the four state colours at full strength; density carries intensity. Neutral textures aren't dithered.
+- Still textures: in-branch pegs green at 17%, done pegs green at 24%, landed number plates green at 20%.
+
+### Motion: continuous, and only where something is happening
+One `requestAnimationFrame` loop paints every animated canvas that's on screen. It stops while the document is hidden. Under `prefers-reduced-motion` each canvas is painted once, as a still frame, and the loop doesn't run. No `steps()` animation remains.
+- **Airstream (signature):** behind each Flying lane's pegs, sky streaks flow left to right along the sortie line, about 20px either side of it. Their speed (12px/s plus 12px/s per working thread, up to four) and density rise with the number of working threads; a lane with none working is still. The pace also reads as text ("2 working" with a sky square) beside the progress strip.
+- **Working peg:** a sky dashed border (2px, 6 on and 4 off) runs round the edge at 12px/s, over a slow sky grain (7% plus drift).
+- **Needs you:** the amber grain lives only along the row's edges, 7–10px deep, breathing on a 3.6s sine, so the text stays on a clean ground.
+- **Formation mark:** in the header, one sky chevron per lane flying across all of the owner's projects (empty slots in hairline, three minimum), each bobbing under a pixel and trailing a short dithered contrail. It's labelled "N lanes flying across your projects". It's still when nothing flies.
+- **Landing burst:** once, when the board first sees a lane Landed: about 110 green pixels (1–3px) sweep the rail behind the pegs over 0.95s (ease-out quart), leaving a green wake that thins out by 1.4s. The tail number stamps green from 1.18x over 520ms (`cubic-bezier(0.16, 1, 0.3, 1)`). The line then collapses (grid rows to 0 over 420ms) and the row arrives in Landed. Under reduced motion there's no burst; the lane shows Landed still, then moves.
+- Hover transitions stay at 120–140ms.
+
+### Structure: the path
+- **Header:** the formation mark, "Squadron", the **project picker** (a button naming the project, its tracker kind and its Ready and Flying counts, opening a listbox of every BB project with the same facts), then **Doctor status** (a quiet button with an 8px state square: solid green "Start ready", amber outline "N to fix before Start", hairline outline "Needs Set up") and **New spec** (primary). Below it, the tracker line in 12px muted ink starts with a tracker-kind tag.
+- **Path strip:** five stations in path order (Open issues, Shaping, Ready, Flying, Landed), each an 11px label over a 22px tabular count on a 2px pixel rule, joined by pixel chevrons. Zero counts are muted; Flying turns its count and rule sky while anything flies. Stations jump to their sections.
+- **Section order** follows attention, not the path: Needs you (with the Doctor region), Flying, Ready, Shaping, Open issues, Landed. Each row carries the one button that moves it on (Plan, Plan tickets or Resume planning, Start). Every empty section says in a sentence how work gets into it, with the button that does it where there is one.
+- **Ready rows** show "Can start:" with the frontier ids in sky ink and a disclosure "N wait on blockers" listing each waiting ticket and its blockers.
+- **Shaping rows** name what's missing in amber ink ("Ready label, but no tickets yet").
+- **Outside lanes** carry a dashed "Started outside Squadron" tag, open their Lead thread from the Lead chip, and replace the actions with a muted read-only line. A no-remote lane says how it lands ("No remote · lands when integration/bb-bot merges into main").
+- **Waiting pegs** put "after SIZE-n" in the state's place on their top line and keep a one-line title.
+
+### Side-panel layout (narrow, about 400px)
+The same component, laid out for its own width: the picker takes a full row; Doctor shows its state square and the word "Doctor", without its summary; the path strip keeps five cells with "Open" for Open issues; a sortie line stacks the tail card, the progress strip, a 26px airstream band, the working tickets as full-width pegs, and an "All N tickets" disclosure. Rows put their actions on their own line. Threads open in the main view rather than beside the board.
+
+### Type steps the comp adds
+- Narrow headline: 18px at 650. Narrow path count: 18px at 650.
+- Picker project name: 14px at 620 (the Title step).

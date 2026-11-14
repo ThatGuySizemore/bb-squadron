@@ -1,5 +1,5 @@
 // Derives the board from a tracker snapshot and project settings.
-import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type UnplannedIssue } from "./board-model.js";
+import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type OpenIssue } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
@@ -189,7 +189,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     if (!isOpenIssue(parent)) return `Under ${parent.identifier}, which is closed`;
     return `Under ${parent.identifier}`;
   };
-  const unplanned: UnplannedIssue[] = open
+  const openIssues: OpenIssue[] = open
     .filter((issue) => !specIds.has(issue.id) && !(issue.parentId !== null && specIds.has(issue.parentId)))
     .map((issue) => {
       const parent = under(issue);
@@ -216,7 +216,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
         project: project?.name ?? null },
       tick: 0, laneCapacity: 0, workersPerLane: 0,
-      autoStart: false, lanes, ready, unplanned,
+      autoStart: false, lanes, ready, openIssues,
     },
   };
 }

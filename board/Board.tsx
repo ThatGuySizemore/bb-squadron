@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } 
 import type { CSSProperties, ReactNode } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
+import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
 import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
 import type { boardContract } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
@@ -118,7 +118,7 @@ function Btn({ children, onClick, tone = "plain", disabled, title }: { children:
 
 const PRIORITY_LABEL = ["No priority", "Urgent", "High", "Medium", "Low"] as const;
 
-function PriorityDot({ priority }: { priority: NonNullable<UnplannedIssue["priority"]> }) {
+function PriorityDot({ priority }: { priority: NonNullable<OpenIssue["priority"]> }) {
   const filled = priority === 1 ? 3 : priority === 0 ? 0 : 5 - priority;
   return (
     <span className="sq-priority" data-priority={priority} title={PRIORITY_LABEL[priority]}>
@@ -503,16 +503,16 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
   );
 }
 
-function UnplannedRow({ issue, onPlan, opening }: { issue: UnplannedIssue; onPlan: (issueId: string) => void; opening: boolean }) {
+function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: (issueId: string) => void; opening: boolean }) {
   return (
     <li>
       {issue.priority !== undefined ? <PriorityDot priority={issue.priority} /> : <span />}
-      <span className="sq-unplanned-id sq-num">{issue.id}</span>
-      <span className="sq-unplanned-main">
-        <IssueTitle title={issue.title} url={issue.url} className="sq-unplanned-title" />
-        {issue.under ? <span className="sq-unplanned-under">{issue.under}</span> : null}
+      <span className="sq-open-issue-id sq-num">{issue.id}</span>
+      <span className="sq-open-issue-main">
+        <IssueTitle title={issue.title} url={issue.url} className="sq-open-issue-title" />
+        {issue.under ? <span className="sq-open-issue-under">{issue.under}</span> : null}
       </span>
-      <span className="sq-unplanned-labels">
+      <span className="sq-open-issue-labels">
         {issue.labels.map((l) => (
           <span key={l} className="sq-tag">
             {l}
@@ -694,14 +694,14 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           )}
         </section>
 
-        <section className="sq-section" aria-labelledby="sq-unplanned-h">
-          <h2 id="sq-unplanned-h">Unplanned</h2>
-          {notice ? null : board.unplanned.length === 0 ? (
-            <p className="sq-clear">Nothing unplanned. Every open issue belongs to a ready spec.</p>
+        <section className="sq-section" aria-labelledby="sq-open-issues-h">
+          <h2 id="sq-open-issues-h">Unplanned</h2>
+          {notice ? null : board.openIssues.length === 0 ? (
+            <p className="sq-clear">Nothing openIssues. Every open issue belongs to a ready spec.</p>
           ) : (
-            <ul className="sq-unplanned">
-              {board.unplanned.map((issue) => (
-                <UnplannedRow key={issue.id} issue={issue} onPlan={onPlan} opening={planning === issue.id} />
+            <ul className="sq-open-issues">
+              {board.openIssues.map((issue) => (
+                <OpenIssueRow key={issue.id} issue={issue} onPlan={onPlan} opening={planning === issue.id} />
               ))}
             </ul>
           )}
@@ -772,7 +772,7 @@ function DemoBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   );
 }
 
-const EMPTY_BOARD: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], unplanned: [] };
+const EMPTY_BOARD: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], openIssues: [] };
 
 /** What the live page shows before it has a board, or when it can't get one. */
 export function liveNotice(state: { projectId: string | null; board: Board | null; failed: boolean }): string | null {

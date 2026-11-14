@@ -205,7 +205,7 @@ test("while a planning thread opens, its Plan button says so and waits", async (
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardView } = await import("../board/Board.js");
   const board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [],
-    unplanned: [{ id: "FIX-9", title: "Linear webhooks", labels: [] }, { id: "FIX-12", title: "Another", labels: [] }] };
+    openIssues: [{ id: "FIX-9", title: "Linear webhooks", labels: [] }, { id: "FIX-12", title: "Another", labels: [] }] };
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, planning: "FIX-9",
   }));

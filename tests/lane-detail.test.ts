@@ -252,7 +252,7 @@ test("a spec the Lead closed after its merge stays a Landed lane with its done t
   assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.state]), [["FIX-1", "landed"]]);
   assert.deepEqual(ticketStates(board), [["FIX-2", "done"], ["FIX-3", "done"]]);
   assert.deepEqual(board.ready, []);
-  assert.deepEqual(board.unplanned, [], "closed issues stay off Unplanned");
+  assert.deepEqual(board.openIssues, [], "closed issues stay off Unplanned");
 
   const elsewhere = deriveBoard(input(snapshot([{ ...withStatus(spec, "Done", "completed"), projectId: "project-other" }]),
     { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;

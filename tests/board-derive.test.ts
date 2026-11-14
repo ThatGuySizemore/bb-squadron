@@ -36,7 +36,7 @@ test("ready-for-agent specs show under Ready with their tickets, and parentless 
       { family: "claude", model: "claude-opus-5-5", effort: "high" },
     ],
   }]);
-  assert.deepEqual(board.unplanned.map(({ id, title, labels }) => ({ id, title, labels })), [
+  assert.deepEqual(board.openIssues.map(({ id, title, labels }) => ({ id, title, labels })), [
     { id: "FIX-4", title: "Webhooks", labels: ["v2"] },
   ]);
   assert.deepEqual(board.lanes, []);
@@ -69,7 +69,7 @@ test("open blockers across specs, inside or outside the project, hold Start with
   ]);
   assert.equal(rows["FIX-20"].startReason, "Waits on FIX-1 and OUT-9 (outside this project)");
   assert.deepEqual(rows["FIX-30"].blockedBy, []);
-  assert.deepEqual(board.unplanned.map((row) => row.id), [], "outside and closed blockers never become rows");
+  assert.deepEqual(board.openIssues.map((row) => row.id), [], "outside and closed blockers never become rows");
 });
 
 test("a spec waits for Doctor, open tickets and an available frontier", () => {
@@ -131,7 +131,7 @@ test("every open issue stays visible: a child without a Ready parent waits in Un
     issue("OUT-3", { outside: true }),
     issue("FIX-80", { parent: "OUT-3" }),
   ])));
-  assert.deepEqual(board.unplanned.map(({ id, under }) => ({ id, under })), [
+  assert.deepEqual(board.openIssues.map(({ id, under }) => ({ id, under })), [
     { id: "FIX-50", under: "Under FIX-49, which is closed" },
     { id: "FIX-60", under: "Under an issue this board can't see" },
     { id: "FIX-69", under: undefined },
@@ -153,7 +153,7 @@ test("disconnected, unbound and failed reads say what happened without asking fo
   const failed = deriveBoard(input(snapshot([issue("FIX-4")], [], { error: "Linear is unavailable. Try again shortly." })));
   assert.deepEqual([failed.board.linear?.state, failed.board.linear?.message],
     ["failed", "Linear is unavailable. Try again shortly."]);
-  assert.deepEqual(failed.board.unplanned.map((row) => row.id), ["FIX-4"], "the last good copy stays on the board");
+  assert.deepEqual(failed.board.openIssues.map((row) => row.id), ["FIX-4"], "the last good copy stays on the board");
 });
 
 test("connecting Linear and choosing a project wait on the owner before anything else", () => {

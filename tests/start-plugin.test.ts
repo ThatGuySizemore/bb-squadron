@@ -216,7 +216,7 @@ test("the Start button announces opening and waits while its Lead is created", a
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardView } = await import("../board/Board.js");
-  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], unplanned: [], ready: [{
+  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], openIssues: [], ready: [{
     id: "FIX-5", title: "Doctor checks", ticketCount: 1, routes: [], blockedBy: [], acceptOwner: false, startReason: null,
   }, {
     id: "FIX-8", title: "Another spec", ticketCount: 1, routes: [], blockedBy: [], acceptOwner: false, startReason: null,
@@ -310,7 +310,7 @@ test("Needs you names each kind in words and offers its one action; lane buttons
     specId, title: `Spec ${specId}`, lead: { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const },
     leadThreadId: `thr_${specId}`, branch: "", state, minutes: 3, acceptOwner: false, tickets: [], ...(needs ? { needs } : {}),
   });
-  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, ready: [], unplanned: [], lanes: [
+  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, ready: [], openIssues: [], lanes: [
     lane("FIX-1", "flying", [{ threadId: "thr_w1", kind: "waiting", text: "Worker FIX-2 is waiting on you." }]),
     lane("FIX-3", "flying", [{ threadId: "thr_w3", kind: "failed", text: "Worker FIX-4 failed. Open it to see why." }]),
     lane("FIX-5", "stopped"),

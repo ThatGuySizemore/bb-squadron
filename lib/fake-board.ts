@@ -113,7 +113,7 @@ export function initialBoard(): Board {
       },
     ],
     ready,
-    unplanned: [
+    openIssues: [
       { id: "SQD-71", title: "Linear webhooks as a speed-up over polling", priority: 3, labels: [] },
       { id: "SQD-72", title: "GitHub Issues as a ticket source", priority: 2, labels: ["v2"] },
       { id: "SQD-73", title: "Retry Linear writes after a rate limit", priority: 2, labels: ["follow-up"] },

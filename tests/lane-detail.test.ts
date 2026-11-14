@@ -293,17 +293,19 @@ test("Cancel is a demo-only control and never appears on a live lane", async () 
   assert.match(html(true), />Cancel<\/button>/, "the synthetic simulation keeps Cancel");
 });
 
-test("the path strip counts lanes on the board without a capacity; its formation mark counts the fleet across projects", async () => {
+test("the path strip counts lanes on the board; SQD-214: the formation mark shows this project's lanes against its lane limit", async () => {
   await import("./fixtures/app-runtime.js");
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardView } = await import("../board/Board.js");
   const board = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()] })).board;
-  const page = (lanes: typeof board.lanes, demo = false, fleet: number | null = null) => renderToStaticMarkup(createElement(BoardView, {
-    board: { ...board, lanes, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null, fleet,
-    dispatch: () => undefined, onPlan: () => undefined,
-  }));
+  const page = (lanes: typeof board.lanes, { demo = false, limit = demo ? 3 : 0, lanesKnown }: { demo?: boolean; limit?: number; lanesKnown?: boolean } = {}) =>
+    renderToStaticMarkup(createElement(BoardView, {
+      board: { ...board, lanes, laneCapacity: limit }, demo, modeSwitch: null, lanesKnown,
+      dispatch: () => undefined, onPlan: () => undefined,
+    }));
   const header = (...args: Parameters<typeof page>) => /<header[\s\S]*?<\/header>/.exec(page(...args))![0];
+  const mark = (html: string) => /<canvas class="sq-formation"[^>]*>/.exec(html)?.[0];
   // An owner word in a station carries its definition: the label sits in a term with its tooltip.
   const station = (html: string, label: string) => new RegExp(`class="sq-station-label"><span[^>]*data-term="${label}"[^>]*>${label}<span[^>]*role="tooltip"[^>]*>[^<]*</span></span></span><span class="sq-station-count sq-num">(\\d+)<`).exec(html)?.[1];
   assert.equal(station(page([]), "Flying"), "0");
@@ -314,11 +316,23 @@ test("the path strip counts lanes on the board without a capacity; its formation
     { ...board.lanes[0], specId: "FIX-30", state: "landed" as const }];
   assert.equal(station(page(mixed), "Flying"), "3", "In review and stopped lanes are still on the line");
   assert.equal(station(page(mixed), "Landed"), "1");
-  assert.doesNotMatch(header(mixed), /of 0|lanes flying|sq-formation/);
-  assert.match(header(mixed, false, 5), /<canvas[^>]*role="img"[^>]*aria-label="5 lanes flying across your projects"/, "SIZE-956: the fleet across every project");
-  assert.match(header(mixed, false, 0), /aria-label="0 lanes flying across your projects"/, "the mark stays, still, when nothing flies");
-  assert.doesNotMatch(header(mixed, false, 5), /of 0|of 3/, "the live mark has no capacity");
-  assert.match(header(board.lanes, true), /aria-label="1 of 3 lanes flying"/);
+
+  const said = (...args: Parameters<typeof page>) => {
+    const canvas = mark(header(...args));
+    assert.ok(canvas, "the header draws the formation mark");
+    const aria = /aria-label="([^"]*)"/.exec(canvas)![1];
+    assert.match(canvas, /role="img"/);
+    assert.equal(/title="([^"]*)"/.exec(canvas)?.[1], aria, "hover says what a screen reader says");
+    return aria;
+  };
+  assert.equal(said(mixed, { limit: 5 }), "3 of 5 lanes flying", "a lane limit sets the slots");
+  assert.equal(said(board.lanes, { demo: true }), "1 of 3 lanes flying", "the demo's lane cap is its limit");
+  assert.equal(said(mixed), "3 of 3 lanes flying", "with no lane limit, one slot per lane flying");
+  assert.equal(said([]), "0 of 1 lane flying", "with no lane limit and nothing flying, one empty slot");
+  assert.equal(said([mixed[3]!]), "0 of 1 lane flying", "a Landed lane isn't flying");
+  assert.equal(said(mixed, { limit: 2 }), "3 of 2 lanes flying", "a hand start over the limit still counts");
+  assert.doesNotMatch(header(mixed), /across your projects/, "the cross-project count leaves the mark");
+  assert.equal(mark(header(mixed, { lanesKnown: false })), undefined, "absent until the live board's first read");
 });
 
 test("SIZE-958: no board visual is demo-only", async () => {
@@ -333,7 +347,7 @@ test("SIZE-958: no board visual is demo-only", async () => {
     { ...flying, specId: "FIX-30", state: "landed" as const, landedAt: SYNCED_AT },
   ] };
   const view = (demo: boolean) => renderToStaticMarkup(createElement(BoardView, {
-    board: { ...board, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null, fleet: demo ? null : 1, dispatch: () => undefined, onPlan: () => undefined,
+    board: { ...board, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
   const visuals = (html: string) => new Set([...html.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1]!.split(" ")).filter((c) => c.startsWith("sq-")));
   const live = visuals(view(false));

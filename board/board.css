@@ -104,12 +104,14 @@
   font-weight: 650;
   letter-spacing: -0.02em;
 }
-/* The formation mark: drawn by the dither renderer, one chevron per lane flying. */
+/* The formation mark: drawn by the dither renderer, one plane slot per lane in
+   the lane limit. The lead plane's fuselage sits on the title's baseline; the
+   negative margins keep the 80px canvas from heightening the header row. */
 .sq-formation {
   flex: none;
-  width: 92px;
-  height: 40px;
-  margin: -6px 0;
+  width: 184px;
+  height: 80px;
+  margin: -10px 0 -22px;
 }
 .sq-head-actions {
   display: flex;

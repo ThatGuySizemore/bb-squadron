@@ -13,13 +13,6 @@ export function currentProject(state: { picked: string | null; context: string |
   return state.picked ?? state.context ?? state.lastPick;
 }
 
-/** Lanes flying across every BB project, for the header's formation mark.
- * The shown project's live board replaces its picker count. */
-export function fleetFlying(counts: ProjectCounts | null, shown: string | null, shownFlying: number): number {
-  const others = counts?.projects.reduce((n, row) => n + (row.id === shown ? 0 : row.flying ?? 0), 0) ?? 0;
-  return others + shownFlying;
-}
-
 /** A small pixel chevron on 2px cells: down when closed, up when open. */
 function Chevron({ open }: { open: boolean }) {
   const cells = open ? [[0, 4], [2, 2], [4, 0], [6, 2], [8, 4]] : [[0, 0], [2, 2], [4, 4], [6, 2], [8, 0]];

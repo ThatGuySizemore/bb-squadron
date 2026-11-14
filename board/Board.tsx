@@ -18,7 +18,7 @@ import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
 import { Term } from "./Term.js";
 import { HowItWorks } from "./HowItWorks.js";
-import { currentProject, fleetFlying, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
+import { currentProject, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 import type { ProjectCounts } from "../lib/board-contract.js";
 import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
 
@@ -56,9 +56,15 @@ function Chevron({ className }: { className: string }) {
   );
 }
 
-/** The header's formation mark: one chevron per lane flying, drawn by the dither renderer. */
-function FormationMark({ flying, label }: { flying: number; label: string }) {
-  return <DitherCanvas fx={{ kind: "formation", flying }} className="sq-formation" label={label} />;
+/**
+ * The header's formation mark: one plane slot per lane in this project's lane
+ * limit, lit as lanes fly. Before a project has a lane limit, the slots are
+ * the lanes flying, with one slot shown when none are.
+ */
+function FormationMark({ limit, flying }: { limit: number; flying: number }) {
+  const slots = limit > 0 ? limit : Math.max(1, flying);
+  const label = `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying`;
+  return <DitherCanvas fx={{ kind: "formation", slots, lit: flying }} className="sq-formation" label={label} title={label} />;
 }
 
 // ---------- small parts ----------
@@ -853,16 +859,15 @@ interface BoardViewProps {
   projectId?: string | null;
   /** The shown project's tracker, for the tracker line; undefined while unknown. */
   tracker?: TrackerInfo;
-  /** Lanes flying across every project, for the formation mark; null while unknown. */
-  fleet?: number | null;
-  fleetLabel?: string;
+  /** False until the live board's first read, so the formation mark never counts lanes it hasn't read. */
+  lanesKnown?: boolean;
   footer?: ReactNode;
   /** The full page, or a thread's side panel: the comp's narrow layout, with thread links opening in the main view. */
   placement?: Placement;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, fleetLabel, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const [howOpen, setHowOpen] = useState(false);
@@ -904,11 +909,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
       <div className="sq-page">
         <header className="sq-head">
           <div className="sq-brand">
-            {demo ? (
-              <FormationMark flying={flying.length} label={`${flying.length} of ${board.laneCapacity} lanes flying`} />
-            ) : fleet !== null ? (
-              <FormationMark flying={fleet} label={fleetLabel ?? `${fleet} ${fleet === 1 ? "lane" : "lanes"} flying across your projects`} />
-            ) : null}
+            {lanesKnown ? <FormationMark limit={board.laneCapacity} flying={flying.length} /> : null}
             <h1>Squadron</h1>
           </div>
           {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
@@ -1315,9 +1316,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
       tracker={board?.tracker?.kind !== undefined ? { kind: board.tracker.kind, note: board.tracker.message } : row ? { kind: row.tracker, note: row.note } : undefined}
       projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(trackerKind, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
       projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} onCounts={setCounts} /> : null}
-      fleet={board ? fleetFlying(counts, projectId, board.lanes.filter((lane) => lane.state !== "landed").length) : null}
-      fleetLabel={counts ? "Known lanes flying. The shown project is live; other available counts are from the last project-picker read."
-        : "Lanes flying in this project. Open the project picker to include other projects."}
+      lanesKnown={board !== null}
       onSetUp={() => void setUp()}
       settingUp={settingUp}
       diagnostic={diagnostic}

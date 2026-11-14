@@ -92,7 +92,7 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
   assert.equal(args.prompt, [
     "Use the squadron-lead skill for this spec.", "", "Spec: https://linear.app/fixture/issue/FIX-5",
     "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
-    "House rules: /owner/.bb-squadron/house-rules.md", "Machine profile: /owner/.bb-squadron/machine.md",
+    "House rules: /owner/.bb-squadron/house-rules.md", "This machine: /owner/.bb-squadron/machine.md",
     "Held tickets carry one of these labels or Status lines: hold, needs-triage, needs-info, ready-for-human, wontfix.",
   ].join("\n"));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;

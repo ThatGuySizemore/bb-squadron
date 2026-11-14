@@ -12,7 +12,7 @@ After the Lead's worktree is ready, the Helper queues the spec's In Progress sta
 
 ## Extension points
 
-- `helperCore` accepts fixture snapshots, settings, time, durable `LaneRun` records and an optional Start action. It returns the board, a Start decision and typed commands. Board reads alone never launch agents.
+- `helperCore` accepts fixture snapshots, settings, time, durable `LaneRun` records, the project's auto-start setting and an optional Start or reconcile action. It returns the board, a Start decision and typed commands. Board reads alone never launch agents.
 - `lane-contract.ts` owns the durable record schema and board Start RPC contract.
 - `registerLanes` returns `start`, `list`, `save` and `onChange`. Subsequent worker, reviewer and lifecycle handlers can use these service methods. `save` is trusted server code, never an agent tool or owner approval.
 - `registerDoctor` returns `check`, shared by lane preflight and its existing RPC.
@@ -29,6 +29,14 @@ Once the branch is ready, a refusal to queue a status or comment keeps the lane 
 The shared signed-comment avatar module provides public origin-only URLs and constant role assets. The Lead has its own mark; planning retains its existing mark. Diagnostics retain the lane, operation and safe error class or known code. Raw provider messages and credentials never enter the log.
 
 Full reconstruction of an interrupted or ambiguous spawn and later lane controls remain in subsequent Spec B tickets.
+
+## Auto-start
+
+The live board's `lanes.setAutoStart` RPC is client-only, like manual Start. It saves an explicit boolean per BB project in durable plugin storage. Projects with no saved value default off. This setting is independent of the Linear mirror and survives a plugin restart. The board reads the saved value through the lane service and refreshes after either a successful save or a refusal.
+
+When enabled, trusted `lanes.reconcile(projectId)` fills the available slots. The Helper core's reconcile action selects the first eligible spec in numeric identifier order, using the same blocker, frontier, freshness, settings and capacity checks as manual Start. Each launch shares manual Start's project queue, Doctor check, fresh mirror read, reservation, spawn and write path. The service repeats that decision with the updated reservations before starting another spec. Disabling the setting while preflight is pending prevents that automatic launch.
+
+Mirror changes and trusted lane `save` calls schedule a coalesced reconcile. A landed lane frees capacity; starting, flying and stopped lanes keep their slots. Disabling auto-start prevents future automatic launches and leaves current lanes running. The `lane-starts` service also reconciles enabled projects every 15 seconds, including after restart with no board open. Provisioning continues to use `reconcileStart`, which never spawns a replacement Lead. The new `autoStart(projectId)` read and `reconcile(projectId)` service methods add no agent tool or owner approval.
 
 ## Current conventions and open questions
 

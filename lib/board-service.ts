@@ -23,7 +23,7 @@ export interface BoardSources {
   };
   /** The outbox's safe health read for one BB project. */
   writes?(bbProjectId: string): Promise<OutboxHealth>;
-  lanes?: Pick<LaneService, "list" | "onChange">;
+  lanes?: Pick<LaneService, "list" | "onChange" | "autoStart">;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -78,6 +78,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const { board, commands } = helperCore({
       snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
       settings: entry.settings.value, writes, now: now(), startedAt, lanes: sources.lanes?.list(projectId),
+      autoStart: sources.lanes?.autoStart(projectId),
     });
     for (const command of commands) {
       if (command.type === "sync" && !entry.catchingUp && !lifetime.signal.aborted) {

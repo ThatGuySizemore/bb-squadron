@@ -1,6 +1,6 @@
 // The Helper core: one deterministic function from the Linear mirror,
 // settings and clock to the board view model and the commands the server
-// should run. Reading a board never starts work without an explicit action.
+// should run. Reading a board never starts work without a dispatch action.
 import type { Blocker, Board, LinearStatus, ReadySpec, Route, UnplannedIssue } from "./board-model.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { OutboxBlockedReason, OutboxHealth } from "./linear-outbox-contract.js";
@@ -19,7 +19,8 @@ export interface HelperInput {
   /** When this run of the plugin started; older snapshots predate it. */
   startedAt: number;
   lanes?: readonly LaneRun[];
-  action?: { type: "start"; specId: string };
+  autoStart?: boolean;
+  action?: { type: "start"; specId: string } | { type: "reconcile" };
 }
 
 /** What the owner reads for each reason the outbox parks a write. */
@@ -145,7 +146,9 @@ export function helperCore(input: HelperInput): HelperOutput {
     spec.startReason = linear === "catching-up" ? "Wait for Linear to catch up before starting a lane." : message;
   }
   let start: StartDecision | undefined;
-  const action = input.action;
+  const next = input.action?.type === "reconcile" && input.autoStart
+    ? ready.find((spec) => spec.startReason === null) : undefined;
+  const action = next ? { type: "start" as const, specId: next.id } : input.action;
   if (action?.type === "start") {
     const row = ready.find((spec) => spec.id === action.specId);
     const spec = specs.find((spec) => spec.identifier === action.specId);
@@ -181,7 +184,7 @@ export function helperCore(input: HelperInput): HelperOutput {
         })),
       } } : {}),
       tick: 0, laneCapacity: settings?.limits.lanesAtOnce ?? 0, workersPerLane: settings?.limits.workersPerLane ?? 0,
-      autoStart: false, lanes, ready, unplanned,
+      autoStart: input.autoStart ?? false, lanes, ready, unplanned,
     },
     commands,
     ...(start ? { start } : {}),

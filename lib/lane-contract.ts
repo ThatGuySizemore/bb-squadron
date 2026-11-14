@@ -27,6 +27,10 @@ export const laneStartedSchema = z.object({
 export type LaneStarted = z.infer<typeof laneStartedSchema>;
 
 export const laneContract = {
+  "lanes.setAutoStart": {
+    input: z.object({ projectId: z.string().min(1).max(256), enabled: z.boolean() }).strict(),
+    output: z.object({ enabled: z.boolean() }),
+  },
   "lanes.start": {
     input: z.object({ projectId: z.string().min(1).max(256), specId: z.string().min(1).max(256) }).strict(),
     output: laneStartedSchema,

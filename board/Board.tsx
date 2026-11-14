@@ -558,6 +558,8 @@ interface BoardViewProps {
   /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
   planning?: string | null;
   starting?: string | null;
+  autoStartSaving?: boolean;
+  autoStartDisabled?: boolean;
   setup?: ReactNode;
   onRetry?: (writeId: string) => Promise<void>;
   /** Replaces Ready and Unplanned while the board can't show them. */
@@ -566,7 +568,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live Helper or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, setup, onRetry, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, autoStartSaving = false, autoStartDisabled = false, setup, onRetry, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -595,20 +597,21 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             {flying.length} of {board.laneCapacity} lanes flying · {openTickets} tickets open · {items.length} {items.length === 1 ? "needs" : "need"} you
           </p>
           <div className="sq-head-actions">
-            {demo ? (
-              <button
-                type="button"
-                role="switch"
-                aria-checked={board.autoStart}
-                className="sq-switch"
-                onClick={() => dispatch({ type: "autoStart", on: !board.autoStart })}
-              >
-                <span className="sq-switch-track" aria-hidden="true">
-                  <span className="sq-switch-knob" />
-                </span>
-                Auto-start ready specs
-              </button>
-            ) : null}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={board.autoStart}
+              aria-busy={autoStartSaving}
+              disabled={autoStartSaving || autoStartDisabled}
+              className="sq-switch"
+              onClick={() => dispatch({ type: "autoStart", on: !board.autoStart })}
+            >
+              <span className="sq-switch-track" aria-hidden="true">
+                <span className="sq-switch-knob" />
+              </span>
+              Auto-start ready specs
+            </button>
+            {autoStartSaving ? <span className="sq-plan-why" role="status">Saving auto-start</span> : null}
             {modeSwitch}
             {planning === "" ? <span className="sq-plan-why" role="status">Starting a planning thread</span> : null}
             <Btn tone="primary" disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : undefined} onClick={() => onPlan()}>
@@ -778,6 +781,17 @@ export async function startLaneFromBoard(deps: {
   await deps.refresh();
 }
 
+/** Save the project setting, then read back the board even after a refusal. */
+export async function setAutoStartFromBoard(deps: {
+  set: (input: { projectId: string; enabled: boolean }) => Promise<{ enabled: boolean }>;
+  refresh: () => Promise<void>;
+  notify: (text: string) => void;
+}, projectId: string, enabled: boolean): Promise<void> {
+  try { await deps.set({ projectId, enabled }); }
+  catch (error) { deps.notify(error instanceof Error && error.message ? error.message : "Couldn't save auto-start. Refresh the board and try again."); }
+  await deps.refresh();
+}
+
 /** The real board for the BB project in view, read from the Helper. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
@@ -786,6 +800,8 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const [planning, setPlanning] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
   const startingRequest = useRef(false);
+  const [autoStartSaving, setAutoStartSaving] = useState(false);
+  const autoStartRequest = useRef(false);
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -854,16 +870,30 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         openThread: (threadId) => open.thread(threadId, "the Lead thread"), refresh: load, notify: (text) => { toast(text); } }, projectId, specId);
     } finally { startingRequest.current = false; setStarting(null); }
   }, [rpc, projectId, open, load]);
+  const setAutoStart = useCallback(async (enabled: boolean) => {
+    if (!projectId || autoStartRequest.current) return;
+    autoStartRequest.current = true;
+    setAutoStartSaving(true);
+    try {
+      await setAutoStartFromBoard({ set: (input) => rpc.call("lanes.setAutoStart", input),
+        refresh: load, notify: (text) => { toast(text); } }, projectId, enabled);
+    } finally { autoStartRequest.current = false; setAutoStartSaving(false); }
+  }, [rpc, projectId, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
       board={board ?? EMPTY_BOARD}
       demo={false}
       modeSwitch={modeSwitch}
-      dispatch={(action) => { if (action.type === "start") void start(action.specId); }}
+      dispatch={(action) => {
+        if (action.type === "start") void start(action.specId);
+        if (action.type === "autoStart") void setAutoStart(action.on);
+      }}
       onPlan={(issueId) => void plan(issueId)}
       planning={planning}
       starting={starting}
+      autoStartSaving={autoStartSaving}
+      autoStartDisabled={!projectId || !board || failed}
       notice={notice ? (
         <>
           {notice}

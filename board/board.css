@@ -200,6 +200,11 @@
   cursor: not-allowed;
 }
 
+.sq-switch:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .sq-switch {
   display: inline-flex;
   align-items: center;

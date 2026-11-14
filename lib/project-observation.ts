@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { needsYou, type Board, type NeedsYouItem, type NeedsYouKind } from "./board-model.js";
+import { LINEAR_RATE_LIMIT_MESSAGE } from "./linear-auth.js";
 
 export const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
@@ -13,7 +14,9 @@ export function openNeeds(board: Board | null): NeedsYouItem[] {
   if (!board) return [{ key: "unreadable", kind: "setup", specId: "", text: unreadableProject, threadId: null }];
   const items = needsYou(board);
   // A failed read can't establish that Needs you is empty. Keep its safe tracker message.
-  if (board.tracker?.state === "failed" && !items.some((item) => item.text === board.tracker!.message)) {
+  if (board.tracker?.state === "failed"
+    && !(board.tracker.kind === "linear" && board.tracker.message === LINEAR_RATE_LIMIT_MESSAGE)
+    && !items.some((item) => item.text === board.tracker!.message)) {
     items.unshift({ key: "tracker", kind: "setup", specId: "", text: board.tracker.message, threadId: null });
   }
   return items;

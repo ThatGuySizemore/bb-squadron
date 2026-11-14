@@ -4,13 +4,16 @@ import { z } from "zod";
 import { linearContract, type LinearConnectionState } from "./linear-contract.js";
 import { linearConnectionChanged, publishSquadronSignal } from "./realtime-contract.js";
 
+export const LINEAR_RATE_LIMIT_MESSAGE = "Linear's request budget is exhausted. Try again after the reset.";
+export const LINEAR_BUDGET_WAIT_MESSAGE = "Waiting for Linear's budget to reset.";
+
 const messages = {
   not_connected: "Connect Linear in Squadron settings.",
   authentication: "Linear rejected the credential. Reconnect in Squadron settings.",
   unavailable: "Linear is unavailable. Try again shortly.",
   invalid_response: "Linear returned an invalid response. Try again shortly.",
   graphql: "Linear could not complete the request.",
-  rate_limited: "Linear's request budget is exhausted. Try again after the reset.",
+  rate_limited: LINEAR_RATE_LIMIT_MESSAGE,
 } as const;
 
 export class LinearRequestError extends Error {
@@ -112,6 +115,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     if (!linearApiKey) return { status: "disconnected", mode: null, actor: null, workspace: null, message: messages.not_connected };
     try {
       if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
+      if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());
       if (identityCache?.generation === generation && now() - identityCache.at < 60_000) return identityCache.value;
       if (!identityPending || identityPending.generation !== generation) {
         const promise = (async (): Promise<LinearConnectionState> => {
@@ -135,6 +139,11 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
       }
       return await identityPending.promise;
     } catch (error) {
+      if (generation === expectedGeneration && error instanceof LinearRequestError && error.code === "rate_limited") {
+        // Exhaustion says nothing about the key's validity. Keep any known identity.
+        return { status: "connected", mode, actor: identityCache?.value.actor ?? null,
+          workspace: identityCache?.value.workspace ?? null, message: LINEAR_BUDGET_WAIT_MESSAGE };
+      }
       if (generation === expectedGeneration) identityCache = null;
       return { status: "failed", mode, actor: null, workspace: null,
         message: error instanceof LinearRequestError ? error.message : messages.unavailable };

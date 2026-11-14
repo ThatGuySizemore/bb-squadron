@@ -68,7 +68,7 @@ const empty = (scope: MirrorSnapshot["scope"] = null, error: string | null = nul
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
   /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
   laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
-  /** Optional poller selection. Squadron watches every project discovered by the board watcher. */
+  /** Open boards poll every 30 seconds; other discovered projects every five minutes. */
   shouldPoll?: (bbProjectId: string) => boolean;
   /** The project's Scope. Default: the Scope section of its checkout's docs/agents/squadron.md. */
   scope?: (bbProjectId: string, signal: AbortSignal) => Promise<ScopeSource>;
@@ -81,6 +81,9 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   const running = new Set<Promise<unknown>>();
   const inFlight = new Map<string, { key: string; task: Promise<MirrorSnapshot> }>();
   const polls = new Map<string, number>();
+  const lastReads = new Map<string, number>();
+  const budgetRetries = new Map<string, number>();
+  let budgetAt = 0;
   /** Projects read at least once since start: the poller's candidates. */
   const known = new Set<string>();
   const snapshots = new Map<string, { key: string; snapshot: MirrorSnapshot }>();
@@ -120,6 +123,9 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     if (options.scope) return options.scope(bbProjectId, signal);
     const checkout = await readProjectCheckout(bb, bbProjectId, signal).catch(() => null);
     if (!checkout) return { ok: false, message: "Choose a ready checkout for this project, then check again." };
+    if (checkout.tracker.kind !== "linear") {
+      return { ok: false, message: "This project doesn't use Linear." };
+    }
     if (checkout.settingsMarkdown === null) return { ok: false, message: SETTINGS_UNREADABLE };
     return parseLinearScope(checkout.settingsMarkdown);
   }
@@ -135,6 +141,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     if (current?.key === key) return current.task;
     const turn = ++sequence;
     latest.set(bbProjectId, turn);
+    lastReads.set(bbProjectId, now());
     const task = syncOnce(bbProjectId, source, key, turn, combined);
     running.add(task);
     inFlight.set(bbProjectId, { key, task });
@@ -152,12 +159,17 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     try {
       const scope = await resolve(bbProjectId, source.scope, key, signal);
       const snapshot = await readSnapshot(bbProjectId, scope, signal);
+      budgetRetries.delete(bbProjectId);
       return superseded() ? getSnapshot(bbProjectId) : commit(bbProjectId, key, snapshot);
     } catch (error) {
       if (error instanceof ScopeError) resolved.delete(bbProjectId);
       if (error instanceof ScopeError) return superseded() ? getSnapshot(bbProjectId) : commit(bbProjectId, key, empty(null, error.message));
       if (!(error instanceof LinearRequestError)) bb.log.warn(`linear read failed: ${error instanceof Error ? error.name : "unknown"}`);
       const safe = error instanceof LinearRequestError ? error : new LinearRequestError("invalid_response");
+      if (safe.code === "rate_limited") {
+        budgetAt = Math.max(budgetAt, now() + (safe.retryAfterMs ?? 60_000));
+        budgetRetries.set(bbProjectId, budgetAt);
+      } else budgetRetries.delete(bbProjectId);
       if (signal.aborted) throw safe;
       if (superseded()) return getSnapshot(bbProjectId);
       // The last complete read of this Scope stays visible with the error.
@@ -336,26 +348,33 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   }
 
   bb.background.service("linear-reader", { start: async (signal) => {
-    polls.clear(); // Every service start catches up in full.
-    let budgetAt = 0;
+    polls.clear(); // Open boards catch up on restart; background reads keep their cadence.
     while (!signal.aborted && !lifetime.signal.aborted) {
-      const ids = [...known].sort().filter((id) => options.shouldPoll?.(id) ?? true);
+      const ids = [...known].sort();
+      const due = (id: string) => budgetRetries.get(id) ?? (options.shouldPoll?.(id) === false
+        ? Math.max(polls.get(id) ?? 0, (lastReads.get(id) ?? now() - 300_000) + 300_000) : polls.get(id) ?? now());
       for (const id of ids) {
         if (signal.aborted || lifetime.signal.aborted || now() < budgetAt) break;
-        const at = polls.get(id) ?? 0;
+        const at = due(id);
         if (at > now()) continue;
         try {
           await sync(id, signal);
+          budgetRetries.delete(id);
           polls.set(id, now() + 30_000);
         } catch (error) {
           if (signal.aborted || lifetime.signal.aborted) return;
           const retry = error instanceof LinearRequestError && error.code === "rate_limited" ? error.retryAfterMs ?? 60_000 : 30_000;
-          if (error instanceof LinearRequestError && error.code === "rate_limited") budgetAt = now() + retry;
+          if (error instanceof LinearRequestError && error.code === "rate_limited") {
+            budgetAt = now() + retry;
+            budgetRetries.set(id, budgetAt);
+          }
           polls.set(id, now() + Math.max(1_000, retry));
         }
       }
       if (signal.aborted || lifetime.signal.aborted) return;
-      const next = ids.length ? Math.min(...ids.map((id) => polls.get(id) ?? now())) : now() + 60_000;
+      // Recheck visibility and newly discovered projects even during a background wait.
+      const next = Math.min(options.shouldPoll ? now() + 30_000 : Infinity,
+        ids.length ? Math.min(...ids.map(due)) : now() + 60_000);
       const sleepFor = Math.max(1, Math.max(next, budgetAt) - now());
       try { await wait(sleepFor, AbortSignal.any([signal, lifetime.signal])); }
       catch { if (signal.aborted || lifetime.signal.aborted) return; }

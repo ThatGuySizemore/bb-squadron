@@ -208,7 +208,9 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
       const existing = issues.get(node.id);
       issues.set(node.id, {
         id: node.id, identifier: node.identifier, title: node.title, description: node.description, url: node.url,
-        sortOrder: node.sortOrder, priority: node.priority, createdAt: node.createdAt,
+        ...(node.sortOrder !== undefined ? { sortOrder: node.sortOrder } : {}),
+        ...(node.priority !== undefined ? { priority: node.priority } : {}),
+        ...(node.createdAt !== undefined ? { createdAt: node.createdAt } : {}),
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
         state: node.state, labels: labels.length ? labels : existing?.labels ?? [],
         assignees: node.assignee === undefined ? existing?.assignees ?? [] : node.assignee ? [node.assignee] : [],

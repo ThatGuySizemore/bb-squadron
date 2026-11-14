@@ -16,7 +16,11 @@ const lane = z.object({
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string().nullable(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
-  pr: z.object({ number: z.number(), checks: z.enum(["pending", "passing", "failing"]), url: z.string() }).optional(),
+  pr: z.object({ number: z.number(), checks: z.enum(["pending", "passing", "failing", "none", "unknown"]), url: z.string() }).optional(),
+  /** The exact approved head the owner's Merge click is for. Set only while the merge waits on the owner. */
+  mergeCommit: z.string().optional(),
+  /** Why the PR can't merge yet, or who merges it next. */
+  prNote: z.string().optional(),
   stopReason: z.string().optional(), stoppedAt: z.number().optional(), landedAt: z.number().optional(),
   writeError: z.string().optional(),
 });
@@ -109,6 +113,8 @@ export function needsYou(board: Board): NeedsYouItem[] {
     if (lane.state === "merge-waits") {
       items.push({
         key: `merge:${lane.specId}`,
+        // A new PR head or PR is a new merge context, and a new push.
+        notifyKey: `merge:${lane.specId}:${lane.pr?.number ?? 0}:${lane.mergeCommit ?? ""}`,
         kind: "merge",
         specId: lane.specId,
         text: `PR #${lane.pr?.number} passed checks and both reviews. accept:owner holds it for your merge.`,

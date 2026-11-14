@@ -139,7 +139,10 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     const latest = list(run.bbProjectId).find((item) => item.id === run.id);
     // The owner's Stop or Cancel during a start pass wins over that pass.
     const owner = latest && (latest.state === "canceled" || (latest.state === "stopped" && latest.stoppedAt !== undefined && latest.stoppedAt !== run.stoppedAt));
-    save({ ...run, ...(latest?.workers ? { workers: latest.workers } : {}),
+    // Review, PR and landing fields belong to their own steps; a start pass keeps the latest.
+    const merge = latest ? Object.fromEntries((["specReview", "pr", "prUnavailable", "merge", "ownerMerge", "landedAt", "landWrites"] as const)
+      .flatMap((key) => latest[key] !== undefined ? [[key, latest[key]]] : [])) : {};
+    save({ ...run, ...merge, ...(latest?.workers ? { workers: latest.workers } : {}),
       ...(latest?.routeOverrides ? { routeOverrides: latest.routeOverrides } : {}),
       ...(owner ? { state: latest.state, stopReason: latest.stopReason, stoppedAt: latest.stoppedAt, canceledAt: latest.canceledAt } : {}) });
     if (owner) Object.assign(run, { state: latest.state });
@@ -347,6 +350,10 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       try { await delay(15_000, undefined, { signal: stop }); } catch { return; }
     }
   } });
-  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile, settleStartWrites };
+  /** BB projects with saved lanes, for trusted background passes. */
+  function projects(): string[] {
+    return (db.prepare(`SELECT DISTINCT bb_project_id FROM squadron_lanes`).all() as { bb_project_id: string }[]).map((row) => row.bb_project_id);
+  }
+  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile, settleStartWrites, projects };
 }
 export type LaneService = ReturnType<typeof registerLanes>;

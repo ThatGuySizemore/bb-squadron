@@ -34,7 +34,8 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
   }
   /** Stops turns only. Threads, worktrees and branches stay for the owner. */
   async function stopThreads(run: LaneRun) {
-    const ids = [run.leadThreadId, ...(run.workers ?? []).filter((worker) => worker.state !== "integrated").flatMap((worker) => [worker.threadId, worker.review?.threadId])];
+    const ids = [run.leadThreadId, run.specReview?.threadId,
+      ...(run.workers ?? []).filter((worker) => worker.state !== "integrated").flatMap((worker) => [worker.threadId, worker.review?.threadId])];
     for (const threadId of new Set(ids)) {
       if (!threadId) continue;
       try { await bb.sdk.threads.stop({ threadId }); }
@@ -88,6 +89,11 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
         if (!review?.threadId || !["reviewing", "second-look"].includes(review.state)) continue;
         try { await wake(review.threadId, RESUMED_REVIEWER); }
         catch (error) { bb.log.warn(`Lane ${current.id} review ${review.id} resume: ${diagnostic(error)}`); }
+      }
+      const spec = resumed.specReview;
+      if (spec?.threadId && ["reviewing", "second-look"].includes(spec.state)) {
+        try { await wake(spec.threadId, RESUMED_REVIEWER); }
+        catch (error) { bb.log.warn(`Lane ${current.id} spec review ${spec.id} resume: ${diagnostic(error)}`); }
       }
       if (resumed.state === "starting") void lanes.reconcileStart(resumed.id).catch((error) => { bb.log.warn(`Lane ${resumed.id} resume-start: ${diagnostic(error)}`); });
       return resumed;

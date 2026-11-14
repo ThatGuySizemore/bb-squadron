@@ -22,3 +22,23 @@ test("host verifies exact worker HEAD and integration ancestry without trusting 
   assert.deepEqual(await host.experimental_call("verifyWorkerCommit", { path, branch: "worker", commit, integrationBranch: "integration" }), { verified: true, head: commit });
   assert.deepEqual(await host.experimental_call("verifyWorkerCommit", { path, branch: "--all", commit }), { verified: false, head: null });
 });
+
+test("host reads the integration branch head and its upstream as commit IDs only", async (t) => {
+  const root = await mkdtemp(join(process.env.BB_THREAD_STORAGE!, "pushed-head-"));
+  const remote = join(root, "remote.git"); const path = join(root, "work");
+  const run = (cwd: string, ...args: string[]) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  execFileSync("git", ["init", "--bare", "-b", "main", remote], { stdio: "ignore" });
+  execFileSync("git", ["clone", remote, path], { stdio: "ignore" });
+  run(path, "config", "user.name", "Fixture"); run(path, "config", "user.email", "fixture@example.test");
+  run(path, "checkout", "-b", "spec/lane");
+  await writeFile(join(path, "spec.txt"), "one\n"); run(path, "add", "spec.txt"); run(path, "commit", "-m", "one");
+  const first = run(path, "rev-parse", "HEAD");
+  const host = experimental_createHostEntryHarness(createDoctorHost(async () => true)); t.after(() => host.experimental_dispose());
+  assert.deepEqual(await host.experimental_call("pushedHead", { path, branch: "spec/lane" }), { head: first, upstream: null });
+  run(path, "push", "-u", "origin", "spec/lane");
+  assert.deepEqual(await host.experimental_call("pushedHead", { path, branch: "spec/lane" }), { head: first, upstream: first });
+  await writeFile(join(path, "spec.txt"), "two\n"); run(path, "commit", "-am", "two");
+  const second = run(path, "rev-parse", "HEAD");
+  assert.deepEqual(await host.experimental_call("pushedHead", { path, branch: "spec/lane" }), { head: second, upstream: first });
+  assert.deepEqual(await host.experimental_call("pushedHead", { path, branch: "--all" }), { head: null, upstream: null });
+});

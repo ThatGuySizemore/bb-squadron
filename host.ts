@@ -37,11 +37,25 @@ async function verifyWorkerCommit(input: { path: string; branch: string; commit:
   } catch { return { verified: false, head: null }; }
 }
 
+/** The branch head and its upstream's last fetched or pushed head, both commit IDs only. */
+async function pushedHead(input: { path: string; branch: string }, signal: AbortSignal) {
+  const git = (args: string[]): Promise<string> => new Promise((resolve, reject) => {
+    execFile("git", ["-C", input.path, ...args], { signal, timeout: 10_000, maxBuffer: 4096, encoding: "utf8" },
+      (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
+  });
+  const sha = /^[a-f0-9]{40}$/;
+  if (input.branch.startsWith("-")) return { head: null, upstream: null };
+  try { await git(["check-ref-format", `refs/heads/${input.branch}`]); } catch { return { head: null, upstream: null }; }
+  const read = async (ref: string) => { try { const value = await git(["rev-parse", "--verify", "--quiet", ref]); return sha.test(value) ? value : null; } catch { return null; } };
+  return { head: await read(`refs/heads/${input.branch}^{commit}`), upstream: await read(`${input.branch}@{upstream}^{commit}`) };
+}
+
 export function createDoctorHost(checkLogin: (signal: AbortSignal) => Promise<boolean> = githubLogin) {
   return experimental_defineHostEntry({
     contract: { ...doctorHostContract, ...workerHostContract },
     handlers: {
       verifyWorkerCommit: async (input, { signal }) => verifyWorkerCommit(input, signal),
+      pushedHead: async (input, { signal }) => pushedHead(input, signal),
       githubLogin: async (_input, { signal }) => {
         try { return { authenticated: await checkLogin(signal) }; }
         catch { return { authenticated: false }; }

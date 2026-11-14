@@ -57,6 +57,9 @@ export function hasCurrentApproval(worker: WorkerRun): boolean {
 export type SpawnWorkerCommand = { type: "spawn-worker"; laneId: string; ticketIssueId: string; ticketId: string; route: Route };
 export const ticketIdSchema = z.object({ ticketId: z.string().min(1).max(256) }).strict();
 export const spawnWorkerSchema = ticketIdSchema;
+/** A ticket review, or with the lane's spec identifier and its verified
+ * integration head, the one whole-branch review. */
+export const spawnReviewerSchema = z.object({ ticketId: z.string().min(1).max(256), commit: commitSchema.optional() }).strict();
 export const reportSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("done"), commit: commitSchema, summary: z.string().min(1).max(16_000) }).strict(),
   z.object({ type: z.literal("integrated"), ticketId: z.string().min(1), commit: commitSchema }).strict(),
@@ -66,6 +69,10 @@ export const reportSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("defect"), ticketId: z.string().min(1).max(256), findingId: z.string().min(1).max(128),
     title: z.string().min(1).max(500), description: z.string().min(1).max(16_000), dedupeKey: z.string().min(1).max(128),
     dedupeEvidence: z.string().min(1).max(4_000), existingIssueId: z.string().min(1).max(256).optional() }).strict(),
+  /** Lead: ask the Helper's merge check for this exact approved PR head. */
+  z.object({ type: z.literal("merge"), commit: commitSchema }).strict(),
+  /** Lead: the PR merged. The Helper reads BB's pull-request plugin; this report proves nothing itself. */
+  z.object({ type: z.literal("landed") }).strict(),
   /** A worker asks the owner. It shows in Needs you; only the owner's own message in the worker thread clears it. */
   z.object({ type: z.literal("question"), text: z.string().trim().min(1).max(4_000) }).strict(),
 ]);
@@ -82,6 +89,12 @@ export const workerHostContract = {
     input: z.object({ path: z.string().min(1), branch: z.string().min(1), commit: commitSchema,
       integrationBranch: z.string().min(1).optional() }).strict(),
     output: z.object({ verified: z.boolean(), head: commitSchema.nullable() }),
+    experimental_retryable: true,
+  },
+  /** The integration branch's local head and its upstream's last known head. Reads no network. */
+  pushedHead: {
+    input: z.object({ path: z.string().min(1), branch: z.string().min(1) }).strict(),
+    output: z.object({ head: commitSchema.nullable(), upstream: commitSchema.nullable() }),
     experimental_retryable: true,
   },
 };

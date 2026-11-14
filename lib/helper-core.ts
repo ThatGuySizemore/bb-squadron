@@ -8,6 +8,7 @@ import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 import { hasCurrentApproval, type SpawnWorkerCommand } from "./worker-contract.js";
 import type { LaneRun, StartDecision, StartLeadCommand } from "./lane-contract.js";
+import { mergeGate, ownerApproved } from "./merge-gate.js";
 
 export interface HelperInput {
   snapshot: MirrorSnapshot;
@@ -56,6 +57,21 @@ function list(ids: string[]): string {
 
 function uniqueRoutes(routes: Route[]): Route[] {
   return [...new Map(routes.map((route) => [`${route.family}|${route.model}|${route.effort}`, route])).values()];
+}
+
+/** A lane's board state from its saved review and PR observation. Only an
+ * accept:owner lane whose merge check passes, without the owner's click for
+ * that exact PR head, waits on the owner. */
+function laneProgress(run: LaneRun): Pick<Board["lanes"][number], "state" | "pr" | "mergeCommit" | "prNote" | "landedAt"> {
+  const pr = run.pr ? { pr: { number: run.pr.number, checks: run.pr.checks, url: run.pr.url } } : {};
+  if (run.state === "landed") return { state: "landed", ...pr, ...(run.landedAt !== undefined ? { landedAt: run.landedAt } : {}) };
+  if (run.state === "stopped") return { state: "stopped", ...pr };
+  if (!run.pr && !run.prUnavailable) return { state: run.specReview ? "spec-review" : "flying" };
+  const gate = mergeGate(run);
+  if (gate.ready && run.acceptOwner && !ownerApproved(run, gate)) return { state: "merge-waits", ...pr, mergeCommit: gate.commit };
+  const note = gate.ready ? (run.acceptOwner ? "You approved this merge. The Lead squash-merges this exact commit." : "Checks pass. The Lead squash-merges this exact commit.")
+    : gate.checks ? undefined : gate.reason;
+  return { state: run.pr ? "pr-open" : "spec-review", ...pr, ...(note ? { prNote: note } : {}) };
 }
 
 export function helperCore(input: HelperInput): HelperOutput {
@@ -198,7 +214,7 @@ export function helperCore(input: HelperInput): HelperOutput {
     const spec = byId.get(run.specIssueId);
     const specBlockers = spec ? unresolvedBlockers(spec, run) : [];
     return [{ specId: run.specId, title: run.title, lead: run.route, leadThreadId: run.leadThreadId,
-      branch: run.branch ?? "Preparing integration branch", state: run.state === "starting" ? "flying" as const : run.state as "flying" | "stopped" | "landed",
+      branch: run.branch ?? "Preparing integration branch", ...laneProgress(run),
       minutes: Math.max(0, Math.floor((input.now - run.startedAt) / 60_000)), acceptOwner: run.acceptOwner,
       ...(run.stopReason ? { stopReason: run.stopReason } : {}),
       ...(run.state === "stopped" && run.stoppedAt !== undefined ? { stoppedAt: run.stoppedAt } : {}),

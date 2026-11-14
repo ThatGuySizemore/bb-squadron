@@ -11,6 +11,7 @@ import { registerLanes } from "./lib/lane-service.js";
 import { registerSignedCommentAvatars } from "./lib/linear-avatar.js";
 import { registerNeedsYouNotifications } from "./lib/needs-you-notifier.js";
 import { registerLifecycle } from "./lib/lane-lifecycle.js";
+import { registerSpecMerge } from "./lib/spec-merge.js";
 
 export default async function plugin(bb: BbPluginApi) {
   registerSignedCommentAvatars(bb);
@@ -20,7 +21,8 @@ export default async function plugin(bb: BbPluginApi) {
   const doctor = registerDoctor(bb, () => linear.getConnection());
   const lanes = registerLanes(bb, { connection: () => linear.getConnection(), mirror, doctor, outbox });
   const workers = registerWorkers(bb, { connection: () => linear.getConnection(), mirror, outbox }, lanes);
-  registerLifecycle(bb, { mirror, outbox }, lanes, workers);
+  const lifecycle = registerLifecycle(bb, { mirror, outbox }, lanes, workers);
+  registerSpecMerge(bb, { mirror, outbox }, lanes, workers, lifecycle);
   const planning = registerPlanning(bb, { connection: () => linear.getConnection(), mirror, outbox });
   bb.agents.configure((context) => ({
     tools: [...outbox.toolsForThread(context.project.id, context.thread.id), ...workers.toolsForThread(context.project.id, context.thread.id)],

@@ -23,6 +23,7 @@ const operationSchema = z.discriminatedUnion("type", [
     description: z.string().max(100_000), parentId: text.optional(), labelIds: z.array(text).max(100) }).strict(),
   z.object({ type: z.literal("blocks"), issueId: text, blockedIssueId: text }).strict(),
   z.object({ type: z.literal("parent"), issueId: text, parentId: text }).strict(),
+  z.object({ type: z.literal("related"), issueId: text, relatedIssueId: text }).strict(),
 ]);
 const agentOperationSchema = z.discriminatedUnion("type", [
   operationSchema.options[1], operationSchema.options[2].omit({ author: true }),
@@ -55,7 +56,7 @@ class WriteDeliveryBlocked extends Error {
 }
 function issueReferences(operation: Operation, id: string): string[] {
   if (operation.type === "issue") return [id, ...(operation.parentId ? [operation.parentId] : [])];
-  return [...new Set([operation.issueId, ...(operation.type === "blocks" ? [operation.blockedIssueId] : operation.type === "parent" ? [operation.parentId] : [])])];
+  return [...new Set([operation.issueId, ...(operation.type === "blocks" ? [operation.blockedIssueId] : operation.type === "related" ? [operation.relatedIssueId] : operation.type === "parent" ? [operation.parentId] : [])])];
 }
 export function modelDisplayName(model: string): string {
   const claude = /^claude-(opus|sonnet|haiku)-(\d+)[.-](\d+)/.exec(model);
@@ -110,7 +111,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
     const original = operationSchema.parse(JSON.parse(row.operation));
     if (JSON.stringify(logicalOperation(original)) !== JSON.stringify(logicalOperation(operationSchema.parse(operation))) || row.thread_id !== threadId || row.bb_project_id !== bbProjectId || row.grant_scope_id !== scopeId) throw new Error("This write key already belongs to another operation.");
     changed(bbProjectId);
-    return { id: row.id, ...(["comment", "issue", "blocks"].includes(operation.type) ? { entityId: row.id } : {}),
+    return { id: row.id, ...(["comment", "issue", "blocks", "related"].includes(operation.type) ? { entityId: row.id } : {}),
       ...(original.type === "comment" ? { signature: `${original.author.role} · ${original.author.model}` } : {}) };
   }
   async function enqueue(input: { bbProjectId: string; dedupeKey: string; operation: Operation; expectedWorkspaceId?: string }) {
@@ -122,6 +123,35 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
     if (input.expectedWorkspaceId && connection.workspace.id !== input.expectedWorkspaceId) throw new Error("The Linear workspace changed before the write was queued.");
     if (connection.mode === "app" && operation.type === "comment" && !operation.author.avatarUrl) throw new Error("App comments need a public HTTPS avatar.");
     return store(dedupeKey, operation, connection.workspace.id, connection.mode, bbProjectId);
+  }
+  /** Linear may replace an existing relation on create. Read both directions,
+   * including archived pages, and refuse a stronger/conflicting link. */
+  async function relatedAlreadyLinked(request: <T>(query: string, variables: Record<string, unknown>) => Promise<T>, issueId: string, relatedIssueId: string) {
+    const pageSchema = z.object({ nodes: z.array(z.object({ id: z.string(), type: z.string(), issue: z.object({ id: z.string() }), relatedIssue: z.object({ id: z.string() }) })),
+      pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }) });
+    let linked = false;
+    for (const field of ["relations", "inverseRelations"] as const) {
+      let after: string | null = null;
+      const seen = new Set<string>();
+      for (;;) {
+        const result = z.object({ issue: z.object({ id: z.string() }).catchall(z.unknown()) }).parse(await request(
+          `query SquadronRelatedLinks($id: String!, $after: String) { issue(id: $id) { id ${field}(first: 100, after: $after, includeArchived: true) { nodes { id type issue { id } relatedIssue { id } } pageInfo { hasNextPage endCursor } } } }`, { id: issueId, after }));
+        if (result.issue.id !== issueId) throw new WriteDeliveryBlocked("conflict");
+        const page = pageSchema.parse(result.issue[field]);
+        for (const relation of page.nodes) {
+          const pair = (relation.issue.id === issueId && relation.relatedIssue.id === relatedIssueId) ||
+            (relation.issue.id === relatedIssueId && relation.relatedIssue.id === issueId);
+          if (!pair) continue;
+          if (relation.type !== "related") throw new WriteDeliveryBlocked("conflict");
+          linked = true;
+        }
+        if (!page.pageInfo.hasNextPage) break;
+        const cursor = page.pageInfo.endCursor;
+        if (!cursor || seen.has(cursor)) throw new LinearRequestError("invalid_response");
+        seen.add(cursor); after = cursor;
+      }
+    }
+    return linked;
   }
   async function drain(signal: AbortSignal) {
     const waiting = new Map<string, "pending" | "blocked">();
@@ -152,11 +182,13 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
         if (connection.workspace?.id !== row.workspace_id) throw new WriteDeliveryBlocked("workspace_changed");
         if (connection.mode !== (row.delivery_mode ?? row.mode)) throw new WriteDeliveryBlocked("auth_mode_changed");
         const operation = operationSchema.parse(JSON.parse(row.operation));
-        if (operation.type === "blocks") {
-          try {
+        if (operation.type === "blocks" || operation.type === "related") {
+          const relatedIssueId = operation.type === "blocks" ? operation.blockedIssueId : operation.relatedIssueId;
+          const alreadyLinked = operation.type === "related" && await relatedAlreadyLinked(request, operation.issueId, relatedIssueId);
+          if (!alreadyLinked) try {
             const result = await request<{ issueRelationCreate: { success: boolean; issueRelation?: { id: string } } }>(
               "mutation SquadronIssueRelationCreate($input: IssueRelationCreateInput!) { issueRelationCreate(input: $input) { success issueRelation { id } } }",
-              { input: { id: row.id, issueId: operation.issueId, relatedIssueId: operation.blockedIssueId, type: "blocks" } });
+              { input: { id: row.id, issueId: operation.issueId, relatedIssueId, type: operation.type } });
             if (result.issueRelationCreate?.success !== true || result.issueRelationCreate.issueRelation?.id !== row.id) throw new LinearRequestError("invalid_response");
           } catch (writeError) {
             // The singular lookup errors for absent relations. Keep the original
@@ -167,7 +199,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
                 await request("query SquadronOutboxRelation($id: String!) { issueRelation(id: $id) { id type issue { id } relatedIssue { id } } }", { id: row.id }));
             } catch { throw writeError; }
             const relation = found.issueRelation;
-            if (relation.id !== row.id || relation.type !== "blocks" || relation.issue.id !== operation.issueId || relation.relatedIssue.id !== operation.blockedIssueId) throw new WriteDeliveryBlocked("conflict");
+            if (relation.id !== row.id || relation.type !== operation.type || relation.issue.id !== operation.issueId || relation.relatedIssue.id !== relatedIssueId) throw new WriteDeliveryBlocked("conflict");
           }
         } else if (operation.type === "issue") {
           const { type: _type, ...input } = operation;

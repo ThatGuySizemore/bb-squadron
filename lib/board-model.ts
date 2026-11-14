@@ -1,6 +1,7 @@
 // The board runtime schema is also the source of its public TypeScript types.
 import { z } from "zod";
 import { outboxHealthSchema } from "./linear-outbox-contract.js";
+import { reviewStateSchema } from "./review-state.js";
 
 export const routeSchema = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
 const route = routeSchema;
@@ -8,6 +9,7 @@ const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "ready", "working", "question", "review", "branch", "failed", "done"]),
   routeChoices: z.array(routeSchema).optional(), reportPending: z.boolean().optional(), writeError: z.string().optional(),
+  reviewer: z.object({ route, threadId: z.string().nullable(), state: reviewStateSchema, commit: z.string(), round: z.number() }).optional(),
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), questionId: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({

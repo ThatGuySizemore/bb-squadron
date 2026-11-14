@@ -10,6 +10,7 @@ import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
 import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
 import type { workerContract } from "../lib/worker-contract.js";
+import type { ReviewState } from "../lib/review-state.js";
 import type { LaneStarted, laneContract, laneLifecycleContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
@@ -144,6 +145,15 @@ const TICKET_LABEL: Record<TicketState, string> = {
   failed: "Stopped",
   done: "Done",
 };
+const REVIEW_LABEL: Record<ReviewState, string> = {
+  spawning: "Starting review",
+  reviewing: "In review",
+  changes: "Fixes requested",
+  fixing: "Awaiting second look",
+  "second-look": "Second look",
+  approved: "Approved",
+  failed: "Review unconfirmed",
+};
 
 const LANE_LABEL: Record<LaneState, string> = {
   flying: "Flying",
@@ -196,8 +206,11 @@ function TicketRoute({ ticket, specId, onRoute }: { ticket: Ticket; specId: stri
 
 function Peg({ ticket, lane, onRoute }: { ticket: Ticket; lane: Lane; onRoute?: RouteChange }) {
   const open = useOpen();
-  const reviewer = reviewerFor(ticket.route);
+  const reviewer = ticket.reviewer;
   const state = ticket.state;
+  const threadId = state === "review" && reviewer ? reviewer.threadId : ticket.threadId;
+  const threadRole = state === "review" && reviewer ? "reviewer" : "worker";
+  const reviewerLabel = state === "review" && reviewer ? ` Reviewer · ${reviewer.route.family} · ${reviewer.route.model} · ${reviewer.route.effort}.` : "";
   const levels =
     state === "working" ? [2, 3, 5] : state === "question" ? [2, 4, 6, 4] : state === "review" ? [2] : state === "branch" ? [3] : state === "failed" || state === "done" ? [4] : [];
   const waitsOn = ticket.blockedBy.filter((b) => {
@@ -208,9 +221,9 @@ function Peg({ ticket, lane, onRoute }: { ticket: Ticket; lane: Lane; onRoute?: 
     state === "blocked"
       ? "Waiting"
       : state === "review"
-        ? ticket.reportPending ? "Reported done" : `Review · ${reviewer.model}`
+        ? reviewer ? REVIEW_LABEL[reviewer.state] : "Reported done"
         : TICKET_LABEL[state];
-  const clickable = Boolean(ticket.threadId);
+  const clickable = Boolean(threadId);
   const size = state === "branch" || state === "done" ? "compact" : state === "blocked" ? "slim" : "full";
   if (size === "compact") {
     const inner = (
@@ -243,7 +256,7 @@ function Peg({ ticket, lane, onRoute }: { ticket: Ticket; lane: Lane; onRoute?: 
       <span className="sq-peg-foot">
         {onRoute && ticket.routeChoices?.length && !ticket.threadId && (state === "ready" || state === "blocked")
           ? <TicketRoute ticket={ticket} specId={lane.specId} onRoute={onRoute} />
-          : <AiChip route={state === "review" && !ticket.reportPending ? reviewer : ticket.route} />}
+          : <AiChip route={state === "review" && reviewer ? reviewer.route : ticket.route} prefix={state === "review" && reviewer ? "Reviewer" : undefined} />}
         {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
       </span>
     </>
@@ -254,13 +267,13 @@ function Peg({ ticket, lane, onRoute }: { ticket: Ticket; lane: Lane; onRoute?: 
       className="sq-peg"
       data-size={size}
       data-state={state}
-      onClick={() => open.thread(ticket.threadId!, `the ${state === "review" && !ticket.reportPending ? "reviewer" : "worker"} thread for ${ticket.id}`)}
-      aria-label={`${ticket.id}, ${ticket.title}: ${sub}. Open thread.`}
+      onClick={() => open.thread(threadId!, `the ${threadRole} thread for ${ticket.id}`)}
+      aria-label={`${ticket.id}, ${ticket.title}: ${sub}.${reviewerLabel} Open ${threadRole === "reviewer" ? "reviewer thread" : "thread"}.`}
     >
       {body}
     </button>
   ) : (
-    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${state === "blocked" ? `waits on ${waitsOn.join(", ")}` : sub}`}>
+    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${state === "blocked" ? `waits on ${waitsOn.join(", ")}` : sub}.${reviewerLabel}`}>
       {body}
     </div>
   );

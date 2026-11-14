@@ -89,3 +89,37 @@ test("live ticket cards link workers and offer named route controls only before 
   assert.ok(!html.includes('aria-label="Route for FIX-6"'));
   assert.ok(html.includes("Reported done"));
 });
+
+test("reviewer card names the saved reviewer AI and its thread rather than inferring a model from the worker", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const route = { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const };
+  const board: Board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, ready: [], unplanned: [], lanes: [{
+    specId: "FIX-5", title: "A lane", lead: route, leadThreadId: "lead", branch: "bb/integration", state: "flying", minutes: 0, acceptOwner: false,
+    tickets: [{ id: "FIX-6", title: "Reviewed ticket", route, blockedBy: [], state: "review", minutes: 1, threadId: "worker",
+      reviewer: { route: { family: "claude", model: "Actual reviewer model", effort: "high" }, threadId: "reviewer", state: "second-look", commit: "a".repeat(40), round: 1 } }],
+  }] };
+  const render = () => renderToStaticMarkup(createElement(BoardView, { board, demo: false, modeSwitch: null,
+    onPlan: () => undefined, dispatch: () => undefined }));
+  const html = render();
+  assert.ok(html.includes("Actual reviewer model"));
+  assert.ok(html.includes("Second look"));
+  board.lanes[0].tickets[0].reviewer!.state = "fixing";
+  assert.match(render(), /class="sq-peg-state">Awaiting second look<\/span>/);
+  board.lanes[0].tickets[0].reviewer!.state = "second-look";
+  assert.match(html, /aria-label="[^"]*Actual reviewer model[^"]*high[^"]*Open reviewer thread/);
+  board.lanes[0].tickets[0].reviewer = { ...board.lanes[0].tickets[0].reviewer!, threadId: null, state: "spawning" };
+  assert.ok(!render().includes("Open reviewer thread"), "an unconfirmed reviewer has no navigation button");
+  board.lanes[0].tickets[0].reviewer = { ...board.lanes[0].tickets[0].reviewer!, state: "failed", threadId: "reviewer" };
+  const failed = render();
+  assert.ok(failed.includes("Review unconfirmed"));
+  assert.doesNotMatch(failed, /aria-label="FIX-6,[^"]*: In review/);
+  assert.match(failed, /class="sq-peg-state">Review unconfirmed<\/span>/);
+  assert.match(failed, /Open reviewer thread/);
+  board.lanes[0].tickets[0].reviewer.threadId = null;
+  assert.ok(!render().includes("Open reviewer thread"));
+  delete board.lanes[0].tickets[0].reviewer;
+  assert.ok(render().includes("Reported done"), "a missing reviewer must never invent reviewer identity");
+});

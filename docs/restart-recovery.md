@@ -109,6 +109,15 @@ history keeps the question open. Prompt text, promptHistory and assistant claims
 supply no ownership or approval evidence. This clears only that question; it
 never grants a merge, deploy, release or new execution authority.
 
+Initial reviewer launches use the same durable first-prompt evidence after the
+reviewer implementation integrates. Recovery retains its exact commit, original
+commit, round, findings and verdict fields. It releases only a proven initial
+review in its existing reservation and saves reviewing state before dispatch.
+Approved, changes, fixing and unproven second-look sends are not replayed as
+initial launches. Automatic review continuation still requires reviewing or
+second-look; worker continuation still requires a working cap reservation. A
+legacy review without exact original prompt evidence stays unproven.
+
 Known provisioning continues through `reconcileStart`. Refused or interrupted
 start writes retry through the same method and original dedupe keys. Existing
 pending writes and receipt IDs remain in the outbox. Missing worker start writes

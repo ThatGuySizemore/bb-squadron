@@ -8,7 +8,7 @@ import { needsYou, type Board } from "../lib/board-model.js";
 import { binding, workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { ready, end } from "./fixtures/linear-mirror.js";
 
-async function setup(t: TestContext, mode: "lost-lead" | "lost-worker" | "release-worker" | "normal" | "provisioning-worker" = "normal") {
+async function setup(t: TestContext, mode: "lost-lead" | "lost-worker" | "release-worker" | "normal" | "provisioning-worker" | "release-reviewer" | "lost-reviewer" = "normal") {
   const nodes = structuredClone(workspaceIssues.data.issues.nodes);
   const linear = workspace({ issues: () => Response.json({ data: { issues: { nodes, pageInfo: end } } }), vocabulary: () => Response.json({ data: { workflowStates: { nodes: [ready,
     { id: "started", name: "In Progress", type: "started" }, { id: "review", name: "In Review", type: "started" }], pageInfo: end },
@@ -18,14 +18,15 @@ async function setup(t: TestContext, mode: "lost-lead" | "lost-worker" | "releas
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const metadata = new Map<string, Record<string, unknown>>();
   const prompts = new Map<string, ReturnType<typeof makeQueueEntry>[]>();
+  const reuse = new Map<string, string>();
   const events = new Map<string, Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["events"]["list"]>>>();
   let fail = true;
   let count = 0;
   let listGate: (() => Promise<void>) | undefined;
   let readGate: ((threadId: string) => Promise<void>) | undefined;
   let environmentGate: ((environmentId: string) => Promise<void>) | undefined;
-  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", settings: { linearApiKey: "fake-restart-key" },
-    experimental_callHostRpc: async () => ({ authenticated: true }), sdk: {
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", agentSkillIds: ["squadron-reviewer"], settings: { linearApiKey: "fake-restart-key" },
+    experimental_callHostRpc: async (request) => request.method === "verifyWorkerCommit" ? { verified: true, head: "a".repeat(40) } : { authenticated: true }, sdk: {
       projects: { get: async ({ projectId }) => ({ id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId, hostId: "repo-host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
       files: { read: async ({ path }) => ({ path, content: settings, contentEncoding: "utf8", sha256: "fixture", sizeBytes: settings.length }) },
@@ -43,22 +44,24 @@ async function setup(t: TestContext, mode: "lost-lead" | "lost-worker" | "releas
         },
         getPluginMetadata: async ({ threadId }) => metadata.get(threadId) as Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["getPluginMetadata"]>> ?? {},
         get: async ({ threadId }) => { await readGate?.(threadId); const value = threads.get(threadId); if (!value) throw new Error("missing fixture thread"); return value; },
+        send: async () => ({ ok: true as const, delivery: "sent" as const }),
         spawn: async (args) => {
           const id = `thr_${++count}`;
           const thread = makeThreadResponse({ id, projectId: args.projectId, originPluginId: "squadron", providerId: args.providerId,
             parentThreadId: args.parentThreadId ?? null, environmentId: null, status: "pending", createdAt: Date.now() });
+          if (args.environment.type === "reuse") reuse.set(id, args.environment.environmentId);
           threads.set(id, thread); metadata.set(id, args.pluginMetadata ?? {});
           prompts.set(id, [makeQueueEntry({ id: `queue-${id}`, threadId: id, originPluginId: "squadron", state: "scheduled", model: args.model, reasoningLevel: args.reasoningLevel, permissionMode: "auto", serviceTier: "default",
             content: [{ type: "text", text: args.prompt!, mentions: [] }], payload: { kind: "inline" } })]);
-          if (fail && ((mode === "lost-lead" && count === 1) || (mode === "lost-worker" && count === 2))) throw new Error("lost spawn response");
+          if (fail && ((mode === "lost-lead" && count === 1) || (mode === "lost-worker" && count === 2) || (mode === "lost-reviewer" && count === 3))) throw new Error("lost spawn response");
           return thread;
         },
         queuedMessages: {
           list: async ({ threadId }) => prompts.get(threadId) ?? [],
           send: async ({ threadId }) => {
-            if (fail && mode === "release-worker" && threadId === "thr_2") throw new Error("release refused");
+            if (fail && ((mode === "release-worker" && threadId === "thr_2") || (mode === "release-reviewer" && threadId === "thr_3"))) throw new Error("release refused");
             prompts.set(threadId, []);
-            threads.set(threadId, { ...threads.get(threadId)!, environmentId: `env-${threadId}`, status: "active" });
+            threads.set(threadId, { ...threads.get(threadId)!, environmentId: reuse.get(threadId) ?? `env-${threadId}`, status: "active" });
             return { ok: true as const, delivery: "sent" as const };
           },
         }, stop: async () => ({ ok: true as const }),
@@ -482,4 +485,24 @@ for (const author of ["owner", "agent", "system", "plugin", "unaccepted", "old-r
   assert.deepEqual(needsYou(board).filter((item) => item.kind === "question").map((item) => item.notifyKey), author === "owner" ? [] : [questionKey]);
   assert.equal(next.harness.inspection.sdk.callsTo("threads.promptHistory").length, 0);
   assert.equal(next.harness.inspection.sdk.callsTo("threads.send").length, 0);
+});
+
+
+for (const mode of ["release-reviewer", "lost-reviewer"] as const) test(`restart recovers ${mode} only from its trusted initial review reservation`, async (t) => {
+  const host = await setup(t, mode);
+  const sha = "a".repeat(40);
+  await host.harness.behavior.callRpc("lanes.start", { projectId: "proj-one", specId: "FIX-5" });
+  await host.harness.behavior.callAgentTool("squadron_spawn_worker", { ticketId: "FIX-6" }, { threadId: "thr_1", projectId: "proj-one" });
+  await host.harness.behavior.callAgentTool("squadron_report", { type: "done", commit: sha, summary: "Tests pass." }, { threadId: "thr_2", projectId: "proj-one" });
+  await assert.rejects(host.harness.behavior.callAgentTool("squadron_spawn_reviewer", { ticketId: "FIX-6" }, { threadId: "thr_1", projectId: "proj-one" }), /startup is unconfirmed/);
+  host.restore();
+  const next = await host.harness.lifecycle.reload(plugin); t.after(() => next.harness.lifecycle.dispose());
+  await catchUp(next.harness, (board) => board.lanes[0]?.tickets[0]?.reviewer?.state === "reviewing");
+  const status = JSON.parse(String(await next.harness.behavior.callAgentTool("squadron_status", {}, { threadId: "thr_1", projectId: "proj-one" })));
+  assert.equal(status.reports[0].state, "reported", "recovery must not resume the idle worker without a working-cap reservation");
+  assert.deepEqual([status.reports[0].review.state, status.reports[0].review.commit, status.reports[0].review.originalCommit, status.reports[0].review.round, status.reports[0].review.verdict],
+    ["reviewing", sha, sha, 0, undefined]);
+  await assert.rejects(next.harness.behavior.callAgentTool("squadron_report", { type: "integrated", ticketId: "FIX-6", commit: sha }, { threadId: "thr_1", projectId: "proj-one" }), /approval/);
+  assert.deepEqual(next.harness.inspection.sdk.callsTo("threads.queuedMessages.send").map(([args]) => (args as { threadId: string }).threadId), ["thr_3"]);
+  assert.equal(next.harness.inspection.sdk.callsTo("threads.spawn").length, 0);
 });

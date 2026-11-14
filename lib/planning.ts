@@ -63,7 +63,7 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to plan in.");
     const thread = await bb.sdk.threads.spawn({
-      projectId, pluginMetadata: { role: "planning", ...(issue ? { issueId: issue.id } : {}) },
+      projectId, visibility: "visible", pluginMetadata: { role: "planning", ...(issue ? { issueId: issue.id } : {}) },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "unmanaged", path: checkout.path } },
       prompt: seedPrompt({ issue,
         project: snapshot.binding ? `${snapshot.binding.team.name} · ${snapshot.binding.project.name}` : null,

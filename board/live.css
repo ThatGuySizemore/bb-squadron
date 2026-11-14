@@ -34,7 +34,8 @@
   text-decoration-line: underline;
   text-decoration-color: var(--sq-rule-ink);
 }
-.sq .sq-issue-link.sq-ready-title {
+.sq .sq-issue-link.sq-ready-title,
+.sq .sq-issue-link.sq-shaping-title {
   font-size: 13.5px;
   font-weight: 600;
 }

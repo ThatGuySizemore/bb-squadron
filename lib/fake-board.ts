@@ -113,6 +113,12 @@ export function initialBoard(): Board {
       },
     ],
     ready,
+    shaping: [
+      { id: "SQD-80", title: "Lanes for GitHub-tracked repos", ticketCount: 0, missing: "Planning is still open in its thread.",
+        action: "resume", threadId: thread("plan-80") },
+      { id: "SQD-81", title: "Board in a thread's side panel", ticketCount: 3, missing: "Has 3 tickets but no ready-for-agent label.",
+        action: "tickets" },
+    ],
     openIssues: [
       { id: "SQD-71", title: "Linear webhooks as a speed-up over polling", priority: 3, labels: [] },
       { id: "SQD-72", title: "GitHub Issues as a ticket source", priority: 2, labels: ["v2"] },

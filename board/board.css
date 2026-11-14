@@ -874,7 +874,7 @@ button.sq-peg:hover {
   }
 }
 
-/* ---------- ready, unplanned, landed ---------- */
+/* ---------- ready, shaping, open issues, landed ---------- */
 
 .sq-ready-list,
 .sq-open-issues,
@@ -922,6 +922,60 @@ button.sq-peg:hover {
 }
 .sq-ready[data-blocked="true"] :is(.sq-ready-id, .sq-ready-title) {
   color: var(--sq-muted);
+}
+/* Tickets that wait on blockers, under their Ready row. */
+.sq-ready-waiting {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 18px;
+  margin: -6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--sq-muted);
+}
+.sq-ready-waiting .sq-mono {
+  color: var(--foreground);
+}
+/* Rows share one grid, so titles line up whatever each spec number's width. */
+.sq-shaping-list {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto minmax(0, auto) auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sq-shaping {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  gap: 16px;
+  padding: 11px 4px;
+  border-bottom: 1px solid var(--sq-rule);
+}
+.sq-shaping > .sq-btn {
+  justify-self: end;
+}
+.sq-shaping-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.sq-shaping-missing {
+  font-size: 12px;
+  color: var(--sq-muted);
+}
+/* An empty section: how work gets in, then the button that does it. */
+.sq-empty {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  margin-top: 10px;
+}
+.sq-empty .sq-clear {
+  margin: 0;
 }
 .sq-open-issues li {
   display: grid;
@@ -1056,11 +1110,32 @@ button.sq-peg:hover {
     column-gap: 14px;
     row-gap: 6px;
   }
-  .sq-ready-title {
+  .sq-ready-title,
+  .sq-shaping-title {
     flex: 1 1 200px;
   }
-  .sq-ready .sq-btn {
+  .sq-ready .sq-btn,
+  .sq-shaping .sq-btn {
     margin-left: auto;
+  }
+  .sq-shaping-list {
+    display: block;
+  }
+  .sq-shaping {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 14px;
+    row-gap: 6px;
+  }
+  .sq-shaping-missing {
+    flex-basis: 100%;
+    order: 1;
+  }
+  .sq-ready-waiting {
+    flex-basis: 100%;
+    order: 1;
+    margin: 0;
   }
   .sq-ready-why:empty {
     display: none;

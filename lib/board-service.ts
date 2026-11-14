@@ -5,7 +5,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
 import { boardContract } from "./board-contract.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
-import { deriveBoard, type BoardInput } from "./board-derive.js";
+import { deriveBoard, type BoardInput, type PlanningThread } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
@@ -18,6 +18,8 @@ export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   leads?(projectId: string): Promise<LeadThread[]>;
+  /** Open planning threads, so a spec being planned shows under Shaping. */
+  planning?(projectId: string): Promise<PlanningThread[]>;
   /** Rows from BB's pull-request plugin for the Leads' environments. */
   pullRequests?(environmentIds: string[], signal?: AbortSignal): Promise<Record<string, PullRequestRow>>;
   tracker: TrackerReader;
@@ -72,12 +74,13 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
     const leads = await sources.leads?.(projectId);
+    const planning = await sources.planning?.(projectId);
     const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
     const { board } = deriveBoard({
       snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
-      leads,
+      leads, planning,
       pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
     return board;

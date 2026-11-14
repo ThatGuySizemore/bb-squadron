@@ -4,6 +4,7 @@ import { doctor, type ConfigurationFile } from "./doctor.js";
 import { doctorContract, doctorHostContract } from "./doctor-contract.js";
 import { readTrackerConfiguration, selectProjectCheckout, squadronSettingsPath } from "./project-checkout.js";
 import type { Family } from "./board-model.js";
+import { repositoryHostContract } from "./repository-contract.js";
 
 function mattSkill(skill: { name: string; pluginId: string | null; scope: string; filePath: string; provider: string | null }): { name: string; family: Family; path: string } | null {
   const prefix = "mattpocock-skills:";
@@ -18,6 +19,7 @@ function mattSkill(skill: { name: string; pluginId: string | null; scope: string
 
 export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ status: string }>) {
   const host = bb.hosts.experimental_client({ contract: doctorHostContract });
+  const repository = bb.hosts.experimental_client({ contract: repositoryHostContract });
   async function read(projectId: string, signal?: AbortSignal, environmentId?: string) {
     const checkout = await selectProjectCheckout(bb, projectId, signal, environmentId).catch(() => null);
     if (!checkout) {
@@ -31,10 +33,13 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     const settingsPath = squadronSettingsPath(path);
     if (!settingsPath) throw new Error("Choose a repo with an absolute checkout path.");
     const config = await readTrackerConfiguration(bb, checkout, signal);
+    const localOnly = config.tracker.kind === "local-markdown" && await repository.call("readRepositoryState",
+      { checkoutPath: path, branches: [] }, { hostId, signal, timeoutMs: 15_000 }).then((state) => !state.hasRemote).catch(() => false);
     const [skills, linear, github] = await Promise.allSettled([
       bb.sdk.skills.list({ projectId, environmentId: environmentId ?? null, signal }),
       config.tracker.kind === "linear" ? getLinearState() : Promise.resolve({ status: "not-needed" }),
-      host.call("githubLogin", { checkoutPath: path }, { hostId, signal, timeoutMs: 15_000 }),
+      localOnly ? Promise.resolve({ authenticated: false, hostname: undefined })
+        : host.call("githubLogin", { checkoutPath: path }, { hostId, signal, timeoutMs: 15_000 }),
     ]);
     const candidates = skills.status === "fulfilled" ? skills.value.skills.flatMap((skill) => {
       const found = mattSkill(skill);
@@ -61,6 +66,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
       linearConnected: linear.status === "fulfilled" && linear.value.status === "connected",
       ghAuthenticated: github.status === "fulfilled" && github.value.authenticated,
       ghHostname: github.status === "fulfilled" ? github.value.hostname : undefined,
+      ghRequired: !localOnly,
     });
     if (skills.status === "rejected" || !inspection) report.checks[0].message = "Couldn't check this repo's installed plugins. Make sure its machine is online, then check again.";
     if (config.settingsMarkdown === null) report.checks[2].message = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";

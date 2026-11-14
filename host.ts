@@ -8,6 +8,8 @@ import { localMarkdownHostContract } from "./lib/local-markdown-contract.js";
 import { readLocalMarkdown } from "./lib/local-markdown-host.js";
 import { githubHostContract } from "./lib/github-contract.js";
 import { githubLogin, readGithub, runGithubCommand, type GithubCommand } from "./lib/github-host.js";
+import { repositoryHostContract } from "./lib/repository-contract.js";
+import { readRepositoryState } from "./lib/repository-host.js";
 
 async function exists(path: string): Promise<boolean> {
   try { return (await stat(path)).isFile(); } catch { return false; }
@@ -29,9 +31,10 @@ async function regularSkillFile(path: string): Promise<boolean> {
 
 export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<boolean | { authenticated: boolean; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand) {
   return experimental_defineHostEntry({
-    contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract },
+    contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract, ...repositoryHostContract },
     handlers: {
-      readLocalMarkdown: (input) => readLocalMarkdown(input),
+      readRepositoryState: (input, { signal }) => readRepositoryState(input, signal),
+      readLocalMarkdown: (input, { signal }) => readLocalMarkdown(input, signal),
       inspectFiles: async ({ checkoutPath, skillPaths }) => {
         const homePath = home();
         const [repoRulesExists, playbookExists, machineProfileExists, setup, skills] = await Promise.all([

@@ -155,7 +155,7 @@ test("the lane row links the Lead, the spec and the PR, labels In review, and li
     board: derived, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
   assert.match(html, /class="sq-lane-state" data-lane="pr-open">In review</);
-  assert.match(html, /<button[^>]*title="Open the spec in Linear"[^>]*>Lane spec<\/button>/);
+  assert.match(html, /<button[^>]*title="Open the spec"[^>]*>Lane spec<\/button>/);
   assert.match(html, /aria-label="PR #42, no checks. Open on GitHub."/);
   assert.match(html, /<span class="sq-threads-label">Other threads<\/span>.*Scratch notes<\/button>/s);
   assert.match(html, /aria-label="FIX-2, First slice: Waiting\. Open thread\."/);

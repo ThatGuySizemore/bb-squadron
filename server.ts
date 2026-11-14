@@ -24,6 +24,6 @@ export default async function plugin(bb: BbPluginApi) {
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal) });
   shown = board.isShown;
   registerPlanning(bb, { tracker, doctor: doctor.read });
-  registerLaneStart(bb, { mirror, doctor: doctor.read });
+  registerLaneStart(bb, { tracker, doctor: doctor.read });
   bb.log.info("loaded");
 }

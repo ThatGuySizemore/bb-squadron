@@ -281,13 +281,13 @@ const LANE_ACTION_STATUS: Record<LaneAction["type"], string> = {
 };
 
 /** Stop, Resume or Merge, disabled while any lane action is on its way. */
-function LaneActionButton({ type, specId, acting, tone, dispatch }: {
-  type: LaneAction["type"]; specId: string; acting: LaneAction | null; tone: "plain" | "primary" | "amber"; dispatch: (a: BoardAction) => void;
+function LaneActionButton({ type, specId, acting, tone, dispatch, localMerge = false }: {
+  type: LaneAction["type"]; specId: string; acting: LaneAction | null; tone: "plain" | "primary" | "amber"; dispatch: (a: BoardAction) => void; localMerge?: boolean;
 }) {
   const mine = acting?.specId === specId;
   return (
     <>
-      {mine && acting.type === type ? <span className="sq-plan-why" role="status">{LANE_ACTION_STATUS[type]}</span> : null}
+      {mine && acting.type === type ? <span className="sq-plan-why" role="status">{type === "merge" && localMerge ? "Asking the Lead to merge locally" : LANE_ACTION_STATUS[type]}</span> : null}
       <Btn tone={tone} disabled={acting !== null} onClick={() => dispatch({ type, specId })}>
         {mine && acting.type === type ? LANE_ACTION_PENDING[type] : LANE_ACTION_LABEL[type]}
       </Btn>
@@ -308,7 +308,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
         <h3 className="sq-line-title">
           {lane.url ? (
-            <button type="button" className="sq-issue-link" title="Open the spec in Linear" onClick={() => open.external(lane.url!, `${lane.specId} in Linear`)}>
+            <button type="button" className="sq-issue-link" title="Open the spec" onClick={() => open.external(lane.url!, `the spec ${lane.specId}`)}>
               {lane.title}
             </button>
           ) : (
@@ -343,7 +343,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         <span className="sq-branch">{lane.branch}</span>
         {lane.state !== "landed" ? (
           <div className="sq-actions">
-            {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} localMerge={lane.localMerge} /> : null}
             {stopped ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
             {(demo ? lane.state === "flying" : !stopped) ? <LaneActionButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
             {demo ? <span className="sq-isolated">
@@ -463,7 +463,7 @@ export function NeedsYouStrip({ items, dispatch, setup, setUp, demo = false, act
                 ) : null}
               </>
             ) : null}
-            {item.kind === "merge" ? <LaneActionButton type="merge" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} /> : null}
+            {item.kind === "merge" ? <LaneActionButton type="merge" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} localMerge={item.localMerge} /> : null}
           </span>
         </li>
       ))}
@@ -948,15 +948,16 @@ export async function messageLeadFromBoard(deps: {
   } finally { await deps.refresh(); }
 }
 
-/** Squash-merge a lane's PR through the board's public RPC, then read the board again. */
+/** Merge a PR or ask the Lead to merge locally, then read the board again. */
 export async function mergeFromBoard(deps: {
-  merge: (input: { projectId: string; specId: string }) => Promise<{ number: number }>;
+  merge: (input: { projectId: string; specId: string }) => Promise<{ number: number } | { threadId: string }>;
   notify: (text: string) => void;
   refresh: () => Promise<void>;
 }, projectId: string, specId: string) {
   try {
     const merged = await deps.merge({ projectId, specId });
-    deps.notify(`Squash-merged PR #${merged.number} for ${specId}. The lane lands when BB sees the merge.`);
+    deps.notify("threadId" in merged ? `Asked the Lead for ${specId} to merge locally. The lane lands when the merge is confirmed.`
+      : `Squash-merged PR #${merged.number} for ${specId}. The lane lands when BB sees the merge.`);
   } catch (error) {
     deps.notify(error instanceof Error && error.message ? error.message : `Couldn't merge ${specId}'s PR. Try again.`);
   } finally { await deps.refresh(); }

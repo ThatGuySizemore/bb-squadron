@@ -25,6 +25,8 @@ export interface DoctorInput {
   linearConnected: boolean;
   ghAuthenticated: boolean;
   ghHostname?: string;
+  /** False only for a verified no-remote local tracker checkout. */
+  ghRequired?: boolean;
   configurationFiles: ConfigurationFile[];
 }
 
@@ -67,8 +69,9 @@ export function doctor(input: DoctorInput): DoctorReport {
       message: input.linearConnected ? "The Linear key works." : "Set a working Linear personal API key in BB's secret settings.",
     }] : []) as DoctorCheck[]),
     {
-      id: "github", name: "GitHub login", status: input.ghAuthenticated ? "pass" : "fix",
-      message: input.ghAuthenticated ? `gh is signed in${input.ghHostname ? ` to ${input.ghHostname}` : ""} on this repo's machine.`
+      id: "github", name: "GitHub login", status: input.ghRequired === false || input.ghAuthenticated ? "pass" : "fix",
+      message: input.ghRequired === false ? "This local tracker checkout has no remote. GitHub login isn't needed."
+        : input.ghAuthenticated ? `gh is signed in${input.ghHostname ? ` to ${input.ghHostname}` : ""} on this repo's machine.`
         : `Install GitHub CLI if needed, then run gh auth login${input.ghHostname ? ` --hostname ${input.ghHostname}` : ""} on this repo's machine.`,
     },
     ...(["playbook", "machine-profile"] as const).map((id): DoctorCheck => {

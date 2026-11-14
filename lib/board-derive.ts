@@ -8,11 +8,12 @@ import type { LeadThread, WorkerThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
+import type { LaneProgress } from "./lane-progress.js";
 
 /** A planning thread open in BB for one tracker issue, read from its plugin metadata. */
 export interface PlanningThread { issueId: string; threadId: string }
 
-export interface BoardInput {
+export interface BoardInput extends LaneProgress {
   snapshot: TrackerSnapshot;
   /** Open (not archived) planning threads in this BB project. */
   planning?: PlanningThread[];
@@ -79,8 +80,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     project && isActiveProjectThread(thread, thread.id, snapshot.bbProjectId)).map((lead) => [lead.specId, lead]));
   // A spec its Lead closed after the merge keeps its lane, so the lane lands and stays Landed.
   const closedSpecs = snapshot.issues.filter((issue) => issue.parentId === null && issue.state.type === "completed" &&
-    issue.inProject && readyMarked(issue));
-  const lanes: Lane[] = [...specs.filter(readyMarked), ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
+    issue.inProject && (readyMarked(issue) || leads.has(issue.id)));
+  const lanes: Lane[] = [...specs.filter((spec) => readyMarked(spec) || leads.has(spec.id)), ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
@@ -101,7 +102,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     return "blocked";
   }
   function lane(spec: TrackerIssue, lead: LeadThread): Lane {
-    const issues = snapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
+    const noRemote = input.repository?.hasRemote === false;
+    const localLanded = noRemote && (input.repository!.mergedBranches.includes(lead.branch) || spec.state.type === "completed");
+    const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
+    const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
+    const laneById = new Map(laneSnapshot.issues.map((issue) => [issue.id, issue]));
     const ids = new Set(issues.map((issue) => issue.id));
     const workers = lead.workers ?? [];
     const needs = [threadNeed(lead.thread, `The Lead for ${spec.identifier}`),
@@ -117,26 +122,31 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       if (worker) matched.add(worker.id);
       return {
         id: issue.identifier, title: issue.title,
-        blockedBy: snapshot.relations.filter((relation) => relation.relatedIssueId === issue.id && ids.has(relation.issueId))
-          .map((relation) => byId.get(relation.issueId)!.identifier),
+        blockedBy: laneSnapshot.relations.filter((relation) => relation.relatedIssueId === issue.id && ids.has(relation.issueId))
+          .map((relation) => laneById.get(relation.issueId)!.identifier),
         route: settings ? resolveRoute(settings, labels(issue)) : lead.route,
-        state: ticketState(issue),
+        state: snapshot.kind === "local-markdown" && laneSnapshot !== snapshot && issue.state.type === "completed" &&
+          byId.get(issue.id)?.state.type !== "completed" && !localLanded ? "branch" : ticketState(issue),
         minutes: worker ? Math.max(0, Math.floor((input.now - worker.createdAt) / 60_000)) : 0,
         ...(worker ? { threadId: worker.id } : {}),
       };
     });
     const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
-    const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt) : undefined;
+    const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt)
+      : localLanded ? (spec.state.type === "completed" ? Date.parse(spec.updatedAt) : input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt)) : undefined;
     const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
     const acceptOwner = labels(spec).includes(ACCEPT_OWNER);
+    const localMerge = noRemote && !localLanded && tickets.length > 0 && tickets.every((ticket) => ["branch", "done"].includes(ticket.state));
     // accept:owner holds a mergeable PR for the owner's click; other Leads merge their own.
-    const inReview = pr?.state === "open" ? (acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
+    const inReview = acceptOwner && localMerge ? "merge-waits"
+      : pr?.state === "open" ? (acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
     return {
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
       branch: lead.branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped ? "stopped" : "flying"),
       stopped,
+      ...(noRemote ? { localMerge } : {}),
       ...(needs.length ? { needs } : {}),
       minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
       ...(pr && checks ? { pr: { number: pr.number, state: pr.state, url: pr.url, checks } } : {}),

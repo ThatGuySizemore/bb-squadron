@@ -433,7 +433,6 @@ function SpecTitle({ lane }: { lane: Lane }) {
  * is the row's hover title and sits in the lane's ticket list.
  */
 function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting: LaneAction | null }) {
-  const working = lane.workingThreads ?? 0;
   return (
     <div className="sq-lane-row" title={`Branch ${lane.branch}`}>
       <div className="sq-lane-row-top">
@@ -452,12 +451,17 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
         </div>
       </div>
       {lane.outside ? <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} /> : null}
-      {/* The pace line: still when no one works, faster with each working thread. */}
-      <span className="sq-pace-line" data-pace={working} aria-hidden="true">
-        {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
-      </span>
+      <PaceLine lane={lane} landing={landing} />
     </div>
   );
+}
+
+/** The same thin pace line in a narrow lane row and a wide tail card. */
+function PaceLine({ lane, landing }: { lane: Lane; landing: boolean }) {
+  const working = lane.workingThreads ?? 0;
+  return <span className="sq-pace-line" data-pace={working} aria-hidden="true">
+    {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
+  </span>;
 }
 
 function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting?: LaneAction | null }) {
@@ -527,9 +531,9 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         <SpecTitle lane={lane} />
         <LeadButton lane={lane} />
         <div className="sq-tail-status">
-          <span className="sq-lane-state" data-lane={lane.state}>
+          {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}>
             <Term text={LANE_LABEL[lane.state]} />
-          </span>
+          </span> : null}
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
         {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" /> : null}
@@ -537,6 +541,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
         <span className="sq-branch">{lane.branch}</span>
         <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} />
+        <PaceLine lane={lane} landing={landing} />
       </div>
       <div className="sq-track">
         {progress}

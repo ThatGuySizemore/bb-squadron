@@ -131,7 +131,7 @@ components:
     backgroundColor: "{colors.band}"
     textColor: "{colors.board-ink}"
     rounded: "{rounded.none}"
-    padding: "11px 12px 10px"
+    padding: "11px 12px 18px"
   needs-you-row:
     backgroundColor: "{colors.board-ground}"
     rounded: "{rounded.none}"
@@ -163,7 +163,7 @@ components:
 
 # Design System: BB Squadron
 
-This describes the board as shipped in SIZE-958, built to the approved SIZE-948 comp (`comps/live-board/index.html`). The comp and this file agree; where they ever differ, the shipped code and this file win.
+This describes the implemented board, built from the approved SIZE-948 comp (`comps/live-board/index.html`) and updated for SQD-213's formation, compact lanes and live steps. Where the comp differs, the implemented code and this file win.
 
 ## Overview
 
@@ -247,7 +247,7 @@ One centred column (max 1480px) with 22px top and 28px side padding.
 3. **Path strip**, 20px under that: five equal stations in path order.
 4. **Sections**, 30px apart, in attention order, not path order: Needs you (with Doctor's open region under its rows), Flying, Ready, Shaping, Open issues, Landed. Every section always shows; an empty one says in a sentence how work gets into it, with the button that does it where there is one. Each section opens with an uppercase label on a 2px pixel rule, its count beside the label (amber for Needs you, muted otherwise).
 
-A sortie line is a two-column grid: a tail card (208–236px) and a track, 20px apart, 16px of vertical padding, closed by a 1px hairline. The track holds the progress strip above a horizontally scrolling rail. Inside the rail, the dependency columns sit on the pixel rule at their vertical centre, with the airstream canvas behind them across the full width of the pegs; columns are joined by 6x10 pixel chevrons with 7px side margins, and pegs in one column stack 8px apart. When the rail overflows, its right 56px fades out through a mask.
+A wide sortie line is a two-column grid: a tail card (208–236px) and a track, 20px apart, 16px of vertical padding, closed by a 1px hairline. The tail holds the Lead's live step and a thin pace line along its bottom edge. The track keeps the progress strip above a horizontally scrolling rail. Inside the rail, the dependency columns sit on the pixel rule at their vertical centre, with the airstream canvas behind them across the full width of the pegs; columns are joined by 6x10 pixel chevrons with 7px side margins, and pegs in one column stack 8px apart. When the rail overflows, its right 56px fades out through a mask.
 
 List rows (Ready, Shaping, Open issues, Landed) are three-column grids on 1px hairlines: a band plate with the spec number (an 82px mono id column for Open issues), a main column of title over a meta line, and the row's one action at the right. Ready and Shaping rows pad 11px; Open issues and Landed 9px.
 
@@ -304,7 +304,13 @@ Every owner word the board shows as a label (section labels, path stations, lane
 A plain "How it works" button in the header, before Doctor, opens a flat region under the header (12–16px padding, hairline border, no shadow); the button stays tinted while it is open. Close, Escape or the button again closes it, and focus returns to the button. It opens on its own section label, "How Squadron works", with Close at the right. The diagram is the path in the strip's voice: Plan, Spec, Ready, Lane and Landed as 14px names at 650 over 2px pixel rules joined by pixel chevrons. The Lane rule is sky (agents work there) and the Landed rule solid green; the others stay rule ink. Under each rule a muted 12.5px line says who does that part, and the three places the owner steps in (You plan it, You answer questions, You merge `accept:owner` work) carry Needs you's mark: a 6px amber square before 650 amber ink. Under a hairline sit at most five short lines (70ch). Owner words carry their definitions as everywhere else on the board (see Owner words below). In a narrow box the path runs down the page on a vertical pixel rule, with no chevrons.
 
 ### Tail card
-The lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed). Holds the pixel spec number, the title (opens the spec), the Lead chip (opens the Lead thread), the lane state with an 8px state square and its time, the PR link with its checks dot (green, red, pulsing amber while checks run, hollow when there are none or none are known), the outside-lane tag, the branch in mono, and the lane actions (Merge, Resume, Stop). An outside lane replaces the actions with a muted read-only line over a hairline: "Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge."
+The wide lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed), with 11px top, 12px side and 18px bottom padding to clear the pace line. Holds the pixel spec number, the title (opens the spec), the Lead chip and its live step (one button opens the Lead thread), the time, the PR link with its checks dot (green, red, pulsing amber while checks run, hollow when there are none or none are known), the outside-lane tag, the branch in mono, and the lane actions (Merge, Resume, Stop). Flying is said by the section, never repeated in the tail. Other lane states retain their word and 8px state square. An outside lane replaces the actions with a muted read-only line over a hairline: "Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge."
+
+### Compact lane row
+At 900px and below, and always in the side panel, the compact row replaces the tail card. It keeps the band fill and state top edge, with 8px top, 10px side and 16px bottom padding and a 5px row gap. The top line pairs the 2px-cell spec number with a 13.5px title, clamped to two lines, and the tabular lane time. Below it, the Lead chip and live step share one line; the step ellipsizes first. The PR, lane state and actions follow, wrapping as needed. Flying stays in the section header; Stopped, In review and Merge waits on you retain their words. The raw branch is the row's hover title and appears inside All N tickets, rather than taking a line in the header.
+
+### Pace line
+An 8px canvas strip runs along the bottom edge of both the compact lane row and the wide tail card. Both use the same airstream painter and the lane's working-thread count: 12px/s plus 12px/s per working thread, up to four, with density rising too. No working threads means one still frame. It carries no separate accessible label because the tickets and progress count say who is working. The wide dependency rail retains its airstream behind the pegs. All of these canvases share the renderer's hidden-page and reduced-motion rules.
 
 ### Live step
 Flying lanes show the Lead's activity below its chip and each active ticket's activity below its title, in both the full page and side panel. The line uses muted ink, 11px type at 400 and a 1.45 line height. It stays on one line with an ellipsis; the title keeps its two-line allowance. Runtime problems include a word as well as ink: Error uses red ink and Waiting for machine uses amber ink. Elapsed minutes follow the step. With no activity the line says "No recent activity". The board displays a short safe summary, never tool arguments, output or file bodies. Reads are limited to on-screen Flying lanes while the page is visible, once per 15 seconds per lane plus board-changed updates.
@@ -340,7 +346,7 @@ The settings page uses the same ground, ink, type and quiet controls. Workspace 
 
 The board's art and motion come from the canvas dither renderer (`lib/dither.ts`, `lib/dither-renderer.ts`, `board/DitherCanvas.tsx`). One `requestAnimationFrame` loop paints every animated canvas that's on screen, at device-pixel density. It stops while the document is hidden. Under `prefers-reduced-motion` each canvas is painted once, at its still moment, and the loop doesn't run.
 
-- **Airstream (signature):** behind each Flying lane's pegs, sky streaks flow left to right along the sortie line. Their speed (12px/s plus 12px/s per working thread, up to four) and density rise with the number of working threads; a lane with none working draws one still frame.
+- **Airstream (signature):** sky streaks flow left to right in the pace line inside each lane header and behind the wide sortie line's pegs. Their speed (12px/s plus 12px/s per working thread, up to four) and density rise with the number of working threads; a lane with none working draws one still frame.
 - **Working peg:** the dashed march and grain above.
 - **Needs you:** the breathing amber edge grain above.
 - **Formation mark:** lit planes bob and stream contrails behind them while anything flies; empty slots stay still.

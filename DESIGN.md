@@ -283,10 +283,10 @@ A ticket on the sortie line. Square, ground fill, 1px hairline, 190px wide with 
 One segment per ticket in lane order, 6px tall. Hollow (1px rule-ink outline) for waiting and ready; sky through a 50% dither for working and review; solid green for in branch and done; amber or red at double height (12px) for needs you and stopped. The tall segment is the form cue that something on this line is stuck.
 
 ### Formation mark
-Demo only: three pixel chevrons in a V beside the page title, one per lane slot; flying slots fill sky, empty slots fill hairline. It carries an accessible label ("2 of 3 lanes flying"). Live mode has no lane cap and omits the mark.
+Drawn by the dither renderer before the page title (SIZE-956): one sky chevron per lane flying across all of the owner's projects, three slots minimum with empty ones in hairline. The live board labels it "N lanes flying across your projects"; the demo labels it against its lane cap ("2 of 3 lanes flying"). See Motion below.
 
 ### Motion
-All motion is stepped except the burst: border march 600ms `steps(3)`, dither cycle 2.4s `steps(1)`, Needs-you pulse 3.6s, PR-checks-pending blink 1s `steps(1)`, failed glitch 460ms `steps(1)` once, landed stamp 420ms `steps(3)` from 1.3x scale, switch knob 160ms `steps(3)`, and the landing burst: 28 green pixels (2px and 4px) sweeping 120–880px along the line over 950ms `cubic-bezier(0.16, 1, 0.3, 1)`, staggered by 35ms. Hover transitions are 120–140ms. Under `prefers-reduced-motion` every animation and transition is removed, only the first dither layer shows (at 40%), and the burst and the Ready-row hover dither are hidden.
+Shipped in SIZE-956: the board's art and motion come from the canvas dither renderer (`lib/dither.ts`, `lib/dither-renderer.ts`, `board/DitherCanvas.tsx`) as the approved comp's "Material" and "Motion" below describe: the Flying lane airstream, the working peg's march and grain, the Needs-you edge grain, the formation mark and the landing burst. Still fills: review sky 14%, needs-you amber 16%, in-branch green 17%, done green 24%, stopped red 22%. The remaining CSS motion is continuous: landed stamp 520ms from 1.18x `cubic-bezier(0.16, 1, 0.3, 1)`, PR-checks-running pulse 1.6s ease-in-out, switch knob 140ms ease-out. Hover transitions are 120–140ms. Under `prefers-reduced-motion` CSS animations and transitions are removed, each canvas is drawn once as a still frame, and the Ready-row hover dither is hidden. No `steps()` animation remains.
 
 ## Do's and Don'ts
 
@@ -297,7 +297,7 @@ All motion is stepped except the burst: border march 600ms `steps(3)`, dither cy
 - **Do** cut every texture from the Bayer 4x4 masks `--sq-d0` … `--sq-d16` on an 8px tile of 2px cells.
 - **Do** set spec numbers in the 5x7 pixel cell font (cell 4 in lane tails, cell 2 in lists), always with a screen-reader copy.
 - **Do** use 2px-on, 2px-off pixel rules for section rules and sortie lines, and 1px hairlines for rows and cards.
-- **Do** step animations (`steps()`), and give each one a still dither fallback under reduced motion.
+- **Do** draw moving art through the dither renderer, continuously, and only where something is happening; it draws a still frame under reduced motion.
 - **Do** keep amber for what waits on the owner and the actions only he can take.
 
 ### Don't:

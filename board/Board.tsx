@@ -11,10 +11,12 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
+import { DITHER_VARS, layoutPixels } from "../lib/pixels.js";
+import { DitherCanvas } from "./DitherCanvas.js";
 import { BindProject } from "./BindProject.js";
 import { DoctorPanel } from "./Doctor.js";
-import { currentProject, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
+import { currentProject, fleetFlying, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
+import type { ProjectCounts } from "../lib/board-contract.js";
 
 // ---------- pixel primitives ----------
 
@@ -41,54 +43,9 @@ function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: nu
   );
 }
 
-/** Three slots in a V: the lanes the board can fly at once. */
-function FormationMark({ flying, capacity }: { flying: number; capacity: number }) {
-  return (
-    <svg
-      role="img"
-      aria-label={`${flying} of ${capacity} lanes flying`}
-      width={21 * 4}
-      height={9 * 4}
-      viewBox="0 0 21 9"
-      shapeRendering="crispEdges"
-      className="sq-formation"
-    >
-      {formationCells(capacity).map(([i, x, y]) => (
-        <rect key={`${i}.${x}.${y}`} x={x} y={y} width={1} height={1} className={i < flying ? "sq-formation-on" : "sq-formation-off"} />
-      ))}
-    </svg>
-  );
-}
-
-function Dither({ levels }: { levels: number[] }) {
-  return (
-    <span className="sq-dither" aria-hidden="true">
-      {levels.map((level, i) => (
-        <span key={i} className="sq-dither-layer" style={{ maskImage: `var(--sq-d${level})`, WebkitMaskImage: `var(--sq-d${level})`, animationDelay: `${(-i * 2.4) / levels.length}s` } as CSSProperties} data-layers={levels.length} />
-      ))}
-    </span>
-  );
-}
-
-/** Pixels sweep along the sortie line when a spec lands. */
-function Burst() {
-  const bits = useMemo(
-    () =>
-      Array.from({ length: 28 }, (_, i) => ({
-        dx: 120 + ((i * 53) % 760),
-        dy: ((i * 29) % 37) - 18,
-        size: i % 4 === 0 ? 4 : 2,
-        delay: (i % 7) * 35,
-      })),
-    [],
-  );
-  return (
-    <span className="sq-burst" aria-hidden="true">
-      {bits.map((b, i) => (
-        <span key={i} style={{ "--dx": `${b.dx}px`, "--dy": `${b.dy}px`, width: b.size, height: b.size, animationDelay: `${b.delay}ms` } as CSSProperties} />
-      ))}
-    </span>
-  );
+/** The header's formation mark: one chevron per lane flying, drawn by the dither renderer. */
+function FormationMark({ flying, label }: { flying: number; label: string }) {
+  return <DitherCanvas fx={{ kind: "formation", flying }} className="sq-formation" label={label} />;
 }
 
 // ---------- small parts ----------
@@ -184,8 +141,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
   const reviewer = laneReviewer(lane);
   const state = ticket.state;
-  const levels =
-    state === "working" ? [2, 3, 5] : state === "question" ? [2, 4, 6, 4] : state === "review" ? [2] : state === "branch" ? [3] : state === "failed" || state === "done" ? [4] : [];
+  const fill = state === "blocked" || state === "ready" ? null : <DitherCanvas fx={{ kind: "peg", state }} className="sq-fx" />;
   const waitsOn = ticket.blockedBy.filter((b) => {
     const blocker = lane.tickets.find((t) => t.id === b);
     return !blocker || (blocker.state !== "branch" && blocker.state !== "done");
@@ -201,7 +157,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   if (size === "compact") {
     const inner = (
       <>
-        <Dither levels={levels} />
+        {fill}
         <span className="sq-peg-id">{ticket.id}</span>
         <span className="sq-peg-state">{TICKET_LABEL[state]}</span>
       </>
@@ -219,7 +175,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   }
   const body = (
     <>
-      {levels.length > 0 ? <Dither levels={levels} /> : null}
+      {fill}
       <span className="sq-peg-top">
         <span className="sq-peg-id">{ticket.id}</span>
         <span className="sq-peg-state">{sub}</span>
@@ -300,10 +256,11 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
   const stopped = lane.stopped ?? lane.state === "stopped";
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
+  // The airstream's pace: the lane's working threads. A lane with none working is still.
+  const working = lane.tickets.filter((t) => t.state === "working").length;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
   return (
     <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
-      {landing ? <Burst /> : null}
       <div className="sq-tail">
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
         <h3 className="sq-line-title">
@@ -362,6 +319,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           <span className="sq-progress-count sq-num">
             {done}/{lane.tickets.length} in branch
           </span>
+          {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working</span> : null}
         </div>
         <div className="sq-rail" data-overflow={overflow}>
           {overflow ? (
@@ -372,6 +330,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
             </span>
           ) : null}
           <div className="sq-columns" ref={railRef}>
+            {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
             {columns.map((col, i) => (
               <div key={i} className="sq-column">
                 {i > 0 ? <span className="sq-chevron" aria-hidden="true" /> : null}
@@ -426,7 +385,7 @@ export function NeedsYouStrip({ items, dispatch, setup, setUp, demo = false, act
     <ul className="sq-needs">
       {items.map((item) => (
         <li key={item.key} className="sq-need" data-kind={item.kind}>
-          <Dither levels={[3, 6, 3]} />
+          <DitherCanvas fx={{ kind: "needs-you" }} className="sq-fx" />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
           {item.ticketId ?? item.specId ? (
             <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" />
@@ -682,11 +641,13 @@ interface BoardViewProps {
   projectList?: ReactNode;
   /** The project Doctor checks; defaults to BB's context project. */
   projectId?: string | null;
+  /** Lanes flying across every project, for the formation mark; null while unknown. */
+  fleet?: number | null;
   footer?: ReactNode;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, fleet = null, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -718,9 +679,13 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
       <div className="sq-page">
         <header className="sq-head">
           <div className="sq-head-title">
+            {demo ? (
+              <FormationMark flying={flying.length} label={`${flying.length} of ${board.laneCapacity} lanes flying`} />
+            ) : fleet !== null ? (
+              <FormationMark flying={fleet} label={`${fleet} ${fleet === 1 ? "lane" : "lanes"} flying across your projects`} />
+            ) : null}
             <h1>Squadron</h1>
             {projectButton}
-            {demo ? <FormationMark flying={flying.length} capacity={board.laneCapacity} /> : null}
             {demo ? (
               <span className="sq-tag" data-tone="amber">
                 Synthetic data
@@ -974,6 +939,13 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const [picked, setPicked] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerId = useId();
+  // Every project's counts, read once when the page opens and again whenever the picker opens, for the formation mark.
+  const [counts, setCounts] = useState<ProjectCounts | null>(null);
+  useEffect(() => {
+    let current = true;
+    rpc.call("board.projectCounts", null).then((next) => { if (current) setCounts(next); }).catch(() => undefined);
+    return () => { current = false; };
+  }, [rpc]);
   // A new route context replaces an earlier pick in this page.
   useEffect(() => { setPicked(null); }, [context]);
   const projectId = currentProject({ picked, context, lastPick: listed?.lastPick ?? null });
@@ -1087,7 +1059,8 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     <BoardView
       projectId={projectId}
       projectButton={listed ? <ProjectButton name={projectName} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
-      projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} /> : null}
+      projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} onCounts={setCounts} /> : null}
+      fleet={board ? fleetFlying(counts, projectId, board.lanes.filter((lane) => lane.state !== "landed").length) : null}
       onSetUp={() => void setUp()}
       settingUp={settingUp}
       diagnostic={diagnostic}

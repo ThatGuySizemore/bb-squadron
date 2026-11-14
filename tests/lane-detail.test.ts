@@ -240,7 +240,11 @@ test("a landing is a still state under reduced motion", async () => {
   const css = readFileSync("board/board.css", "utf8");
   const reduced = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
   assert.match(reduced, /\.sq \*,[\s\S]*?animation: none !important;/, "the stamp and every other animation stop");
-  assert.match(reduced, /\.sq-burst \{\s*display: none;/, "the burst's pixels never show");
+  // Under reduced motion the renderer draws each surface once, at its still moment; the burst's is its end.
+  const { burst, BURST_SECONDS, createSurface } = await import("../lib/dither.js");
+  const surface = createSurface(600, 80, 2);
+  burst({ ink: 0xff00ff00 })(surface, BURST_SECONDS);
+  assert.equal(surface.buf.filter((pixel) => pixel !== 0).length, 0, "the burst's pixels never show");
 });
 
 test("a spec the Lead closed after its merge stays a Landed lane with its done tickets", () => {
@@ -272,15 +276,15 @@ test("Cancel is a demo-only control and never appears on a live lane", async () 
   assert.match(html(true), />Cancel<\/button>/, "the synthetic simulation keeps Cancel");
 });
 
-test("the live header counts lanes on the board without a capacity or empty formation mark", async () => {
+test("the live header counts lanes on the board without a capacity; its formation mark counts the fleet across projects", async () => {
   await import("./fixtures/app-runtime.js");
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardView } = await import("../board/Board.js");
   const board = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()] })).board;
-  const header = (lanes: typeof board.lanes, demo = false) => {
+  const header = (lanes: typeof board.lanes, demo = false, fleet: number | null = null) => {
     const html = renderToStaticMarkup(createElement(BoardView, {
-      board: { ...board, lanes, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null,
+      board: { ...board, lanes, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null, fleet,
       dispatch: () => undefined, onPlan: () => undefined,
     }));
     return /<header[\s\S]*?<\/header>/.exec(html)![0];
@@ -293,6 +297,9 @@ test("the live header counts lanes on the board without a capacity or empty form
     { ...board.lanes[0], specId: "FIX-30", state: "landed" as const }];
   assert.match(header(mixed), /3 lanes on the board/);
   assert.doesNotMatch(header(mixed), /of 0|lanes flying|sq-formation/);
+  assert.match(header(mixed, false, 5), /<canvas[^>]*role="img"[^>]*aria-label="5 lanes flying across your projects"/, "SIZE-956: the fleet across every project");
+  assert.match(header(mixed, false, 0), /aria-label="0 lanes flying across your projects"/, "the mark stays, still, when nothing flies");
+  assert.doesNotMatch(header(mixed, false, 5), /of 0|of 3/, "the live mark has no capacity");
   assert.match(header(board.lanes, true), /1 of 3 lanes flying/);
   assert.match(header(board.lanes, true), /aria-label="1 of 3 lanes flying"/);
 });

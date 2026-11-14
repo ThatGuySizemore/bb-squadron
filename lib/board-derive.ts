@@ -182,6 +182,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
+      ...(landedAt !== undefined ? { outcomeAt: landedAt } : stopped ? {
+        outcomeAt: Math.max(...[lead.thread, ...workers].map((thread) => thread.updatedAt ?? thread.createdAt)),
+      } : {}),
       workingThreads: [lead.thread, ...workers].filter((thread) => RUNNING.has(thread.status)).length,
       ...(outside ? { outside } : {}),
       ...(noRemote && !outside ? { localMerge } : {}),

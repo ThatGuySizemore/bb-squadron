@@ -10,8 +10,8 @@ export function Autopilot({ state, saving = false, onChange }: {
 }) {
   const on = state.status === "on";
   return <section className="sq-autopilot" aria-label="Autopilot controls" aria-busy={saving}>
-    <button type="button" role="switch" aria-checked={on} aria-label="Autopilot" className="sq-switch" disabled={saving}
-      onClick={() => onChange?.({ status: on ? "off" : "on" })}>
+    <button type="button" role="switch" aria-checked={state.status !== "off"} aria-label="Autopilot" className="sq-switch" disabled={saving}
+      onClick={() => onChange?.({ status: state.status === "off" ? "on" : "off" })}>
       <span className="sq-switch-track" aria-hidden="true"><span className="sq-switch-knob" /></span>
       <Term text="Autopilot" nested /> <span>{on ? "On" : state.status === "paused" ? "Paused" : "Off"}</span>
     </button>

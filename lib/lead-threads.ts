@@ -4,7 +4,7 @@ import { isActiveProjectThread } from "./project-thread.js";
 
 type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 /** The thread list adds whether a thread waits on the owner and whether its queued work failed. */
-type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork">>;
+type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork" | "updatedAt">>;
 
 /** A child thread of a Lead: one of its workers, or its reviewer. */
 export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status" | "runtime"> & Attention;

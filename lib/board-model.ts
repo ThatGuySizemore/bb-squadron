@@ -30,6 +30,8 @@ const lane = z.object({
     state: z.enum(["draft", "open", "merged", "closed"]).optional(),
   }).optional(),
   stopReason: z.string().optional(), landedAt: z.number().optional(),
+  /** Latest thread update for a stop, or merge time for a landing; orders newly observed outcomes. */
+  outcomeAt: z.number().optional(),
   /** Who runs the lane's final review, from the final-review family. */
   reviewer: route.optional(),
   /** The spec in its planning tracker. */
@@ -89,7 +91,7 @@ export type ReadySpec = Board["ready"][number];
 export type OpenIssue = Board["openIssues"][number];
 export type ShapingSpec = Board["shaping"][number];
 export type TrackerStatus = NonNullable<Board["tracker"]>;
-export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge";
+export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge" | "autopilot-paused";
 
 export interface NeedsYouItem {
   key: string;
@@ -105,6 +107,10 @@ export interface NeedsYouItem {
 /** What waits on the owner, derived from lane and ticket state, never stored. */
 export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
+  if (board.autopilot?.status === "paused") {
+    items.push({ key: "autopilot-paused", kind: "autopilot-paused", specId: "", threadId: null,
+      text: board.autopilot.pauseReason ?? "Autopilot is paused." });
+  }
   const fixes = (board.doctor?.checks ?? []).filter((check) => check.status === "fix");
   // A Scope problem Doctor already names needs one row, not two.
   if ((board.tracker?.state === "disconnected" || board.tracker?.state === "unscoped")
@@ -154,7 +160,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5 };
+  const order: Record<NeedsYouKind, number> = { "autopilot-paused": -1, setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 

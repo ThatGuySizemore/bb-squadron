@@ -1,6 +1,7 @@
 import { experimental_FileLink as FileLink, experimental_useRpcQuery as useRpcQuery, useBbContext } from "@get-bb/plugin-sdk/app";
 import type { DoctorReport } from "../lib/doctor.js";
 import { doctorContract } from "../lib/doctor-contract.js";
+import { Term } from "./Term.js";
 import "./doctor.css";
 
 export function DoctorChecks({ report }: { report: DoctorReport }) {
@@ -9,7 +10,7 @@ export function DoctorChecks({ report }: { report: DoctorReport }) {
     <ul className="sq-doctor-checks" aria-label="Setup checks">
       {report.checks.map((check) => (
         <li key={check.id} className="sq-doctor-check" data-status={check.status}>
-          <span className="sq-doctor-name">{check.name}</span>
+          <span className="sq-doctor-name"><Term text={check.name} /></span>
           <span className="sq-tag">{check.status === "pass" ? "Pass" : check.status === "warning" ? "Warning" : "Fix"}</span>
           <p>{check.message}</p>
         </li>
@@ -19,7 +20,7 @@ export function DoctorChecks({ report }: { report: DoctorReport }) {
     <ul className="sq-doctor-files" aria-label="Configuration files">
       {report.configurationFiles.map((file) => (
         <li key={file.id}>
-          <FileLink target={{ kind: "host", hostId: file.hostId, path: file.path }}>{file.name}</FileLink>
+          <FileLink target={{ kind: "host", hostId: file.hostId, path: file.path }}><Term text={file.name} nested /></FileLink>
           <span className="sq-tag">{file.exists ? "Present" : "Missing"}</span>
           <span className="sq-doctor-path">{file.path}</span>
         </li>

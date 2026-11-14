@@ -8,6 +8,9 @@ import plugin from "../server.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { end, ready } from "./fixtures/linear-mirror.js";
 import type { Board } from "../lib/board-model.js";
+import { elements, parse, visibleText } from "./fixtures/owner-text.js";
+
+const buttonLabels = (html: string) => elements(parse(html)).filter((element) => element.tag === "button").map(visibleText);
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 const labels = [
@@ -292,7 +295,7 @@ test("while a planning thread opens, its Plan button says so and waits", async (
   }));
   assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Opening…<\/button>/g) ?? []).length, 1, "only FIX-9's Plan waits");
   assert.equal((html.match(/>Plan<\/button>/g) ?? []).length, 1);
-  assert.ok(html.includes(">New spec</button>"));
+  assert.ok(buttonLabels(html).includes("New spec"));
 });
 
 const emptyBoard = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [] };
@@ -310,11 +313,11 @@ test("Shaping rows name what's missing and offer the one fixing button", async (
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, planning: "FIX-30",
   }));
-  assert.ok(html.includes(">Shaping</h2>"));
+  assert.match(html, /<h2[^>]*><span[^>]*data-term="Shaping"[^>]*>Shaping</);
   for (const text of ["Being planned", "Planning is still open in its thread.", "Has 2 tickets but no ready-for-agent label.",
     "Starting a planning thread for its tickets"]) assert.ok(html.includes(text), `Shaping shows ${text}`);
   assert.equal((html.match(/>Resume planning<\/button>/g) ?? []).length, 1);
-  assert.equal((html.match(/>Plan tickets<\/button>/g) ?? []).length, 1);
+  assert.equal(buttonLabels(html).filter((label) => label === "Plan tickets").length, 1);
   assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Opening…<\/button>/g) ?? []).length, 1, "only FIX-30's button waits");
 });
 
@@ -343,7 +346,7 @@ test("an empty board shows how to get started: every section says how work arriv
     "No spec is being shaped. Plan an open issue, or start a new spec from nothing.",
     "No open issues. Issues in this project that aren't specs or tickets wait here for Plan.",
   ]) assert.ok(html.includes(text), `the empty board says: ${text}`);
-  assert.equal((html.match(/>New spec<\/button>/g) ?? []).length, 5, "the header and each empty section offer New spec");
+  assert.equal(buttonLabels(html).filter((label) => label === "New spec").length, 5, "the header and each empty section offer New spec");
   const order = ["sq-flying-h", "sq-ready-h", "sq-shaping-h", "sq-open-issues-h"].map((id) => html.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order, "the path reads Flying, Ready, Shaping, Open issues");
 

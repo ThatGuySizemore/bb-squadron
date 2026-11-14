@@ -1,0 +1,166 @@
+/* SQD-204: "How Squadron works", a flat region under the header.
+   The path reuses the strip's voice: labels on 2px pixel rules joined by chevrons.
+   Inks keep their meaning: amber is you, sky is agents working, green is landed. */
+
+/* The header button stays tinted while its view is open. */
+.sq-how-open[aria-expanded="true"] {
+  background: var(--sq-hover);
+  border-color: var(--sq-rule-ink);
+}
+
+.sq-how {
+  margin-top: 16px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--sq-rule);
+  background: var(--background);
+}
+.sq-how-head {
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.sq-how-head h2:focus {
+  outline: none;
+}
+.sq-how-head h2:focus-visible {
+  outline: 2px solid var(--sq-sky-ink);
+  outline-offset: 2px;
+}
+
+/* ---------- the path ---------- */
+
+.sq-how-path {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sq-how-stop {
+  display: grid;
+  grid-template-rows: auto 2px auto auto;
+  align-content: start;
+  padding-right: 14px;
+}
+.sq-how-name {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.sq-how-rule {
+  position: relative;
+  background: var(--sq-pixel-rule);
+  margin-right: -14px;
+}
+.sq-how-stop[data-stop="lane"] .sq-how-rule {
+  background: repeating-linear-gradient(90deg, var(--sq-sky) 0 2px, transparent 2px 4px);
+}
+.sq-how-stop[data-stop="landed"] .sq-how-rule {
+  background: var(--sq-green);
+  margin-right: 0;
+}
+.sq-how-chev {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  fill: var(--sq-rule-ink);
+}
+.sq-how-who {
+  margin: 10px 0 0;
+  max-width: 24ch;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--sq-muted);
+}
+/* Where you step in: Needs you's mark, an amber square before amber ink. */
+.sq-how-you {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  color: var(--sq-amber-ink);
+}
+.sq-how-you::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--sq-amber);
+  transform: translateY(-1px);
+}
+.sq-how-you code {
+  font-family: var(--sq-mono);
+  font-size: 11px;
+}
+
+/* ---------- the lines ---------- */
+
+.sq-how-lines {
+  margin: 20px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--sq-rule);
+  list-style: none;
+}
+.sq-how-lines li {
+  max-width: 70ch;
+}
+.sq-how-lines li + li {
+  margin-top: 4px;
+}
+.sq-how-lines li:last-child {
+  color: var(--sq-muted);
+}
+
+/* ---------- side panel: the path runs down the page ---------- */
+
+@container (max-width: 560px) {
+  .sq-how {
+    padding: 12px;
+  }
+  .sq-how-path {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sq-how-stop {
+    grid-template-columns: 2px minmax(0, 1fr);
+    grid-template-rows: none;
+    column-gap: 12px;
+    padding: 0 0 14px;
+  }
+  .sq-how-stop:last-child {
+    padding-bottom: 0;
+  }
+  .sq-how-stop > :not(.sq-how-rule) {
+    grid-column: 2;
+  }
+  .sq-how-rule {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    margin: 4px 0 -10px;
+    background: repeating-linear-gradient(180deg, var(--sq-rule-ink) 0 2px, transparent 2px 4px);
+  }
+  .sq-how-stop[data-stop="lane"] .sq-how-rule {
+    background: repeating-linear-gradient(180deg, var(--sq-sky) 0 2px, transparent 2px 4px);
+  }
+  .sq-how-stop[data-stop="landed"] .sq-how-rule {
+    margin-bottom: 0;
+  }
+  .sq-how-chev {
+    display: none;
+  }
+  .sq-how-name {
+    margin-bottom: 0;
+  }
+  .sq-how-who {
+    margin-top: 2px;
+    max-width: none;
+  }
+  .sq-how-you {
+    margin-top: 4px;
+  }
+  .sq-how-lines {
+    margin-top: 14px;
+  }
+}

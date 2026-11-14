@@ -108,7 +108,9 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   const issues: SettingsIssue[] = [];
   for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping", "Scope"] as const) {
     if ((section === "Status mapping" || section === "Scope") && trackerKind !== "linear") continue;
-    if (!parts.has(section)) issues.push({ section, message: section === "Scope" ? SCOPE_MISSING : `Add the ${section} section to docs/agents/squadron.md.` });
+    if (!parts.has(section)) issues.push({ section, message: section === "Scope" ? SCOPE_MISSING
+      : section === "Status mapping" ? "Add the Linear status each state uses to docs/agents/squadron.md, as in Squadron's settings template."
+      : `Add the ${section} section to docs/agents/squadron.md.` });
   }
   if (issues.length) return { ok: false, issues };
   const quickCheck = /(?:```|~~~)[^\n]*\n([\s\S]*?)(?:```|~~~)/.exec(parts.get("Quick check") ?? "")?.[1].trim() ?? "";

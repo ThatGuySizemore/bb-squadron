@@ -1,0 +1,57 @@
+/* Owner words: a dotted rule under the word says it has a definition; hover or
+   keyboard focus shows it. The definition is flat like the picker list: a
+   hairline box on the ground, opened by a pixel rule, with no shadow. */
+
+.sq-term {
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: var(--sq-rule-ink, currentColor);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: none;
+  cursor: help;
+}
+.sq-term:hover,
+.sq-term:focus-visible {
+  text-decoration-color: currentColor;
+}
+
+.sq-term-tip {
+  /* The top layer places it; Term sets top and left from the word's box. */
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(34ch, calc(100vw - 16px));
+  padding: 9px 10px 8px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background:
+    var(--sq-pixel-rule, linear-gradient(var(--border), var(--border))) top / 100% 2px no-repeat,
+    var(--background);
+  color: var(--foreground);
+  /* Reset what the word's own label sets: section labels are uppercase and tracked. */
+  font-family: inherit;
+  font-size: 12.5px;
+  font-style: normal;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: normal;
+  text-align: left;
+  text-decoration: none;
+  text-transform: none;
+  white-space: normal;
+  text-wrap: pretty;
+  cursor: default;
+  overflow: visible;
+}
+.sq-term-tip:not(:popover-open) {
+  display: none;
+}
+/* Without the popover API the definition stays out of the line; the word still reads. */
+@supports not selector(:popover-open) {
+  .sq-term-tip {
+    display: none;
+  }
+}

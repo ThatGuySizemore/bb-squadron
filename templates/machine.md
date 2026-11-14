@@ -1,8 +1,8 @@
-# Machine profile
+# This machine
 
 Keep this private file at `~/.bb-squadron/machine.md` on each machine. Both families read it.
 
-This layer describes this machine: devices and their permitted use, tools for each family, identities and notes for each project. Keep cross-project preferences in the playbook, repo rules in `AGENTS.md` and `docs/agents/`, and checked-in project settings in `docs/agents/squadron.md`.
+This file describes this machine: devices and their permitted use, tools for each family, identities and notes for each project. Keep cross-project preferences in House rules, repo rules in `AGENTS.md` and `docs/agents/`, and checked-in project settings in `docs/agents/squadron.md`.
 
 ## Devices
 

@@ -304,7 +304,8 @@ test("the path strip counts lanes on the board without a capacity; its formation
     dispatch: () => undefined, onPlan: () => undefined,
   }));
   const header = (...args: Parameters<typeof page>) => /<header[\s\S]*?<\/header>/.exec(page(...args))![0];
-  const station = (html: string, label: string) => new RegExp(`${label}</span><span class="sq-station-count sq-num">(\\d+)<`).exec(html)?.[1];
+  // An owner word in a station carries its definition: the label sits in a term with its tooltip.
+  const station = (html: string, label: string) => new RegExp(`class="sq-station-label"><span[^>]*data-term="${label}"[^>]*>${label}<span[^>]*role="tooltip"[^>]*>[^<]*</span></span></span><span class="sq-station-count sq-num">(\\d+)<`).exec(html)?.[1];
   assert.equal(station(page([]), "Flying"), "0");
   assert.equal(station(page(board.lanes), "Flying"), "1");
   const mixed = [board.lanes[0],

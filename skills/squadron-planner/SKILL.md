@@ -11,6 +11,8 @@ The board's planning buttons supply the project's tracker and an optional seed i
 - **Plan** starts from an open issue.
 - **Plan tickets** names a spec that already exists: run `to-tickets` on it, then mark it `ready-for-agent`.
 
+Use Owner words from `GLOSSARY.md` in PR bodies, comments and Needs you text. Squadron is the orchestrator; the Helper is the optional agent thread the owner talks to.
+
 Read the repo rules and `docs/agents/issue-tracker.md`. Read the current routes in `docs/agents/squadron.md`.
 
 With the owner, run these skills from Matt Pocock's installed plugin, in order and as written:

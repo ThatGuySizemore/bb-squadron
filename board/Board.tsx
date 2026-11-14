@@ -14,6 +14,8 @@ import type { BoardAction } from "../lib/fake-board.js";
 import { layoutPixels } from "../lib/pixels.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
+import { Term } from "./Term.js";
+import { HowItWorks } from "./HowItWorks.js";
 import { currentProject, fleetFlying, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 import type { ProjectCounts } from "../lib/board-contract.js";
 import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
@@ -183,7 +185,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       <>
         {fill}
         <span className="sq-peg-id">{ticket.id}</span>
-        <span className="sq-peg-state">{TICKET_LABEL[state]}</span>
+        <span className="sq-peg-state"><Term text={TICKET_LABEL[state]} nested={clickable} /></span>
       </>
     );
     const label = `${ticket.id}, ${ticket.title}: ${TICKET_LABEL[state]}`;
@@ -205,7 +207,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
         {/* A waiting peg names its open blockers in the state's place. */}
         {state === "blocked" && waitsOn.length > 0
           ? <span className="sq-peg-after" title={`Waiting after ${waitsOn.join(", ")}`}>after {waitsOn.join(", ")}</span>
-          : <span className="sq-peg-state">{sub}</span>}
+          : <span className="sq-peg-state"><Term text={sub} nested={clickable} /></span>}
       </span>
       <span className="sq-peg-title">{ticket.title}</span>
       {size === "full" ? (
@@ -335,7 +337,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         </button>
         <div className="sq-tail-status">
           <span className="sq-lane-state" data-lane={lane.state}>
-            {LANE_LABEL[lane.state]}
+            <Term text={LANE_LABEL[lane.state]} />
           </span>
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
@@ -377,9 +379,9 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           {progress}
           <div className="sq-air-band" aria-hidden="true">{air}</div>
           {active.length ? <div className="sq-active">{active.map((t) => <Peg key={t.id} ticket={t} lane={lane} />)}</div> : null}
-          <details className="sq-all"><summary>{lane.tickets.length === 1 ? "1 ticket" : `All ${lane.tickets.length} tickets`}</summary><ol>
+          <details className="sq-all"><summary>{lane.tickets.length === 1 ? "1 " : `All ${lane.tickets.length} `}<Term text={lane.tickets.length === 1 ? "ticket" : "tickets"} word="Ticket" nested /></summary><ol>
             {lane.tickets.map((t) => (
-              <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}>{TICKET_LABEL[t.state]}</span></li>
+              <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}><Term text={TICKET_LABEL[t.state]} /></span></li>
             ))}
           </ol></details>
           {others}
@@ -533,7 +535,7 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
         ) : null}
         {held.length ? (
           <details className="sq-waits">
-            <summary>{held.length} held</summary>
+            <summary>{held.length} <Term text="held" word="Held" nested /></summary>
             <ul className="sq-ready-waiting" aria-label={`Held tickets of ${spec.id}, which the Lead skips`}>
               {held.map((ticket) => (
                 <li key={ticket.id} title={ticket.title}>
@@ -576,7 +578,7 @@ function ShapingRow({ spec, onPlan, opening }: { spec: ShapingSpec; onPlan: Plan
       <div className="sq-row-actions">
         <Btn tone="primary" disabled={opening} title={opening ? undefined : `${label} for ${spec.id}`}
           onClick={() => (spec.action === "resume" ? onPlan(spec.id) : onPlan(spec.id, "tickets"))}>
-          {opening ? "Opening…" : label}
+          {opening ? "Opening…" : spec.action === "resume" ? label : <>Plan <Term text="tickets" word="Ticket" nested /></>}
         </Btn>
       </div>
     </li>
@@ -785,7 +787,7 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
         return (
           <button key={key} type="button" className="sq-station" data-zero={!n} data-hot={key === "flying" && !!n} onClick={() => onJump(key)}>
             <span className="sq-station-label">
-              {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : label}
+              {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : <Term text={label} nested />}
             </span>
             <span className="sq-station-count sq-num">{n ?? "–"}</span>
             {key !== "landed" ? <Chevron className="sq-station-chev" /> : null}
@@ -800,7 +802,7 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
 function SectionHead({ id, title, count, amber = false }: { id: string; title: string; count: number; amber?: boolean }) {
   return (
     <div className="sq-label">
-      <h2 id={id}>{title}</h2>
+      <h2 id={id}><Term text={title} /></h2>
       {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
     </div>
   );
@@ -844,6 +846,9 @@ interface BoardViewProps {
 export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, fleetLabel, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
+  const [howOpen, setHowOpen] = useState(false);
+  const howId = useId();
+  const howButton = useRef<HTMLButtonElement>(null);
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
   const phase = useLandings(board.lanes);
@@ -856,7 +861,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
   // New spec starts the path from nothing; one planning thread opens at a time.
   const newSpec = (tone: "primary" | "plain" = "plain") => (
     <Btn tone={tone} disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : "Plan a new spec from nothing"} onClick={() => onPlan()}>
-      {planning === "" ? "Opening…" : "New spec"}
+      {planning === "" ? "Opening…" : <>New <Term text="spec" word="Spec" nested /></>}
     </Btn>
   );
   const doctor = doctorStatus(board);
@@ -910,6 +915,8 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             ) : null}
             {modeSwitch}
             {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
+            <button type="button" ref={howButton} className="sq-btn sq-how-open" aria-expanded={howOpen} aria-controls={howOpen ? howId : undefined}
+              title="See how an idea becomes a merged pull request, and where you step in" onClick={() => setHowOpen((open) => !open)}>How it works</button>
             <button type="button" className="sq-doctor" data-status={doctor?.tone ?? "unknown"} aria-expanded={doctorOpen} aria-controls={doctorId}
               title={doctor ? `Doctor: ${doctor.text}` : "Check this repo's setup"} onClick={() => setDoctorOpen((open) => !open)}>
               Doctor{doctor ? <span className="sq-sr">: </span> : null}
@@ -918,6 +925,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             {newSpec("primary")}
           </div>
         </header>
+        {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
         <TrackerLine board={board} tracker={tracker} now={Date.now()} />
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
         <PathStrip counts={counts} onJump={jump} />

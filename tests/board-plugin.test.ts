@@ -207,7 +207,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
 
   assert.ok(board.doctor);
   const doctorHtml = renderToStaticMarkup(createElement(DoctorChecks, { report: board.doctor }));
-  for (const text of ["Repo rules", "Project settings", "Playbook", "Machine profile", "Present", "/owner/.bb-squadron/playbook.md"]) {
+  for (const text of ["Repo rules", "Project settings", "House rules", "This machine", "Present", "/owner/.bb-squadron/playbook.md"]) {
     assert.ok(doctorHtml.includes(text), `Doctor shows ${text}`);
   }
 

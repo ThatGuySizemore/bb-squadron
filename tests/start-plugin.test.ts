@@ -17,7 +17,7 @@ function nativeThreads() {
   return { count: 0, threads: new Map<string, ReturnType<typeof makeThreadResponse>>(),
     metadata: new Map<string, Record<string, unknown>>(), routes: new Map<string, { model: string; reasoningLevel: string }>() };
 }
-function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>) {
+function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile) {
   const { threads, metadata, routes } = native;
   return { native, ...createFakePluginHost({
     pluginId: "squadron", experimental_hostEntry: true,
@@ -33,7 +33,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
           return { content, contentEncoding: "utf8", path, sha256: "tracker", sizeBytes: content.length };
         }
         assert.equal(path, "/repo/docs/agents/squadron.md");
-        return { content: settingsFile, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: settingsFile.length };
+        return { content: settings, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: settings.length };
       } },
       skills: { list: async () => ({ skills: ["claude-code", "codex"].flatMap((provider) => skillNames.map((name) => ({
         id: `${provider}-${name}`, name: `mattpocock-skills:${name}`, description: null,
@@ -62,10 +62,10 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
     },
   }) };
 }
-async function setup(t: import("node:test").TestContext, issues?: () => Response, ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>) {
+async function setup(t: import("node:test").TestContext, issues?: () => Response, ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile) {
   const linear = workspace({ issues });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
-  const { bb, harness, native } = host(undefined, ownerHost);
+  const { bb, harness, native } = host(undefined, ownerHost, settings);
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
@@ -100,7 +100,7 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
   assert.deepEqual(board.ready.map((row) => row.id), ["FIX-1"]);
 });
 
-test("Start uses the first matching spec label rather than a ticket's route", async (t) => {
+test("Without a Lead row, Start uses the first matching spec label rather than a ticket's route", async (t) => {
   const { harness } = await setup(t, () => Response.json({ data: { issues: {
     ...workspaceIssues.data.issues, nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-5" ? {
       ...node, labels: { ...node.labels, nodes: [...node.labels.nodes, { id: "label-ui", name: "ui", color: "#0000aa" }] },
@@ -109,6 +109,21 @@ test("Start uses the first matching spec label rather than a ticket's route", as
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel], ["claude-code", "claude-opus-5-5", "high"]);
+});
+
+test("Start uses the Lead row even on a ui spec and keeps ticket routes separate", async (t) => {
+  const settings = settingsFile.replace("| `ui`", "| Lead | GPT | gpt-6.1-sol | medium |\n| `ui`");
+  const { harness } = await setup(t, () => Response.json({ data: { issues: {
+    ...workspaceIssues.data.issues, nodes: workspaceIssues.data.issues.nodes.map((node) => ({
+      ...node, labels: { ...node.labels, nodes: [...node.labels.nodes, { id: "label-ui", name: "ui", color: "#0000aa" }] },
+    })),
+  } } }), undefined, settings);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel], ["codex", "gpt-6.1-sol", "medium"]);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes[0].tickets[0].route, { family: "claude", model: "claude-opus-5-5", effort: "high" });
+  assert.deepEqual(board.lanes[0].reviewer, { family: "claude", model: "claude-opus-5-5", effort: "high" });
 });
 
 test("a ready-marked spec with open planning is Shaping in the board and picker and cannot Start through RPC", async (t) => {

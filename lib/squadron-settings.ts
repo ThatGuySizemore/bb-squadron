@@ -2,7 +2,7 @@ import type { Route } from "./board-model.js";
 import { detectTracker, type TrackerKind } from "./tracker-detection.js";
 
 export interface SquadronRoute extends Route {
-  /** null is the required fallback row. */
+  /** null is the required fallback row; Lead is reserved for the coordinator. */
   label: string | null;
 }
 
@@ -183,8 +183,14 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
 /** Matching labels keep file order and ignore case; the default is used only when none match. */
 export function resolveRoute(settings: SquadronSettings, labels: readonly string[]): Route {
   const names = new Set(labels.map((label) => label.toLowerCase()));
-  const row = settings.routes.find((route) => route.label !== null && names.has(route.label.toLowerCase()))
+  const row = settings.routes.find((route) => route.label !== null && route.label.toLowerCase() !== "lead" && names.has(route.label.toLowerCase()))
     ?? settings.routes.find((route) => route.label === null);
   if (!row) throw new Error("Add a default route to docs/agents/squadron.md.");
   return { family: row.family, model: row.model, effort: row.effort };
+}
+
+/** An explicit Lead row overrides spec labels; older settings keep their label-based routing. */
+export function resolveLeadRoute(settings: SquadronSettings, labels: readonly string[]): Route {
+  const row = settings.routes.find((route) => route.label?.toLowerCase() === "lead");
+  return row ? { family: row.family, model: row.model, effort: row.effort } : resolveRoute(settings, labels);
 }

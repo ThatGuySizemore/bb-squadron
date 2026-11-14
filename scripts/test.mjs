@@ -22,7 +22,7 @@ if (!tests.length) throw new Error("No tests found in tests/.");
 const base = process.env.BB_THREAD_STORAGE ?? tmpdir();
 await mkdir(base, { recursive: true });
 const outDir = await mkdtemp(join(base, "squadron-tests-"));
-console.log(`Test build: ${outDir}`);
+const logPath = join(outDir, "full.tap");
 const configPath = ts.findConfigFile(root, ts.sys.fileExists, "tsconfig.json");
 const config = ts.readConfigFile(configPath, ts.sys.readFile);
 const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, root);
@@ -40,8 +40,11 @@ if (diagnostics.length) {
   program.emit();
   await writeFile(join(outDir, "package.json"), '{"type":"module"}\n');
   await symlink(join(root, "node_modules"), join(outDir, "node_modules"), "dir");
-  const result = spawnSync(process.execPath, ["--test", ...tests.map((path) => join(outDir, relative(root, path).replace(/\.tsx?$/, ".js")))], {
+  const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", `--test-reporter-destination=${logPath}`,
+    `--test-reporter=${join(root, "scripts/quiet-test-reporter.mjs")}`, "--test-reporter-destination=stdout", ...tests.map((path) => join(outDir, relative(root, path).replace(/\.tsx?$/, ".js")))], {
     cwd: root, stdio: "inherit", env: process.env,
   });
   process.exitCode = result.status ?? 1;
+  if (result.error) console.error(result.error);
+  console.log(`Full TAP log: ${logPath}`);
 }

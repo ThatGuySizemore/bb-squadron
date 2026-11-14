@@ -19,7 +19,7 @@ With the owner, run these skills from Matt Pocock's installed plugin, in order a
 
 1. `grill-with-docs`, starting from the seed issue or what the owner wants to build. For Plan tickets, use it only for open questions.
 2. `to-spec`. Skip it for Plan tickets.
-3. `to-tickets`. Add route labels from the project settings. Use the first matching route; the default adds no route label.
+3. `to-tickets`. Add route labels from the project settings. Use the first matching route; the default adds no route label. `Lead` selects the coordinator and adds no ticket label.
 
 Invoke each skill when the provider allows it. Otherwise read its `SKILL.md` in the installed plugin and follow it. If the plugin or a skill is missing, ask the owner to install Matt's plugin.
 

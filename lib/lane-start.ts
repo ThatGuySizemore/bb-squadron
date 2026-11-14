@@ -3,7 +3,7 @@ import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from 
 import { deriveBoard } from "./board-derive.js";
 import { readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import { resolveRoute } from "./squadron-settings.js";
+import { resolveLeadRoute } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { PULL_REQUEST_PLUGIN, readPullRequests } from "./pull-requests.js";
@@ -48,7 +48,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     if (!ready || !spec) throw new Error(`${specId} isn't a ready spec in this project's tracker. Read the board again.`);
     if (ready.startReason) throw new Error(ready.startReason);
     if (!checkout.settings?.ok) throw new Error("Fix docs/agents/squadron.md, then try Start again.");
-    const route = resolveRoute(checkout.settings.settings, spec.labels.map((label) => label.name));
+    const route = resolveLeadRoute(checkout.settings.settings, spec.labels.map((label) => label.name));
     const { holdLabels } = checkout.settings.settings;
     const ownerPath = (id: "playbook" | "machine-profile") => doctor.configurationFiles.find((file) => file.id === id)?.path;
     const thread = await bb.sdk.threads.spawn({

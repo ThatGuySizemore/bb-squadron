@@ -37,12 +37,13 @@ A merge stops only for these:
 
 ## Routes
 
-The first matching label wins. The default row is used when no label matches.
+Lead coordinates and merges; workers build tickets. The Lead row selects the coordinator. For workers, the first matching ticket label wins, with the default row as fallback.
 
 | Label | Family | Model | Effort |
 |---|---|---|---|
+| Lead | GPT | gpt-6.1-sol | medium |
 | `ui` | Claude | claude-opus-5-5 | high |
-| (default) | GPT | gpt-6.1-sol | high |
+| (default) | GPT | gpt-6.1-sol | medium |
 
 ## Final review
 

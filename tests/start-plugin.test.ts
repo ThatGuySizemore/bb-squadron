@@ -656,3 +656,30 @@ test("an Off action cancels an automatic start still checking Doctor", async (t)
   await watcherCycle(harness);
   assert.equal(native.count, 0);
 });
+
+test("Autopilot skips a held parent spec even when it still has ready-for-agent and runnable tickets", async (t) => {
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-1" ? {
+      ...node, inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+      labels: { ...node.labels, nodes: [...node.labels.nodes, { id: "hold", name: "hold", color: "#aaaaaa" }] },
+    } : node),
+  } } }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.deepEqual([...native.metadata.values()].filter((item) => item.role === "lead").map((item) => item.specId), ["fix-5"]);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.ok(board.shaping.some((spec) => spec.id === "FIX-1"));
+  assert.ok(!board.ready.some((spec) => spec.id === "FIX-1"));
+  await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-1" }), /isn't a ready spec/);
+});
+
+test("Autopilot never starts a Shaping spec whose ready-for-agent label remains during planning", async (t) => {
+  const { harness, native } = await setup(t);
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
+  await watcherCycle(harness);
+  assert.deepEqual([...native.metadata.values()].filter((item) => item.role === "lead"), []);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.ok(board.shaping.some((spec) => spec.id === "FIX-5"));
+  assert.ok(!board.ready.some((spec) => spec.id === "FIX-5"));
+});

@@ -201,6 +201,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // An open planning thread keeps a spec Shaping; Ready needs an open, unblocked ticket.
     if (planning.has(spec.id)) {
       shaping.push({ ...row, missing: "Planning is still open in its thread.", action: "resume", threadId: planning.get(spec.id)! });
+    } else if (held(spec)) {
+      shaping.push({ ...row, missing: "This spec is held. Clear its hold before Start.", action: "tickets" });
     } else if (!tickets.length) {
       shaping.push({ ...row, missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" });
     } else if (!marked) {

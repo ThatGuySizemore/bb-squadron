@@ -12,13 +12,14 @@ export function BindProject({ projectId, onBound }: { projectId: string; onBound
   const [error, setError] = useState("");
   useEffect(() => {
     let current = true;
-    rpc.call("linear.catalog", null).then((next) => {
+    Promise.all([rpc.call("linear.catalog", null), rpc.call("linear.suggestBinding", { bbProjectId: projectId }).catch(() => null)]).then(([next, suggestion]) => {
       if (!current) return;
       setCatalog(next);
-      setTeamId(next.teams[0]?.id ?? "");
+      setTeamId(suggestion?.teamId ?? next.teams[0]?.id ?? "");
+      setLinearProjectId(suggestion?.projectId ?? "");
     }).catch(() => { if (current) setError("Couldn't list Linear teams. Check the Linear connection, then reopen the board."); });
     return () => { current = false; };
-  }, [rpc]);
+  }, [rpc, projectId]);
   const projects = catalog?.projects.filter((project) => project.teamIds.includes(teamId)) ?? [];
   // A team change falls back to that team's first project.
   const chosen = projects.some((project) => project.id === linearProjectId) ? linearProjectId : projects[0]?.id ?? "";

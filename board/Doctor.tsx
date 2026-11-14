@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { experimental_useRpcQuery as useRpcQuery, useBbContext } from "@get-bb/plugin-sdk/app";
 import type { DoctorReport } from "../lib/doctor.js";
 import { doctorContract } from "../lib/doctor-contract.js";
@@ -18,9 +17,8 @@ export function DoctorChecks({ report }: { report: DoctorReport }) {
   );
 }
 
-export function DoctorPanel() {
+export function DoctorPanel({ open, id }: { open: boolean; id: string }) {
   const { projectId } = useBbContext();
-  const [open, setOpen] = useState(false);
   const query = useRpcQuery({
     contract: doctorContract, method: "doctor", input: { projectId: projectId ?? "" },
     enabled: open && projectId !== null,
@@ -28,9 +26,8 @@ export function DoctorPanel() {
   const summary = query.isFetching ? "Checking setup" : query.error ? "Check again"
     : query.data ? (query.data.ready ? "All checks passed" : "Setup needs attention") : "Check repo setup";
   return (
-    <details className="sq-doctor" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="sq-btn">Doctor<span className="sq-sr">: {summary}</span></summary>
-      <div className="sq-doctor-body" aria-busy={query.isFetching}>
+      <div id={id} className="sq-doctor-body" role="region" aria-label="Doctor" hidden={!open} aria-busy={query.isFetching}>
+        <p className="sq-doctor-summary">Doctor: {summary}</p>
         {!projectId ? <p className="sq-clear">Choose a BB project to check its repo setup.</p> : (
           <>
             <div role="status" aria-live="polite">
@@ -44,6 +41,5 @@ export function DoctorPanel() {
           </>
         )}
       </div>
-    </details>
   );
 }

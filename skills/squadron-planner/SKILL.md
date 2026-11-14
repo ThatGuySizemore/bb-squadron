@@ -28,11 +28,13 @@ Publish only what the owner approved, in this order:
 1. The spec: `{ type: "issue", title, description, labelIds: [ready-for-agent] }`. Its receipt's `entityId` is the spec's ID.
 2. Each ticket, blockers first: `{ type: "issue", title, description, parentId: <spec entityId>, labelIds: [ready-for-agent, <route label>] }`. A ticket on the default route carries only `ready-for-agent`, because the default route is the one with no label.
 3. Each blocking edge: `{ type: "blocks", issueId: <blocker ID>, blockedIssueId: <blocked ID> }`. The blocked issue is the seed issue or one this thread created. The blocker is one of those, or any open issue in the Linear project named in the seed message, such as a ticket of another spec. Look up an existing issue's ID with a connected Linear read tool.
-4. With a seed issue, a comment on it naming the new spec: `{ type: "comment", issueId: <seed issue ID>, body }`. If the owner wants the seed issue to become a ticket of the spec, also send `{ type: "parent", issueId: <seed issue ID>, parentId: <spec entityId> }`.
+4. With a seed issue, a comment on it naming the new spec: `{ type: "comment", issueId: <seed issue ID>, body }`. Leave the seed issue's existing parent intact.
 
 Use the label IDs from the seed message. Give each operation its own stable `dedupeKey`, such as `spec`, `ticket-03` or `blocks-01-03`, and reuse that key only to resend the same operation.
 
 The grant lets this thread change only the seed issue and the issues it creates. Other open issues in the Linear project can only be named as blockers. A blocker in another Linear project goes into the ticket's description as text; tell the owner so they can link it in Linear. The owner and the Helper own statuses, `accept:owner` and starting lanes, so the grant refuses them.
+
+A separate explicit owner request may use `{ type: "parent", issueId, parentId }` only when both issues are owned by this thread's grant. This is not a publishing step. New tickets already carry their native parent through `parentId` at creation.
 
 ## Receipts
 

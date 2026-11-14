@@ -121,6 +121,27 @@ test("without a Linear credential the board asks the owner to connect and reads 
   assert.deepEqual(linear.operations, []);
 });
 
+test("board RPC refreshes reuse identity for a minute and invalidate it when credentials change", async (t) => {
+  const linear = workspace();
+  const { bb, harness } = host();
+  t.after(() => harness.lifecycle.dispose());
+  let now = Date.now();
+  const auth = registerLinearAuth(bb, { fetch: linear.fetch, now: () => now });
+  const mirror = registerLinearMirror(bb, auth);
+  registerBoard(bb, { connection: auth.getConnection, mirror }, { now: () => now });
+  const identities = () => linear.operations.filter((name) => name === "SquadronIdentity").length;
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  assert.equal(identities(), 1);
+  await Promise.all(Array.from({ length: 5 }, () => harness.behavior.callRpc("board", { projectId: "proj-one" })));
+  assert.equal(identities(), 1, "five page refreshes share the recent public identity");
+  now += 60_001;
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  assert.equal(identities(), 2, "the next read after a minute verifies identity again");
+  await harness.behavior.setSettings({ linearApiKey: "fake-replacement-key" });
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  assert.equal(identities(), 3, "a credential replacement discards the cached connection immediately");
+});
+
 test("a failed read keeps the last good copy and shows Linear's safe reason", async (t) => {
   let failing = false;
   const linear = workspace({ issues: () => failing
@@ -131,10 +152,12 @@ test("a failed read keeps the last good copy and shows Linear's safe reason", as
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  const signalsBeforeFailure = harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length;
   failing = true;
   const poll = harness.behavior.runService("linear-mirror");
   t.after(() => poll.controller.abort());
-  await until(() => harness.inspection.realtimeSignals.some((signal) => signal.channel === "board-changed"), "board-changed after the failure");
+  await until(() => harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length > signalsBeforeFailure, "board-changed after the failure");
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual([board.linear?.state, board.linear?.message], ["failed", "Linear could not complete the request."]);
   assert.deepEqual(board.unplanned.map((row) => row.id), ["FIX-9"]);
@@ -220,7 +243,7 @@ test("a blocked Linear write waits in Needs you until the owner's Retry sends it
   const receipt = await harness.behavior.callRpc("linear.outboxResume", { bbProjectId: "proj-one", id: write.id }) as { status: string };
   assert.equal(receipt.status, "pending");
   const retried = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual([retried.writes?.blocked, retried.writes?.pending], [[], 1]);
+  assert.deepEqual([retried.writes?.blocked, retried.writes?.pendingCount], [[], 1]);
   assert.ok(sent.length >= 1, "the write went to Linear only through the outbox");
 });
 

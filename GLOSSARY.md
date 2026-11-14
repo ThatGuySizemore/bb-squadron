@@ -58,6 +58,16 @@ _Avoid_: builder, implementer, subagent
 
 **Board**: The Squadron page in BB's left sidebar. One row per spec, plus the Unplanned row.
 
-**Needs you**: The strip at the top of the board listing what waits on the owner: agent questions, stopped lanes and `accept:owner` merges.
+**Needs you**: The first section of the board listing what waits on the owner: connection or binding setup, agent questions, stopped lanes, blocked Linear writes and `accept:owner` merges.
 
-**Signed comment**: A Linear comment written by the Squadron app under an agent's name and avatar, such as "Lead · Opus 5.5 (via Squadron)".
+**Binding**: The owner's choice of which Linear team and project a BB project's board reads.
+
+**Mirror**: The board's local copy of Linear issues, labels, states and blockers, rebuilt from Linear.
+
+**Outbox**: The Helper's durable queue of Linear writes awaiting delivery or recovery.
+
+**Grant**: The Helper's restriction on which Linear writes a particular thread may request. It is not owner approval.
+
+**Receipt**: The result for one queued Linear write, identified by a stable ID: pending, blocked or delivered. Pending means it awaits delivery; blocked means it needs recovery; delivered means Linear confirmed it or Squadron reconciled the original write.
+
+**Signed comment**: A Linear comment carrying the agent's role and model. App auth uses the agent's name and avatar; personal-key auth labels the comment body under the connected person's name.

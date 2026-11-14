@@ -46,12 +46,12 @@ function host(options: HostOptions = {}) {
 }
 
 /** Mutations are recorded and confirmed; every read is the recorded workspace. */
-async function setup(t: import("node:test").TestContext, options: HostOptions & { vocabulary?: () => Response } = {}) {
+async function setup(t: import("node:test").TestContext, options: HostOptions & { vocabulary?: () => Response; identity?: () => Response } = {}) {
   const linear = workspace({ vocabulary: options.vocabulary ?? vocabulary });
   const mutations: Array<{ input: Record<string, unknown> }> = [];
   const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const { query, variables } = JSON.parse(String(init?.body)) as { query: string; variables: { input: Record<string, unknown> } };
-    if (!query.trimStart().startsWith("mutation")) return linear.fetch(url, init);
+    if (!query.trimStart().startsWith("mutation")) return query.includes("SquadronIdentity") && options.identity ? options.identity() : linear.fetch(url, init);
     mutations.push(variables);
     const id = variables.input.id;
     return Response.json({ data: query.includes("issueCreate") ? { issueCreate: { success: true, issue: { id } } }
@@ -145,8 +145,10 @@ test("the planner's avatar is one constant pixel asset on the public HTTPS app U
   assert.ok(svg.startsWith("<svg") && svg.includes("crispEdges") && !/proj-one|thr_plan|FIX-9|script/i.test(svg));
 });
 
-test("without a public HTTPS app URL the planning thread opens read-only and both the board and the thread say so", async (t) => {
-  const { harness } = await setup(t, { appUrl: null });
+test("without a public HTTPS app URL an app planning thread opens read-only and both the board and the thread say so", async (t) => {
+  const { harness } = await setup(t, { appUrl: null, settings: {
+    linearCredentials: JSON.stringify({ accessToken: "fake-app", refreshToken: "fake-refresh", expiresAt: 9_999_999_999_999 }),
+  } });
   const started = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { writes: boolean; message: string | null };
   assert.equal(started.writes, false);
   assert.match(started.message ?? "", /public HTTPS app URL/);
@@ -156,6 +158,88 @@ test("without a public HTTPS app URL the planning thread opens read-only and bot
   await assert.rejects(harness.behavior.callAgentTool("squadron_linear_write",
     { dedupeKey: "spec", operation: { type: "issue", title: "Spec", description: "", labelIds: ["label-ready"] } },
     { threadId: "thr_plan_1", projectId: "proj-one" }), /not authorized/);
+});
+
+test("personal-key planning publishes locally without an app avatar and labels its comments with the agent", async (t) => {
+  const { harness, mutations } = await setup(t, { appUrl: null });
+  assert.deepEqual(await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }),
+    { threadId: "thr_plan_1", writes: true, message: null });
+  const context = { threadId: "thr_plan_1", projectId: "proj-one" };
+  await harness.behavior.callAgentTool("squadron_linear_write",
+    { dedupeKey: "hello-local", operation: { type: "comment", issueId: "fix-9", body: "Planning locally." } }, context);
+  const delivery = harness.behavior.runService("linear-outbox");
+  t.after(() => delivery.controller.abort());
+  for (let i = 0; i < 200 && !mutations.length; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(mutations.length, 1);
+  assert.deepEqual(mutations[0].input, {
+    id: mutations[0].input.id, issueId: "fix-9", body: "Planning thread · Opus 5.5 (via Squadron)\n\nPlanning locally.",
+  });
+});
+
+test("changing auth mode starts a fresh planning thread and cannot silently upgrade a personal comment without an avatar", async (t) => {
+  const { harness } = await setup(t, { appUrl: null });
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" });
+  const receipt = JSON.parse(String(await harness.behavior.callAgentTool("squadron_linear_write",
+    { dedupeKey: "personal", operation: { type: "comment", issueId: "fix-9", body: "Personal only." } },
+    { threadId: "thr_plan_1", projectId: "proj-one" }))) as { id: string };
+  await harness.behavior.setSettings({ linearCredentials: JSON.stringify({ accessToken: "fake-app", refreshToken: "fake-refresh", expiresAt: 9_999_999_999_999 }) });
+  assert.deepEqual(await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }), {
+    threadId: "thr_plan_2", writes: false, message: "BB has no public HTTPS app URL, so Squadron can't sign the planning thread's Linear comments.",
+  });
+  await assert.rejects(harness.behavior.callRpc("linear.outboxResume", { bbProjectId: "proj-one", id: receipt.id }), /no app avatar/);
+  await assert.rejects(harness.behavior.callAgentTool("squadron_linear_write",
+    { dedupeKey: "unsigned-app", operation: { type: "comment", issueId: "fix-9", body: "Can't sign." } },
+    { threadId: "thr_plan_1", projectId: "proj-one" }), /public HTTPS avatar/);
+});
+
+test("planning thread reuse includes the workspace and auth mode even when public names and the first message match", async (t) => {
+  let workspaceId = "workspace-one";
+  const { harness } = await setup(t, { identity: () => Response.json({ data: {
+    viewer: { id: "fixture-user", name: "Fixture user" }, organization: { id: workspaceId, name: "Fixture workspace" },
+  } }) });
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" });
+  await harness.behavior.setSettings({ linearCredentials: JSON.stringify({ accessToken: "fake-app", refreshToken: "fake-refresh", expiresAt: 9_999_999_999_999 }) });
+  const started = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string; writes: boolean };
+  assert.deepEqual([started.threadId, started.writes], ["thr_plan_2", true]);
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 2);
+  workspaceId = "workspace-two";
+  await harness.behavior.setSettings({ linearCredentials: JSON.stringify({ accessToken: "fake-other-app", refreshToken: "fake-other-refresh", expiresAt: 9_999_999_999_999 }) });
+  const rebound = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string };
+  assert.equal(rebound.threadId, "thr_plan_3", "an identically named workspace still starts a new scope");
+});
+
+test("a reconnect while the planning thread spawns leaves it without a stale write grant", async (t) => {
+  const { harness } = await setup(t, { appUrl: null });
+  let spawning!: () => void;
+  let release!: () => void;
+  const entered = new Promise<void>((resolve) => { spawning = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  harness.sdk.stub("threads.spawn", async () => {
+    spawning(); await gate; return makeThreadResponse({ id: "thr_plan_1", projectId: "proj-one" });
+  });
+  const starting = harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" });
+  await entered;
+  await harness.behavior.callRpc("linear.disconnect", null);
+  release();
+  const started = await starting as { writes: boolean; message: string };
+  assert.equal(started.writes, false);
+  assert.match(started.message, /context changed/);
+  await assert.rejects(harness.behavior.callAgentTool("squadron_linear_write",
+    { dedupeKey: "stale", operation: { type: "comment", issueId: "fix-9", body: "Stale scope." } },
+    { threadId: "thr_plan_1", projectId: "proj-one" }));
+});
+
+test("app planning stays read-only for insecure or loopback app origins", async (t) => {
+  for (const appUrl of ["http://bb.example.test", "https://localhost:4443", "https://127.0.0.1:4443", "https://[::1]:4443"]) {
+    await t.test(appUrl, async (t) => {
+      const { harness } = await setup(t, { appUrl, settings: {
+        linearCredentials: JSON.stringify({ accessToken: "fake-app", refreshToken: "fake-refresh", expiresAt: 9_999_999_999_999 }),
+      } });
+      const started = await harness.behavior.callRpc("planning.start", { projectId: "proj-one" }) as { writes: boolean; message: string };
+      assert.equal(started.writes, false);
+      assert.match(started.message, /public HTTPS app URL/);
+    });
+  }
 });
 
 test("Plan on an issue that already has a planning thread reopens that thread, even on a double click", async (t) => {

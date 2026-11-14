@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
 import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
-import { BOARD_CHANGED, type BoardChanged, type boardContract } from "../lib/board-contract.js";
+import type { boardContract } from "../lib/board-contract.js";
+import { boardChanged, linearOutboxChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
+import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
 import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
@@ -535,7 +537,7 @@ function LinearLine({ board, now }: { board: Board; now: number }) {
   if (!linear || linear.state === "disconnected" || linear.state === "unbound") return null;
   const age = linear.syncedAt === null ? null : Math.max(0, Math.round((now - linear.syncedAt) / 60_000));
   const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
-  const pending = board.writes?.pending ?? 0;
+  const pending = board.writes?.pendingCount ?? 0;
   return (
     <p className="sq-linear" data-state={linear.state} role="status" aria-live="polite">
       <span className="sq-linear-project">{linear.project}</span>
@@ -563,6 +565,8 @@ interface BoardViewProps {
 
 /** The board page, fed by the live Helper or by the synthetic simulation. */
 export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, setup, onRetry, notice, footer }: BoardViewProps) {
+  const [doctorOpen, setDoctorOpen] = useState(false);
+  const doctorId = useId();
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
   const now = useLandingClock(board.lanes);
@@ -608,7 +612,9 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             <Btn tone="primary" disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : undefined} onClick={() => onPlan()}>
               {planning === "" ? "Opening…" : "Plan a spec"}
             </Btn>
-            <DoctorPanel />
+            <button type="button" className="sq-btn" aria-expanded={doctorOpen} aria-controls={doctorId} onClick={() => setDoctorOpen((open) => !open)}>
+              Doctor
+            </button>
           </div>
         </header>
         <LinearLine board={board} now={Date.now()} />
@@ -619,6 +625,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           </h2>
           <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} />
         </section>
+        <DoctorPanel open={doctorOpen} id={doctorId} />
 
         <section className="sq-section" aria-labelledby="sq-flying-h">
           <h2 id="sq-flying-h">Flying</h2>
@@ -788,13 +795,13 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     window.clearTimeout(pending.current);
     pending.current = window.setTimeout(() => { void load(); }, 400);
   }, [load]);
-  useRealtime(BOARD_CHANGED, (payload) => {
-    if ((payload as BoardChanged | null)?.projectId === projectId) void load();
+  useSquadronSignal(boardChanged, (payload) => {
+    if (payload.projectId === projectId) void load();
   });
-  useRealtime("linear-outbox-changed", (payload) => {
-    if ((payload as { bbProjectId?: string } | null)?.bbProjectId === projectId) loadSoon();
+  useSquadronSignal(linearOutboxChanged, (payload) => {
+    if (payload.bbProjectId === projectId) loadSoon();
   });
-  useRealtime("linear-connection-changed", () => { loadSoon(); });
+  useSquadronSignal(linearConnectionChanged, () => { loadSoon(); });
   const retry = useCallback(async (id: string) => {
     if (!projectId) return;
     try {

@@ -25,6 +25,66 @@ test("a personal key connects a workspace and returns only its public identity",
   });
 });
 
+test("a cached public identity cannot authorize a scoped write after the credential changes workspace", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-first" } });
+  t.after(() => harness.lifecycle.dispose());
+  let writes = 0;
+  const linear = registerLinearAuth(bb, { fetch: async (_url, init) => {
+    const { query } = JSON.parse(String(init?.body));
+    if (query.startsWith("mutation")) { writes++; return Response.json({ data: { success: true } }); }
+    return Response.json(new Headers(init?.headers).get("Authorization") === "fake-first" ? personalIdentity : {
+      data: { viewer: { id: "other-person", name: "Other" }, organization: { id: "other-workspace", name: "Other workspace" } },
+    });
+  } });
+  assert.equal((await linear.getConnection()).workspace?.id, "workspace-1");
+  await harness.behavior.setSettings({ linearApiKey: "fake-second" });
+  await assert.rejects(linear.graphql("mutation ScopedWrite { success }", {}, undefined, { workspaceId: "workspace-1", mode: "personal" }),
+    { code: "workspace_changed" });
+  assert.equal(writes, 0);
+  assert.equal((await linear.getConnection()).workspace?.id, "other-workspace");
+});
+
+test("scoped writes verify identity even while the board's public connection cache is fresh", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-first" } });
+  t.after(() => harness.lifecycle.dispose());
+  let identities = 0;
+  const linear = registerLinearAuth(bb, { fetch: async (_url, init) => {
+    const { query } = JSON.parse(String(init?.body));
+    assert.ok(query.includes("SquadronIdentity"), "a mismatched scope never sends the requested mutation");
+    return Response.json(++identities === 1 ? personalIdentity : {
+      data: { viewer: { id: "person-1", name: "Owner" }, organization: { id: "other-workspace", name: "Other" } },
+    });
+  } });
+  await linear.getConnection();
+  await assert.rejects(linear.graphql("mutation ScopedWrite { success }", {}, undefined, { workspaceId: "workspace-1", mode: "personal" }),
+    { code: "workspace_changed" });
+  assert.equal(identities, 2);
+});
+
+test("an identity read started before OAuth reconnect cannot cache the previous workspace for new credentials", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: {
+    linearApiKey: "fake-first", linearOAuthClientId: "fake-client", linearOAuthClientSecret: "fake-secret",
+  } });
+  t.after(() => harness.lifecycle.dispose());
+  let started!: () => void;
+  let release!: (response: Response) => void;
+  const pending = new Promise<void>((resolve) => { started = resolve; });
+  const linear = registerLinearAuth(bb, { fetch: async (url, init) => {
+    if (String(url).endsWith("/oauth/token")) return Response.json(oauthToken);
+    if (new Headers(init?.headers).get("Authorization") === "fake-first") {
+      started(); return new Promise<Response>((resolve) => { release = resolve; });
+    }
+    return Response.json({ data: { viewer: { id: "app-2", name: "Squadron" }, organization: { id: "workspace-2", name: "Second" } } });
+  } });
+  const reading = linear.getConnection();
+  await pending;
+  const connect = await harness.behavior.callRpc("linear.connect", null) as { url: string };
+  assert.equal((await harness.behavior.fetchHttp("GET", `/linear/callback?code=fake-code&state=${new URL(connect.url).searchParams.get("state")}`)).status, 200);
+  release(Response.json(personalIdentity));
+  assert.equal((await reading).status, "failed", "a reconnect invalidates the old in-flight identity");
+  assert.deepEqual([(await linear.getConnection()).workspace?.id, (await linear.getConnection()).mode], ["workspace-2", "app"]);
+});
+
 test("Connect Linear installs the app with one-use state and PKCE and stores credentials only as secrets", async (t) => {
   const { bb, harness } = createFakePluginHost({
     pluginId: "squadron", appUrl: "https://bb.example.test",

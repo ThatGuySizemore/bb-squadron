@@ -17,7 +17,9 @@ IDs the thread may apply. The skill runs Matt Pocock's `grill-with-docs`,
 A second Plan on the same issue reopens its thread while that thread exists in
 the project, is not archived or deleted, and its first message is still the one
 Plan would send now. That message covers the checkout, the seed issue's fields,
-the routes, the label IDs and whether the thread may write. When any of them has
+the routes, the label IDs and whether the thread may write. Reuse also checks
+the full grant and auth mode, including workspace and Linear project IDs even
+when their display names match. When any of them has
 changed, Plan starts a fresh thread and leaves the older one and its work as they
 are. **Plan a spec** always starts a new thread.
 
@@ -49,7 +51,7 @@ these is missing:
 - the BB project's Linear binding;
 - a readable `docs/agents/squadron.md`;
 - a `ready-for-agent` label in Linear;
-- a public HTTPS app URL for BB.
+- in app mode, a public HTTPS app URL for BB's comment avatar.
 
 The board shows the same reason when the thread opens.
 
@@ -62,8 +64,19 @@ auth check, reads no input and returns no thread, project or workspace data.
 The grant's avatar URL is that path on the origin of BB's configured public app
 URL; any credentials, path, query or fragment in the configured URL are dropped.
 
-A BB without a public HTTPS app URL, such as a local-only install on its
-loopback address, can still plan in a thread, but Squadron can't publish the
-result to Linear from it. Linear must also be able to fetch the avatar from that
+A personal-key connection can publish from a local-only BB without an app URL.
+Its comments carry the role and model in the body and send no app avatar.
+An app connection without a public HTTPS app URL opens planning read-only.
+Known loopback and private-network origins do not qualify as public avatars.
+Linear must also be able to fetch the avatar from that
 origin for app comments to show it. Whether Linear accepts an SVG
 `displayIconUrl` has not been checked against live Linear.
+
+## Parent links
+
+New tickets use native `parentId` links to their new spec at creation. Publishing
+a plan comments on its seed issue and leaves that issue's existing parent intact.
+The outbox's existing `parent` operation is a separate trusted capability: an
+explicit owner request may reparent an owned seed or created issue to an owned
+parent. A blocker reference grants no such write. The planner does not suggest
+or perform this optional change as part of publishing a spec.

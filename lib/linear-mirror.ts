@@ -2,6 +2,8 @@
 // (MIT, Vedran Burojević). See THIRD_PARTY_NOTICES.md.
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { CLOSED_ISSUE_STATE_TYPES, isOpenIssue } from "./linear-issues.js";
+import { linearMirrorChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { z } from "zod";
 import { LinearRequestError, type LinearAuth } from "./linear-auth.js";
 import { bindInputSchema, linearMirrorContract, mirrorLabelSchema, mirrorStateSchema,
@@ -56,7 +58,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
   // Server-side listeners (the board watcher) hear the same changes as pages.
   const listeners = new Set<(bbProjectId: string) => void>();
   function changed(bbProjectId: string) {
-    bb.realtime.publish("linear-mirror-changed", { bbProjectId });
+    publishSquadronSignal(bb.realtime, linearMirrorChanged, { bbProjectId });
     for (const listener of listeners) listener(bbProjectId);
   }
   function onChange(listener: (bbProjectId: string) => void): () => void {
@@ -169,7 +171,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
         state: node.state, labels: labels.length ? labels : existing?.labels ?? [],
         // Match the open-issue walk's board eligibility, including relation endpoints.
         inProject: node.team.id === binding.team.id && node.project?.id === binding.project.id &&
-          node.state.type !== "completed" && node.state.type !== "canceled",
+          isOpenIssue(node),
       });
     }
     function putRelations(nodes: z.infer<typeof relationNode>[]) {
@@ -200,7 +202,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
           relations(first: 5) { ${relationFields} } inverseRelations(first: 5) { ${relationFields} }
         } pageInfo { hasNextPage endCursor } }
       }`, { filter: { team: { id: { eq: binding.team.id } }, project: { id: { eq: binding.project.id } },
-        state: { type: { nin: ["completed", "canceled"] } } }, after }));
+        state: { type: { nin: [...CLOSED_ISSUE_STATE_TYPES] } } }, after }));
       for (const node of result.issues.nodes) {
         const labels = [...node.labels.nodes];
         let labelPage = node.labels.pageInfo;

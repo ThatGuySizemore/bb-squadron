@@ -4,7 +4,8 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
-import { BOARD_CHANGED, boardContract, type BoardChanged } from "./board-contract.js";
+import { boardContract } from "./board-contract.js";
+import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { helperCore, type HelperInput } from "./helper-core.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
@@ -92,7 +93,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (entry.published === json) return;
     const first = entry.published === null;
     entry.published = json;
-    if (!first) bb.realtime.publish(BOARD_CHANGED, { projectId } satisfies BoardChanged);
+    if (!first) publishSquadronSignal(bb.realtime, boardChanged, { projectId });
   }
 
   /** Signals that arrive during a refresh coalesce into one more pass. */

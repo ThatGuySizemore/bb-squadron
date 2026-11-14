@@ -6,11 +6,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { LinearRequestError, type LinearAuth } from "./linear-auth.js";
 import { linearOutboxContract, type OutboxHealth, type OutboxBlockedReason } from "./linear-outbox-contract.js";
+import { isActiveProjectThread } from "./project-thread.js";
+import { linearOutboxChanged, publishSquadronSignal } from "./realtime-contract.js";
+import { linearAvatarUrlSchema } from "./linear-avatar.js";
 
 const text = z.string().min(1).max(256);
 const authorSchema = z.object({
   role: z.enum(["Lead", "Worker", "Reviewer", "Planning thread"]), model: text,
-  avatarUrl: z.url().refine((url) => new URL(url).protocol === "https:"),
+  avatarUrl: linearAvatarUrlSchema.optional(),
 }).strict();
 const operationSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("status"), issueId: text, stateId: text }).strict(),
@@ -47,7 +50,7 @@ type Row = {
   grant_scope_id: string | null;
 };
 const updateQuery = "mutation SquadronIssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success issue { id } } }";
-class BlockedWrite extends Error {
+class WriteDeliveryBlocked extends Error {
   constructor(readonly reason: OutboxBlockedReason) { super(reason); }
 }
 function issueReferences(operation: Operation, id: string): string[] {
@@ -97,7 +100,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
     db.prepare(`UPDATE outbox_writes SET resources_json=?, bb_project_id=COALESCE(bb_project_id,?) WHERE id=?`)
       .run(JSON.stringify(resources), grant?.success ? grant.data.bbProjectId : null, row.id);
   }
-  const changed = (bbProjectId: string | null) => { if (bbProjectId) bb.realtime.publish("linear-outbox-changed", { bbProjectId }); };
+  const changed = (bbProjectId: string | null) => { if (bbProjectId) publishSquadronSignal(bb.realtime, linearOutboxChanged, { bbProjectId }); };
   let draining: Promise<void> | null = null;
   function store(dedupeKey: string, operation: Operation, workspaceId: string, mode: "app" | "personal", bbProjectId: string, threadId: string | null = null, scopeId: string | null = null) {
     const id = uuid();
@@ -114,8 +117,9 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
     const bbProjectId = text.parse(input.bbProjectId);
     const dedupeKey = text.parse(input.dedupeKey);
     const operation = operationSchema.parse(input.operation);
-    const connection = await auth.getConnection();
+    const connection = await auth.getConnection({ throwOnFailure: true });
     if (connection.status !== "connected" || !connection.workspace || !connection.mode) throw new Error("Connect Linear before queuing a write.");
+    if (connection.mode === "app" && operation.type === "comment" && !operation.author.avatarUrl) throw new Error("App comments need a public HTTPS avatar.");
     return store(dedupeKey, operation, connection.workspace.id, connection.mode, bbProjectId);
   }
   async function drain(signal: AbortSignal) {
@@ -144,8 +148,8 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
       try {
         const connection = await auth.getConnection({ throwOnFailure: true });
         if (connection.status !== "connected") throw new LinearRequestError("not_connected");
-        if (connection.workspace?.id !== row.workspace_id) throw new BlockedWrite("workspace_changed");
-        if (connection.mode !== (row.delivery_mode ?? row.mode)) throw new BlockedWrite("auth_mode_changed");
+        if (connection.workspace?.id !== row.workspace_id) throw new WriteDeliveryBlocked("workspace_changed");
+        if (connection.mode !== (row.delivery_mode ?? row.mode)) throw new WriteDeliveryBlocked("auth_mode_changed");
         const operation = operationSchema.parse(JSON.parse(row.operation));
         if (operation.type === "blocks") {
           try {
@@ -162,7 +166,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
                 await request("query SquadronOutboxRelation($id: String!) { issueRelation(id: $id) { id type issue { id } relatedIssue { id } } }", { id: row.id }));
             } catch { throw writeError; }
             const relation = found.issueRelation;
-            if (relation.id !== row.id || relation.type !== "blocks" || relation.issue.id !== operation.issueId || relation.relatedIssue.id !== operation.blockedIssueId) throw new BlockedWrite("conflict");
+            if (relation.id !== row.id || relation.type !== "blocks" || relation.issue.id !== operation.issueId || relation.relatedIssue.id !== operation.blockedIssueId) throw new WriteDeliveryBlocked("conflict");
           }
         } else if (operation.type === "issue") {
           const { type: _type, ...input } = operation;
@@ -171,7 +175,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
             const found = z.object({ issues: z.object({ nodes: z.array(z.object({ id: z.string(), team: z.object({ id: z.string() }), project: z.object({ id: z.string() }).nullable() })) }) }).parse(
               await request("query SquadronOutboxIssue($id: ID!) { issues(first: 1, includeArchived: true, filter: { id: { eq: $id } }) { nodes { id team { id } project { id } } } }", { id: row.id }));
             const issue = found.issues.nodes[0];
-            if (issue && (issue.id !== row.id || issue.team.id !== operation.teamId || issue.project?.id !== operation.projectId)) throw new BlockedWrite("conflict");
+            if (issue && (issue.id !== row.id || issue.team.id !== operation.teamId || issue.project?.id !== operation.projectId)) throw new WriteDeliveryBlocked("conflict");
             reconciled = Boolean(issue);
           }
           if (!reconciled) {
@@ -187,10 +191,11 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
             const found = z.object({ comments: z.object({ nodes: z.array(z.object({ id: z.string(), body: z.string(), issue: z.object({ id: z.string() }) })) }) }).parse(
               await request("query SquadronOutboxComment($id: ID!) { comments(first: 1, includeArchived: true, filter: { id: { eq: $id } }) { nodes { id body issue { id } } } }", { id: row.id }));
             const comment = found.comments.nodes[0];
-            if (comment && (comment.id !== row.id || comment.body !== body || comment.issue.id !== operation.issueId)) throw new BlockedWrite("conflict");
+            if (comment && (comment.id !== row.id || comment.body !== body || comment.issue.id !== operation.issueId)) throw new WriteDeliveryBlocked("conflict");
             reconciled = Boolean(comment);
           }
           if (!reconciled) {
+            if ((row.delivery_mode ?? row.mode) === "app" && !operation.author.avatarUrl) throw new WriteDeliveryBlocked("configuration");
             const result = await request<{ commentCreate: { success: boolean; comment?: { id: string } } }>(
               "mutation SquadronCommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success comment { id } } }",
               { input: { id: row.id, issueId: operation.issueId,
@@ -211,7 +216,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
         const delay = Math.max(backoff, error instanceof LinearRequestError ? error.retryAfterMs ?? 0 : 0);
         db.prepare(`UPDATE outbox_writes SET next_attempt_at=?, last_error=? WHERE id=?`)
           .run(now() + delay, error instanceof LinearRequestError ? error.code : "unavailable", row.id);
-        const permanent = error instanceof BlockedWrite ? error.reason : error instanceof z.ZodError || error instanceof SyntaxError ? "invalid_operation" :
+        const permanent = error instanceof WriteDeliveryBlocked ? error.reason : error instanceof z.ZodError || error instanceof SyntaxError ? "invalid_operation" :
           error instanceof LinearRequestError && ["graphql", "authentication", "configuration", "workspace_changed", "auth_mode_changed"].includes(error.code) ? error.code as OutboxBlockedReason : null;
         if (permanent) { park(permanent); hold("blocked"); }
         else { hold("pending"); changed(row.bb_project_id); }
@@ -241,6 +246,8 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
     const connection = await auth.getConnection({ throwOnFailure: true });
     if (connection.status !== "connected" || connection.workspace?.id !== row.workspace_id) throw new Error("Reconnect to the original workspace before retrying this write.");
     if (row.mode === "app" && connection.mode !== "app") throw new Error("Reconnect with app auth before retrying this write.");
+    const operation = operationSchema.parse(JSON.parse(row.operation));
+    if (connection.mode === "app" && operation.type === "comment" && !operation.author.avatarUrl) throw new Error("This preserved personal comment has no app avatar. Reconnect with personal auth to retry it.");
     if (row.delivered_at === null) {
       db.prepare(`UPDATE outbox_writes SET blocked_reason=NULL, next_attempt_at=0, last_error=NULL, delivery_mode=? WHERE id=?`).run(connection.mode, id);
       changed(row.bb_project_id);
@@ -259,7 +266,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
   async function bindThread(input: LinearWriteGrant) {
     const grant = grantSchema.parse(input);
     const thread = await bb.sdk.threads.get({ threadId: grant.threadId });
-    if (thread.id !== grant.threadId || thread.projectId !== grant.bbProjectId || thread.deletedAt !== null || thread.archivedAt !== null) throw new Error("This thread is not authorized for the project.");
+    if (!isActiveProjectThread(thread, grant.threadId, grant.bbProjectId)) throw new Error("This thread is not authorized for the project.");
     db.transaction(() => {
       const saved = db.prepare(`SELECT grant_json, scope_id FROM outbox_thread_grants WHERE thread_id=?`).get(grant.threadId) as { grant_json: string; scope_id: string | null } | undefined;
       const previous = saved ? grantSchema.parse(JSON.parse(saved.grant_json)) : null;
@@ -288,7 +295,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
       const [thread, execution, connection] = await Promise.all([
         bb.sdk.threads.get({ threadId: context.threadId, signal: context.signal }),
         bb.sdk.threads.defaultExecutionOptions({ threadId: context.threadId, signal: context.signal }),
-        auth.getConnection(),
+        auth.getConnection({ throwOnFailure: true }),
       ]);
       context.signal.throwIfAborted();
       let displayName = execution?.model ? modelDisplayName(execution.model) : "";
@@ -304,10 +311,11 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
       return db.transaction(() => {
         const saved = db.prepare(`SELECT grant_json, scope_id FROM outbox_thread_grants WHERE thread_id=?`).get(context.threadId) as { grant_json: string; scope_id: string | null } | undefined;
         const grant = saved ? grantSchema.parse(JSON.parse(saved.grant_json)) : null;
-        if (!grant || thread.id !== context.threadId || thread.projectId !== context.projectId || grant.bbProjectId !== context.projectId ||
-          thread.deletedAt !== null || thread.archivedAt !== null || !execution?.model || connection.status !== "connected" ||
+        if (!grant || !isActiveProjectThread(thread, context.threadId, context.projectId) || grant.bbProjectId !== context.projectId ||
+          !execution?.model || connection.status !== "connected" ||
           connection.workspace?.id !== grant.workspaceId || !connection.mode) throw new Error("This thread is not authorized for these Linear writes.");
         const operation = input.operation;
+        if (connection.mode === "app" && operation.type === "comment" && !grant.avatarUrl) throw new Error("App comments need a public HTTPS avatar. Open a fresh planning thread.");
         const permitsIssue = (id: string) => { if (!grant.issueIds.includes(id)) throw new Error("This issue is not authorized for this thread."); };
         const permitsLabels = (ids: string[]) => { if (ids.some((id) => !grant.labelIds.includes(id))) throw new Error("This label is not authorized for this thread."); };
         let write: Operation;
@@ -346,8 +354,7 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
       const grant = saved ? grantSchema.parse(JSON.parse(saved.grant_json)) : null;
       const row = db.prepare(`SELECT * FROM outbox_writes WHERE id=?`).get(input.id) as Row | undefined;
       if (!grant || !row || row.thread_id !== context.threadId || row.workspace_id !== grant.workspaceId ||
-        thread.id !== context.threadId || thread.projectId !== context.projectId || grant.bbProjectId !== context.projectId ||
-        thread.deletedAt !== null || thread.archivedAt !== null) throw new Error("This receipt is not authorized for this thread.");
+        !isActiveProjectThread(thread, context.threadId, context.projectId) || grant.bbProjectId !== context.projectId) throw new Error("This receipt is not authorized for this thread.");
       return JSON.stringify(await get(input.id));
     },
   });

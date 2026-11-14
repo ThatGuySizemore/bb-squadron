@@ -1,26 +1,13 @@
-.sq-head {
-  position: relative;
-}
-.sq-doctor {
-  font-size: 13px;
-}
-.sq-doctor summary {
-  list-style: none;
-}
-.sq-doctor summary::-webkit-details-marker {
-  display: none;
-}
 .sq-doctor-body {
-  position: absolute;
-  inset-block-start: calc(100% + 8px);
-  inset-inline-end: 0;
-  z-index: 10;
-  width: min(760px, 100%);
-  max-height: 70vh;
-  overflow-y: auto;
+  margin-top: 30px;
   padding: 12px;
   border: 1px solid var(--sq-rule);
   background: var(--background);
+  font-size: 13px;
+}
+.sq-doctor-summary {
+  margin: 0 0 12px;
+  font-weight: 620;
 }
 .sq-doctor-body > .sq-btn {
   margin-top: 12px;

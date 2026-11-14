@@ -5,6 +5,10 @@
 and rate-limit budget as the mirror. Its RPCs read safe health data or retry an
 existing preserved write. They cannot queue a new operation or change a payload.
 
+[ADR-0005](adr/0005-linear-is-the-record.md) distinguishes the disposable mirror
+from persistent bindings, queued writes, grants and receipt evidence. Removing
+local state can lose undelivered writes; a Linear catch-up cannot restore them.
+
 The trusted Helper interface is `enqueue({ bbProjectId, dedupeKey, operation })`,
 `get(id)`, `getHealth(bbProjectId)`, `resume(id)` and `flush()`. Enqueue validates
 the operation, resolves the connected workspace and stores it before returning
@@ -20,12 +24,13 @@ Supported trusted operations:
 | `status` | `issueId`, `stateId` | `issueUpdate` |
 | `labels` | `issueId`, `add`, `remove` | `issueUpdate` with `addedLabelIds` and `removedLabelIds` |
 | `issue` | `teamId`, `projectId`, `title`, `description`, `parentId?`, `labelIds` | `issueCreate` |
-| `comment` | `issueId`, `body`, `author: {role, model, avatarUrl}` | `commentCreate` |
+| `comment` | `issueId`, `body`, `author: {role, model, avatarUrl?}` | `commentCreate` |
 | `parent` | `issueId`, `parentId` | `issueUpdate` |
 | `blocks` | `issueId`, `blockedIssueId` | `issueRelationCreate` with type `blocks` |
 
 The author name is `role · model`. App comments send that as `createAsUser` and
 send the HTTPS avatar as `displayIconUrl`. Linear renders the app attribution.
+App mode requires that avatar; personal mode may omit it.
 Personal-key comments prepend `role · model (via Squadron)` to their body and
 omit the app-only fields. This follows
 [Linear's actor authorization](https://linear.app/developers/oauth-actor-authorization).
@@ -151,7 +156,10 @@ that same workspace requires an explicit retry; it never silently drains old
 work. Recovery preserves the original comment body, author and UUID. An existing
 personal comment reconciles against that body. If creation is still needed, the
 app sends the original personal signature/body plus app attribution for that same
-author. An app-to-personal downgrade cannot resume app rows; reconnect with app
+author. A personal comment may have no avatar, since personal auth sends none.
+Such a row cannot resume under app auth: it stays preserved until the owner
+reconnects personal auth. Squadron never invents an avatar or sends an unsigned
+app comment. An app-to-personal downgrade cannot resume app rows; reconnect with app
 auth first. This avoids changing an ambiguous app comment's signed payload.
 
 Schema upgrades add metadata without deleting rows or changing queued payloads.
@@ -173,6 +181,13 @@ UUID. Inaccessible, edited or conflicting resources can keep a write blocked.
 Different dedupe keys represent different operations, even with identical text.
 Fixture tests verify the queue and exact payloads; live delivery and upstream
 UUID-conflict behavior still need separate validation with owner authorization.
+
+The auth adapter reuses successful public connection reads for up to one minute
+and shares concurrent identity reads. Settings changes, internal credential
+replacement, disconnect and authentication rejection invalidate that state.
+Failed identity reads are not cached. Scoped outbox delivery and recovery force
+identity verification and still check workspace, mode and auth generation
+immediately before sending; the public cache authorizes no write.
 
 Persistence/dedupe mechanics were adapted from Chief's `alert_outbox` at commit
 `64ac8bc3613efbdd5841af0487b31e9003ed5efe`. Chief delivers BB messages; this module

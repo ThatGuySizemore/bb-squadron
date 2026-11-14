@@ -5,6 +5,7 @@ import type { Blocker, Board, LinearStatus, ReadySpec, Route, UnplannedIssue } f
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { OutboxBlockedReason, OutboxHealth } from "./linear-outbox-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
+import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 
 export interface HelperInput {
   snapshot: MirrorSnapshot;
@@ -37,14 +38,8 @@ export interface HelperOutput {
   commands: HelperCommand[];
 }
 
-const READY_LABEL = "ready-for-agent";
-
 function byIdentifier(a: MirrorIssue, b: MirrorIssue): number {
   return a.identifier.localeCompare(b.identifier, "en", { numeric: true });
-}
-
-function isOpen(issue: MirrorIssue): boolean {
-  return issue.state.type !== "completed" && issue.state.type !== "canceled";
 }
 
 function list(ids: string[]): string {
@@ -58,9 +53,9 @@ function uniqueRoutes(routes: Route[]): Route[] {
 export function helperCore(input: HelperInput): HelperOutput {
   const { snapshot } = input;
   const settings = input.settings?.ok ? input.settings.settings : null;
-  const open = snapshot.issues.filter((issue) => issue.inProject).sort(byIdentifier);
+  const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
   const labels = (issue: MirrorIssue) => issue.labels.map((label) => label.name);
-  const specs = open.filter((issue) => issue.parentId === null && labels(issue).includes(READY_LABEL));
+  const specs = open.filter((issue) => issue.parentId === null && labels(issue).includes(READY_FOR_AGENT));
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const binding = snapshot.binding;
@@ -69,7 +64,7 @@ export function helperCore(input: HelperInput): HelperOutput {
     .filter((relation) => relation.relatedIssueId === issue.id)
     .flatMap((relation) => {
       const blocker = byId.get(relation.issueId);
-      return blocker && isOpen(blocker) ? [blocker] : [];
+      return blocker && isOpenIssue(blocker) ? [blocker] : [];
     })
     .sort(byIdentifier)
     .map((blocker) => ({
@@ -78,11 +73,13 @@ export function helperCore(input: HelperInput): HelperOutput {
     }));
   const ready: ReadySpec[] = specs.map((spec) => {
     const tickets = open.filter((issue) => issue.parentId === spec.id);
-    const blockers = openBlockers(spec);
+    const specBlockers = openBlockers(spec);
     const ticketBlockers = tickets.map(openBlockers);
+    const blockers = [...new Map([...specBlockers, ...ticketBlockers.flat()].map((blocker) => [blocker.id, blocker])).values()]
+      .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
     let startReason: string;
-    if (blockers.length) {
-      startReason = `Waits on ${list(blockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
+    if (specBlockers.length) {
+      startReason = `Waits on ${list(specBlockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
     } else if (!tickets.length) {
       startReason = "Has no open tickets. Plan its tickets first.";
     } else if (ticketBlockers.every((found) => found.length > 0)) {
@@ -100,7 +97,7 @@ export function helperCore(input: HelperInput): HelperOutput {
       id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length,
       routes: settings ? uniqueRoutes(tickets.map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
-      acceptOwner: labels(spec).includes("accept:owner"),
+      acceptOwner: labels(spec).includes(ACCEPT_OWNER),
     };
   });
   // Anything open that isn't a Ready spec or one of its tickets waits here,
@@ -110,7 +107,7 @@ export function helperCore(input: HelperInput): HelperOutput {
     const parent = byId.get(issue.parentId);
     if (!parent) return "Under an issue this board can't see";
     if (parent.teamId !== binding?.team.id || parent.projectId !== binding?.project.id) return `Under ${parent.identifier}, outside this project`;
-    if (!isOpen(parent)) return `Under ${parent.identifier}, which is closed`;
+    if (!isOpenIssue(parent)) return `Under ${parent.identifier}, which is closed`;
     return `Under ${parent.identifier}`;
   };
   const unplanned: UnplannedIssue[] = open
@@ -143,12 +140,11 @@ export function helperCore(input: HelperInput): HelperOutput {
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
         project: binding ? `${binding.team.name} · ${binding.project.name}` : null },
       ...(input.writes ? { writes: {
-        pending: input.writes.pendingCount,
+        ...input.writes,
         blocked: input.writes.blocked.map((write) => ({
-          id: write.id, threadId: write.threadId, reason: BLOCKED_WRITE_TEXT[write.reason],
-          issues: write.issueIds.flatMap((id) => byId.get(id)?.identifier ?? []),
+          ...write, reasonText: BLOCKED_WRITE_TEXT[write.reason],
+          issueIdentifiers: write.issueIds.flatMap((id) => byId.get(id)?.identifier ?? []),
         })),
-        more: Math.max(0, input.writes.blockedCount - input.writes.blocked.length),
       } } : {}),
       tick: 0, laneCapacity: settings?.limits.lanesAtOnce ?? 0, workersPerLane: settings?.limits.workersPerLane ?? 0,
       autoStart: false, lanes: [], ready, unplanned,

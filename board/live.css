@@ -59,6 +59,7 @@
   font-family: var(--sq-mono);
   font-size: 11px;
   font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 @container (max-width: 900px) {
   .sq-need-issue {
@@ -72,6 +73,8 @@
 .sq-mono {
   font-family: var(--sq-mono);
   font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 
 .sq-bind {

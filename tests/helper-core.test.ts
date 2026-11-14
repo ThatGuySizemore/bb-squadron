@@ -68,6 +68,31 @@ test("a spec with no blockers still can't start in this version, and says why", 
   ]);
 });
 
+test("Ready shows open blockers of its tickets while preserving a partially available frontier", () => {
+  const { board } = helperCore(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }), issue("FIX-3", { parent: "FIX-1" }),
+    issue("FIX-10", { labels: ["ready-for-agent"] }), issue("FIX-11", { parent: "FIX-10" }),
+    issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
+  ], [blocks("FIX-11", "FIX-2"), blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3"),
+    blocks("FIX-11", "FIX-3")])));
+  const row = board.ready[0];
+  assert.deepEqual(row.blockedBy, ["FIX-11", "OUT-9"]);
+  assert.deepEqual(row.blockers, [
+    { id: "FIX-11", title: "Issue FIX-11", url: "https://linear.app/fixture/issue/FIX-11", outside: false },
+    { id: "OUT-9", title: "Issue OUT-9", url: "https://linear.app/fixture/issue/OUT-9", outside: true },
+  ]);
+  assert.equal(row.startReason, "Every ticket waits on a blocker: FIX-11, OUT-9");
+
+  const partial = helperCore(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }), issue("FIX-3", { parent: "FIX-1" }),
+    issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
+  ], [blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3")]))).board.ready[0];
+  assert.deepEqual(partial.blockedBy, ["OUT-9"]);
+  assert.equal(partial.startReason, "Squadron can't start lanes yet. This version only reads Linear.");
+});
+
 test("Start waits on a valid docs/agents/squadron.md before anything else after blockers", () => {
   const { board } = helperCore(input(snapshot([
     issue("FIX-1", { labels: ["ready-for-agent"] }),
@@ -142,7 +167,9 @@ test("a blocked Linear write needs the owner; queued writes that retry on their 
       { id: "receipt-2", threadId: null, issueIds: ["unknown-uuid"], reason: "workspace_changed" as const },
     ],
   } }));
-  assert.equal(board.writes?.pending, 3);
+  assert.equal(board.writes?.pendingCount, 3);
+  assert.deepEqual(board.writes?.blocked[0].issueIds, ["fix-4"]);
+  assert.equal(board.writes?.blocked[0].reason, "conflict");
   assert.deepEqual(needsYou(board).map(({ key, kind, specId, issueId, text, threadId, writeId }) => ({ key, kind, specId, issueId, text, threadId, writeId })), [
     { key: "write:receipt-1", kind: "write", specId: "", issueId: "FIX-4", writeId: "receipt-1", threadId: "thr_lead",
       text: "A Linear write for FIX-4 couldn't go through. The issue changed in Linear since the write was queued. Check it, then retry. Squadron won't overwrite it." },
@@ -158,4 +185,12 @@ test("connecting Linear and choosing a project wait on the owner before anything
   assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [
     { kind: "setup", text: "Choose the Linear team and project for this BB project." },
   ]);
+});
+
+test("a capped blocked-write list still tells the owner there are more when the count is only a lower bound", () => {
+  const { board } = helperCore(input(snapshot([]), { writes: {
+    bbProjectId: "proj-one", pendingCount: 0, blockedCount: 1, hasMore: true,
+    blocked: [{ id: "receipt-1", threadId: null, issueIds: [], reason: "conflict" }],
+  } }));
+  assert.equal(needsYou(board).at(-1)?.text, "More Linear writes couldn't go through. Retry the ones above first.");
 });

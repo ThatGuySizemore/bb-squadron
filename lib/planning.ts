@@ -10,6 +10,9 @@ import { planningContract, type PlanningStarted } from "./planning-contract.js";
 import { formationCells } from "./pixels.js";
 import { readProjectCheckout, type ProjectCheckout } from "./project-checkout.js";
 import type { SquadronRoute } from "./squadron-settings.js";
+import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
+import { isActiveProjectThread } from "./project-thread.js";
+import { linearAvatarUrlSchema } from "./linear-avatar.js";
 
 export interface PlanningSources {
   connection(): Promise<LinearConnectionState>;
@@ -19,14 +22,11 @@ export interface PlanningSources {
 }
 
 const AVATAR_PATH = "/avatars/planning-thread.svg";
-const READY_LABEL = "ready-for-agent";
 /** Labels that record an owner decision. A planning thread never applies them. */
-const OWNER_LABELS = new Set(["accept:owner"]);
+const OWNER_LABELS = new Set([ACCEPT_OWNER]);
 
 /** Labels the planner may apply: ready-for-agent and the repo's route labels that exist in Linear. */
 type PlanningLabel = { id: string; name: string };
-
-const isOpen = (issue: MirrorIssue) => issue.state.type !== "completed" && issue.state.type !== "canceled";
 
 /** Linear text is data for the planner, never instructions. */
 const quote = (value: string) => JSON.stringify(value);
@@ -77,31 +77,32 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     const origin = bb.server.experimental_appUrl;
     try {
       const url = origin ? new URL(origin) : null;
-      return url?.protocol === "https:" ? new URL(`/api/v1/plugins/${bb.pluginId}/http${AVATAR_PATH}`, url.origin).href : null;
+      const avatar = url ? new URL(`/api/v1/plugins/${bb.pluginId}/http${AVATAR_PATH}`, url.origin).href : null;
+      return linearAvatarUrlSchema.safeParse(avatar).success ? avatar : null;
     } catch { return null; }
   }
 
   /** The write scope for one planning thread, or why there is none. */
   async function scope(projectId: string, snapshot: MirrorSnapshot, checkout: ProjectCheckout, issue: MirrorIssue | null):
-    Promise<{ grant: Omit<LinearWriteGrant, "threadId">; labels: PlanningLabel[] } | { reason: string }> {
+    Promise<{ grant: Omit<LinearWriteGrant, "threadId">; labels: PlanningLabel[]; mode: "app" | "personal" } | { reason: string }> {
     const connection = await sources.connection().catch(() => null);
-    if (connection?.status !== "connected" || !connection.workspace) return { reason: "Linear isn't connected." };
+    if (connection?.status !== "connected" || !connection.workspace || !connection.mode) return { reason: "Linear isn't connected." };
     const binding = snapshot.binding;
     if (!binding) return { reason: "This BB project isn't bound to a Linear team and project." };
     if (!checkout.settings?.ok) return { reason: "docs/agents/squadron.md has problems, so route labels are unknown. Open Doctor for details." };
     const routeNames = checkout.settings.settings.routes.flatMap((route) => route.label === null ? [] : [route.label]);
-    const wanted = new Set([READY_LABEL, ...routeNames].filter((name) => !OWNER_LABELS.has(name)));
+    const wanted = new Set([READY_FOR_AGENT, ...routeNames].filter((name) => !OWNER_LABELS.has(name)));
     const labels = snapshot.labels.filter((label) => wanted.has(label.name)).map(({ id, name }) => ({ id, name }));
-    if (!labels.some((label) => label.name === READY_LABEL)) return { reason: `The ${READY_LABEL} label doesn't exist in Linear yet.` };
+    if (!labels.some((label) => label.name === READY_FOR_AGENT)) return { reason: `The ${READY_FOR_AGENT} label doesn't exist in Linear yet.` };
     const avatar = avatarUrl();
-    if (!avatar) return { reason: "BB has no public HTTPS app URL, so Squadron can't sign the planning thread's Linear comments." };
-    return { labels, grant: {
+    if (connection.mode === "app" && !avatar) return { reason: "BB has no public HTTPS app URL, so Squadron can't sign the planning thread's Linear comments." };
+    return { labels, mode: connection.mode, grant: {
       bbProjectId: projectId, workspaceId: connection.workspace.id, teamId: binding.team.id, projectId: binding.project.id,
-      role: "Planning thread", avatarUrl: avatar, issueIds: issue ? [issue.id] : [], labelIds: labels.map((label) => label.id),
+      role: "Planning thread", ...(avatar ? { avatarUrl: avatar } : {}), issueIds: issue ? [issue.id] : [], labelIds: labels.map((label) => label.id),
       allowCreateIssues: true,
       // Open issues elsewhere in the bound project, including other specs'
       // tickets, may block what this thread plans. They grant no other write.
-      blockerIssueIds: snapshot.issues.filter((item) => item.inProject && isOpen(item) && item.id !== issue?.id &&
+      blockerIssueIds: snapshot.issues.filter((item) => item.inProject && isOpenIssue(item) && item.id !== issue?.id &&
         item.teamId === binding.team.id && item.projectId === binding.project.id).map((item) => item.id),
     } };
   }
@@ -119,7 +120,7 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
   async function canReopenPlanningThread(projectId: string, threadId: string): Promise<boolean> {
     try {
       const thread = await bb.sdk.threads.get({ threadId });
-      return thread.id === threadId && thread.projectId === projectId && thread.deletedAt === null && thread.archivedAt === null;
+      return isActiveProjectThread(thread, threadId, projectId);
     } catch { return false; }
   }
 
@@ -127,7 +128,7 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     const snapshot = sources.mirror.getSnapshot(projectId);
     let issue: MirrorIssue | null = null;
     if (issueId) {
-      issue = snapshot.issues.find((item) => item.identifier === issueId && item.inProject && isOpen(item)) ?? null;
+      issue = snapshot.issues.find((item) => item.identifier === issueId && item.inProject && isOpenIssue(item)) ?? null;
       if (!issue) throw new Error(`${issueId} isn't an open issue in this project's Linear project. The board may be out of date.`);
     }
     const checkout = await readProjectCheckout(bb, projectId);
@@ -139,7 +140,10 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
       routes: checkout.settings?.ok ? checkout.settings.settings.routes : [],
       labels: "reason" in writes ? [] : writes.labels, readOnly: "reason" in writes ? writes.reason : null,
     });
-    const seedSha = createHash("sha256").update(JSON.stringify([environment, prompt])).digest("hex");
+    // The visible prompt needn't expose UUIDs or auth mode, but a saved thread
+    // must never acquire a different write scope under the same first message.
+    const fingerprint = (value: typeof writes) => "reason" in value ? value.reason : [value.mode, value.grant];
+    const seedSha = createHash("sha256").update(JSON.stringify([environment, prompt, fingerprint(writes)])).digest("hex");
     const saved = issue ? db.prepare(`SELECT thread_id, seed_sha256 FROM planning_threads WHERE bb_project_id=? AND issue_id=?`)
       .get(projectId, issue.id) as { thread_id: string; seed_sha256: string } | undefined : undefined;
     // A thread whose first message no longer matches its checkout, routes, label
@@ -155,6 +159,12 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
         ON CONFLICT (bb_project_id, issue_id) DO UPDATE SET thread_id=excluded.thread_id, seed_sha256=excluded.seed_sha256`).run(projectId, issue.id, threadId, seedSha);
     }
     if ("reason" in writes) return { threadId, writes: false, message: writes.reason };
+    const currentCheckout = await readProjectCheckout(bb, projectId);
+    const current = currentCheckout ? await scope(projectId, sources.mirror.getSnapshot(projectId), currentCheckout, issue) : null;
+    if (!current || JSON.stringify(currentCheckout) !== JSON.stringify(checkout) ||
+      JSON.stringify(fingerprint(current)) !== JSON.stringify(fingerprint(writes))) {
+      return { threadId, writes: false, message: "The planning context changed while the thread opened. Plan again to use the current connection, binding and routes." };
+    }
     // A reopened thread's seed matches this scope; same-scope rebinds keep the
     // issues it created and refresh its blocker references.
     await sources.outbox.bindThread({ threadId, ...writes.grant });

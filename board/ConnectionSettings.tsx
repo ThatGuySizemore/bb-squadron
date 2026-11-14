@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useBbNavigate, useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
+import { linearConnectionChanged } from "../lib/realtime-contract.js";
 import { linearContract, type LinearConnectionState } from "../lib/linear-contract.js";
 import "./connection.css";
 
@@ -64,7 +66,7 @@ export function ConnectionSettings() {
     } finally { if (current === request.current) setBusy(false); }
   }, [rpc]);
   useEffect(() => { void refresh(); return () => { request.current++; }; }, [refresh]);
-  useRealtime("linear-connection-changed", () => { void refresh(); });
+  useSquadronSignal(linearConnectionChanged, () => { void refresh(); });
   async function connect() {
     setBusy(true); setError("");
     try {

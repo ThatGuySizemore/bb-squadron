@@ -3,6 +3,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { linearContract, type LinearConnectionState } from "./linear-contract.js";
+import { linearConnectionChanged, publishSquadronSignal } from "./realtime-contract.js";
 
 const messages = {
   not_connected: "Connect Linear in Squadron settings.",
@@ -29,6 +30,8 @@ const credentialsSchema = z.object({ accessToken: z.string().min(1), refreshToke
 const tokenResponseSchema = z.object({ access_token: z.string().min(1), refresh_token: z.string().min(1), expires_in: z.number().positive(), token_type: z.literal("Bearer") });
 
 export interface LinearAuth {
+  /** Public reads reuse identity for at most a minute. throwOnFailure forces
+   * verification for scoped delivery/recovery; cached identity grants no write. */
   getConnection(options?: { throwOnFailure: boolean }): Promise<LinearConnectionState>;
   graphql<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal, expected?: { workspaceId: string; mode: "app" | "personal" }): Promise<T>;
 }
@@ -49,6 +52,8 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
   const pending = new Map<string, { verifier: string; redirectUri: string; expiresAt: number }>();
   let refreshing: Promise<string> | null = null;
   let generation = 0;
+  let identityCache: { generation: number; at: number; value: LinearConnectionState } | null = null;
+  let identityPending: { generation: number; promise: Promise<LinearConnectionState> } | null = null;
   let budgetResetAt = 0;
   let expectedTokenWrite: string | null = null;
   let credentialWrites: Promise<unknown> = Promise.resolve();
@@ -57,12 +62,17 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     credentialWrites = result.catch(() => undefined);
     return result;
   }
-  async function setInternalCredentials(value: string) {
+  async function setInternalCredentials(value: string, reconnect = false) {
+    // A new OAuth installation can belong to another workspace. Token renewal
+    // keeps the existing identity, but reconnect invalidates all in-flight work.
+    if (reconnect) { generation++; pending.clear(); }
+    identityCache = null;
     expectedTokenWrite = value;
     try { await settings.experimental_set({ linearCredentials: value }); }
     finally { expectedTokenWrite = null; }
   }
   settings.onChange((next, previous) => {
+    identityCache = null;
     // Match only our exact token update. An external change during that write
     // must still invalidate stale work, even while experimental_set is pending.
     const internal = expectedTokenWrite !== null && next.linearCredentials === expectedTokenWrite &&
@@ -70,7 +80,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
       next.linearOAuthClientId === previous.linearOAuthClientId &&
       next.linearOAuthClientSecret === previous.linearOAuthClientSecret;
     if (!internal) { generation++; pending.clear(); budgetResetAt = 0; }
-    bb.realtime.publish("linear-connection-changed", null);
+    publishSquadronSignal(bb.realtime, linearConnectionChanged, null);
   });
   function parseCredentials(value: string) {
     try { return credentialsSchema.parse(JSON.parse(value)); }
@@ -167,7 +177,7 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
         if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
         await setInternalCredentials(JSON.stringify({
           accessToken: token.access_token, refreshToken: token.refresh_token, expiresAt: now() + token.expires_in * 1000,
-        }));
+        }), true);
       });
       return context.text("Linear connected. Return to Squadron settings.");
     } catch {
@@ -208,7 +218,10 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
       budgetResetAt = Math.max(budgetResetAt, now() + (retry > 0 && Number.isFinite(retry) ? retry * 1000 : 60_000));
       throw new LinearRequestError("rate_limited", budgetResetAt - now());
     }
-    if (response.status === 401 || response.status === 403) throw new LinearRequestError("authentication");
+    if (response.status === 401 || response.status === 403) {
+      identityCache = null;
+      throw new LinearRequestError("authentication");
+    }
     let body: { data?: T; errors?: unknown[] };
     try { body = await response.json(); }
     catch { throw new LinearRequestError("invalid_response"); }
@@ -226,24 +239,39 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     return body.data;
   }
   async function getConnection(options?: { throwOnFailure: boolean }): Promise<LinearConnectionState> {
+    // Never read the previous credential halfway through an OAuth replacement
+    // and associate that identity with the replacement's generation.
+    await credentialWrites;
     const expectedGeneration = generation;
     const { linearApiKey, linearCredentials } = await settings.get();
     const mode = linearCredentials ? "app" : "personal";
     if (!linearApiKey && !linearCredentials) return { status: "disconnected", mode: null, actor: null, workspace: null, message: "Connect Linear in Squadron settings." };
     try {
-      const result = identityResponse.safeParse(await graphql(
-        "query SquadronIdentity { viewer { id name } organization { id name } }",
-      ));
-      if (!result.success) throw new LinearRequestError("invalid_response");
       if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
-      const data = result.data;
-      return {
-        status: "connected", mode,
-        workspace: { id: data.organization.id, name: data.organization.name },
-        actor: { id: data.viewer.id, name: data.viewer.name },
-        message: mode === "app" ? "Writes go out as the Squadron app." : `Writes go out under ${data.viewer.name}'s name.`,
-      };
+      if (!options?.throwOnFailure && identityCache?.generation === generation && now() - identityCache.at < 60_000) return identityCache.value;
+      if (!identityPending || identityPending.generation !== generation) {
+        const promise = (async (): Promise<LinearConnectionState> => {
+          const result = identityResponse.safeParse(await graphql(
+            "query SquadronIdentity { viewer { id name } organization { id name } }",
+          ));
+          if (!result.success) throw new LinearRequestError("invalid_response");
+          if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
+          const data = result.data;
+          const value: LinearConnectionState = {
+            status: "connected", mode,
+            workspace: { id: data.organization.id, name: data.organization.name },
+            actor: { id: data.viewer.id, name: data.viewer.name },
+            message: mode === "app" ? "Writes go out as the Squadron app." : `Writes go out under ${data.viewer.name}'s name.`,
+          };
+          identityCache = { generation, at: now(), value };
+          return value;
+        })();
+        const pending = identityPending = { generation, promise };
+        void promise.finally(() => { if (identityPending === pending) identityPending = null; }).catch(() => undefined);
+      }
+      return await identityPending.promise;
     } catch (error) {
+      if (generation === expectedGeneration) identityCache = null;
       if (options?.throwOnFailure) throw error;
       return { status: "failed", mode, actor: null, workspace: null,
         message: error instanceof LinearRequestError ? error.message : messages.unavailable };

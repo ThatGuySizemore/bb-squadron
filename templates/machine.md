@@ -18,4 +18,4 @@ For each family, name the Linear tool and the account it should verify before wr
 
 ## Project notes
 
-Record machine-specific project notes here. Quick check, stop list, routes, final-review family, time limits and status mapping belong in that project's `docs/agents/squadron.md`.
+Record machine-specific project notes here. Quick check, stop list, routes, final-review family, time limits, the optional Tracker override and Linear-only status mapping belong in that project's `docs/agents/squadron.md`.

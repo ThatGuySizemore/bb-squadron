@@ -1,5 +1,5 @@
 // Derives the board from a tracker snapshot and project settings.
-import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type UnplannedIssue } from "./board-model.js";
+import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type OpenIssue } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
@@ -72,8 +72,16 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
-  /** Waiting, Working, In branch or Done, read from Linear through the status mapping. */
+  /** Tracker ticket states; only Linear uses the configured status mapping. */
   function ticketState(issue: TrackerIssue): Ticket["state"] {
+    if (snapshot.kind === "github") {
+      if (issue.state.type === "completed") return "done";
+      return issue.assignees.length > 0 || issue.state.type === "started" ? "working" : "blocked";
+    }
+    if (snapshot.kind === "local-markdown") {
+      if (issue.state.type === "completed") return "done";
+      return ["in-progress", "claimed"].includes(issue.state.name.toLowerCase()) ? "working" : "blocked";
+    }
     const mapping = settings?.statusMapping.ticket;
     if (issue.state.type === "completed" || issue.state.name === mapping?.done) return "done";
     if (issue.state.name === mapping?.inBranch) return "branch";
@@ -189,7 +197,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     if (!isOpenIssue(parent)) return `Under ${parent.identifier}, which is closed`;
     return `Under ${parent.identifier}`;
   };
-  const unplanned: UnplannedIssue[] = open
+  const openIssues: OpenIssue[] = open
     .filter((issue) => !specIds.has(issue.id) && !(issue.parentId !== null && specIds.has(issue.parentId)))
     .map((issue) => {
       const parent = under(issue);
@@ -216,7 +224,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       linear: { state: linear, message, syncedAt: snapshot.syncedAt,
         project: project?.name ?? null },
       tick: 0, laneCapacity: 0, workersPerLane: 0,
-      autoStart: false, lanes, ready, unplanned,
+      autoStart: false, lanes, ready, openIssues,
     },
   };
 }

@@ -14,7 +14,7 @@ function skills(provider: string, root = `/owner/.${provider === "codex" ? "code
     pluginId, provider, registrySkillId: null, scope,
   }));
 }
-function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; unavailable?: boolean; gh?: boolean; ownerFiles?: boolean } = {}) {
+function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; unavailable?: boolean; gh?: boolean; ownerFiles?: boolean; expectedCheckout?: string } = {}) {
   const available = options.skills ?? [...skills("claude-code"), ...skills("codex")];
   return createFakePluginHost({
     experimental_hostEntry: true,
@@ -41,7 +41,10 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
     experimental_callHostRpc: async ({ hostId, method, input }) => {
       assert.equal(hostId, "repo-machine");
       if (options.unavailable) throw new Error("private process diagnostic");
-      if (method === "githubLogin") return { authenticated: options.gh ?? true };
+      if (method === "githubLogin") {
+        if (options.expectedCheckout) assert.equal((input as { checkoutPath?: string }).checkoutPath, options.expectedCheckout);
+        return { authenticated: options.gh ?? true };
+      }
       assert.equal(method, "inspectFiles");
       assert.equal((input as { checkoutPath: string }).checkoutPath, "/repo");
       return {
@@ -131,5 +134,15 @@ test("an unavailable selected environment does not borrow the project's default 
       id: "settings", name: "Project settings", status: "fix", message: "Choose a ready checkout for this project, then check again.",
     });
     assert.equal(report.checks.find((check) => check.id === "linear"), undefined);
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+
+test("Doctor checks gh in the selected repo checkout rather than the plugin checkout", async () => {
+  const { bb, harness } = host({ expectedCheckout: "/repo" });
+  try {
+    registerDoctor(bb, async () => ({ status: "connected" }));
+    const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+    assert.equal(report.checks.find((c) => c.id === "github")?.status, "pass");
   } finally { await harness.lifecycle.dispose(); }
 });

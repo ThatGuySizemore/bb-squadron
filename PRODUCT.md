@@ -25,7 +25,7 @@ Runs inside the BB desktop app as a plugin page in the left sidebar, beside agen
 ## Capabilities and Constraints
 
 - Linear is v1; GitHub Issues is v2.
-- Vocabulary is fixed by `GLOSSARY.md`: spec, ticket, lane, Lead, worker, reviewer, Needs you, Unplanned.
+- Vocabulary is fixed by `GLOSSARY.md`: spec, ticket, lane, Lead, worker, reviewer, Needs you, Open issues.
 - The UI must follow BB's theme tokens so it works with any BB theme, light or dark.
 - Plugin UI is React inside BB; no network fonts or external assets at runtime.
 

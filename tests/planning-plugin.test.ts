@@ -73,7 +73,7 @@ async function setup(t: import("node:test").TestContext, issues?: () => Response
   return { harness, linear };
 }
 
-test("Plan on an Unplanned issue opens a planning thread in the project checkout, seeded with the issue and the squadron-planner skill", async (t) => {
+test("Plan on an Open issue opens a planning thread in the project checkout, seeded with the issue and the squadron-planner skill", async (t) => {
   const { harness } = await setup(t);
   const started = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string };
   assert.equal(started.threadId, "thr_plan_1");
@@ -205,7 +205,7 @@ test("while a planning thread opens, its Plan button says so and waits", async (
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardView } = await import("../board/Board.js");
   const board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [],
-    unplanned: [{ id: "FIX-9", title: "Linear webhooks", labels: [] }, { id: "FIX-12", title: "Another", labels: [] }] };
+    openIssues: [{ id: "FIX-9", title: "Linear webhooks", labels: [] }, { id: "FIX-12", title: "Another", labels: [] }] };
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, planning: "FIX-9",
   }));

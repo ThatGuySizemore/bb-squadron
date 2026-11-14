@@ -29,8 +29,8 @@ export const doctorHostContract = {
     experimental_retryable: true,
   },
   githubLogin: {
-    input: z.object({}),
-    output: z.object({ authenticated: z.boolean() }),
+    input: z.object({ checkoutPath: z.string().optional() }),
+    output: z.object({ authenticated: z.boolean(), hostname: z.string().optional() }),
     experimental_retryable: true,
   },
 };

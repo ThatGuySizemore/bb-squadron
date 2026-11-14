@@ -19,6 +19,12 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 `tracker.snapshot` exposes the same schema through RPC. `registerTracker` in [`lib/tracker-service.ts`](../lib/tracker-service.ts) selects the reader. SIZE-949 supplies Linear through `linearTrackerSnapshot` in [`lib/tracker-snapshot.ts`](../lib/tracker-snapshot.ts). Local markdown is supplied by `registerLocalMarkdownReader`. GitHub returns an explicit unavailable-reader error until its reader is installed, without requesting Linear setup.
 
+`TrackerReader.refresh(bbProjectId)` is optional. It returns a fresh read for a project no poller keeps current: the picker's counts, or a board that starts showing a project. A reader that reads on every `getSnapshot` call can omit it.
+
+## Polling
+
+Only the project a board page shows is polled. The page reads its board every 30 s while visible, and `registerBoard` treats a project as shown for 75 s after its last board read. The board watcher refreshes only shown projects. The Linear mirror's poller reads only bound projects that `isShown` reports. Other readers add no background poller of their own. `board.projectCounts` reads every project once, when the picker opens.
+
 ## Detection and binding
 
 `detectTracker(issueTrackerMarkdown, settingsMarkdown)` in [`lib/tracker-detection.ts`](../lib/tracker-detection.ts) is pure and returns `{ kind, reason }`. The optional level-two `Tracker` section in `squadron.md` takes precedence. Its value is `Linear`, `GitHub`, or `Local markdown`. Missing, ambiguous or unsupported configuration returns a null kind and a visible fix. `tracker.detect` reads these files from the selected project's default checkout and exposes the result through RPC.

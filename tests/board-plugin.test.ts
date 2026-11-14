@@ -122,6 +122,8 @@ test("a reload keeps the binding and rebuilds the board from Linear without a st
   assert.equal(snapshot.binding.project.id, "linear-one");
   assert.deepEqual(snapshot.issues, [], "issues are held only in memory");
   assert.equal(snapshot.syncedAt, null);
+  // The poller reads only projects a board page shows (SIZE-953); this page shows proj-one.
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const poll = harness.behavior.runService("linear-reader");
   t.after(() => poll.controller.abort());
   await until(() => linear.operations.filter((name) => name === "SquadronVocabulary").length >= 2, "full read after reload");

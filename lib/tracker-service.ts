@@ -9,8 +9,9 @@ import { registerLocalMarkdownReader } from "./local-markdown-reader.js";
 /** Reader selection. GitHub and local readers plug into the same snapshot contract. */
 export function registerTracker(bb: BbPluginApi, mirror: {
   getSnapshot(bbProjectId: string): MirrorSnapshot;
+  sync?(bbProjectId: string): Promise<MirrorSnapshot>;
   onChange(listener: (bbProjectId: string) => void): () => void;
-}): TrackerReader {
+}): TrackerReader & Required<Pick<TrackerReader, "refresh">> {
   const github = registerGithubReader(bb);
   const local = registerLocalMarkdownReader(bb);
   async function detect(bbProjectId: string) {
@@ -27,11 +28,19 @@ export function registerTracker(bb: BbPluginApi, mirror: {
     return { kind: found.kind, bbProjectId, project: null, issues: [], relations: [], labels: [], states: [],
       syncedAt: null, error: found.kind ? `${found.kind} reader is not available yet.` : found.reason };
   }
+  /** A fresh read: a bound Linear project syncs once; other readers read on getSnapshot. */
+  async function refresh(bbProjectId: string): Promise<TrackerSnapshot> {
+    const found = await detect(bbProjectId);
+    if (found.kind === "linear" && mirror.sync && mirror.getSnapshot(bbProjectId).binding) {
+      await mirror.sync(bbProjectId).catch(() => undefined); // The snapshot carries the safe error.
+    }
+    return getSnapshot(bbProjectId);
+  }
   bb.rpc.register(trackerContract, {
     "tracker.detect": ({ bbProjectId }) => detect(bbProjectId),
     "tracker.snapshot": ({ bbProjectId }) => getSnapshot(bbProjectId),
   });
-  return { getSnapshot, onChange(listener) {
+  return { getSnapshot, refresh, onChange(listener) {
     const unsubscribes = [mirror.onChange(listener), local.onChange(listener)];
     return () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
   } };

@@ -19,3 +19,11 @@ export const planningContract = {
     output: planningStartedSchema,
   },
 } as const;
+
+/** The board's Set up button: Matt's setup when needed, then squadron.md with the owner. */
+export const setupContract = {
+  "planning.setup": {
+    input: z.object({ projectId: z.string().min(1).max(256) }).strict(),
+    output: planningStartedSchema,
+  },
+} as const;

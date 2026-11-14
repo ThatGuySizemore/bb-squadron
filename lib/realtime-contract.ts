@@ -15,3 +15,13 @@ export type BoardChanged = z.infer<typeof boardChanged.payload>;
 export function publishSquadronSignal<T>(realtime: { publish(channel: string, payload: unknown): void }, signal: SquadronSignal<T>, payload: T): void {
   realtime.publish(signal.name, payload);
 }
+
+export type SquadronSignalRead<T> = { ok: true; payload: T } | { ok: false; diagnostic: string };
+
+/** BB delivers unknown JSON. A payload that fails its schema becomes a safe,
+ * visible diagnostic: it names the signal and never echoes the payload. */
+export function readSquadronSignal<T>(signal: SquadronSignal<T>, payload: unknown): SquadronSignalRead<T> {
+  const parsed = signal.payload.safeParse(payload);
+  return parsed.success ? { ok: true, payload: parsed.data }
+    : { ok: false, diagnostic: `Squadron ignored a ${signal.name} update in an unexpected shape, so the board may be out of date. It reads the board again shortly.` };
+}

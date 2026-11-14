@@ -3,7 +3,7 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
-import { boardContract } from "./board-contract.js";
+import { boardContract, type ProjectCounts } from "./board-contract.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { deriveBoard, type BoardInput, type PlanningThread } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
@@ -28,7 +28,9 @@ export interface BoardSources {
 /** How long a watcher pass may reuse a connection check or settings read. */
 const REUSE_MS = 60_000;
 /** The watcher's pass interval, for changes nothing announces (clock, settings). */
-const WATCH_MS = 15_000;
+const WATCH_MS = 30_000;
+/** A board page asks again every 30 s while it shows a project; after this, nothing shows it. */
+export const SHOWN_MS = 75_000;
 
 export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   now?: () => number;
@@ -40,6 +42,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   bb.onDispose(() => { lifetime.abort(); });
   const projects = new Map<string, {
     published: string | null;
+    /** When a board page last read this project. Only shown projects are polled. */
+    shownAt?: number;
     connection?: { at: number; value: BoardInput["connection"] };
     settings?: { at: number; value: SettingsResult | null };
     doctor?: { at: number; value: DoctorReport };
@@ -111,23 +115,67 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return running;
   }
 
-  sources.tracker.onChange((projectId) => { void refresh(projectId); });
+  /** Whether a board page is showing this project now. */
+  function isShown(projectId: string): boolean {
+    const at = projects.get(projectId)?.shownAt;
+    return at !== undefined && now() - at < SHOWN_MS;
+  }
+
+  sources.tracker.onChange((projectId) => { if (isShown(projectId)) void refresh(projectId); });
 
   bb.background.service("board-watcher", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);
     while (!stop.aborted) {
-      for (const id of [...projects.keys()]) await refresh(id);
+      for (const id of [...projects.keys()].filter(isShown)) await refresh(id);
       try { await wait(WATCH_MS, stop); } catch { return; }
     }
   } });
 
+  const pickDb = bb.storage.database();
+  pickDb.exec("CREATE TABLE IF NOT EXISTS board_pick (id INTEGER PRIMARY KEY CHECK (id = 1), project_id TEXT NOT NULL)");
+
+  async function listProjects() {
+    return (await bb.sdk.projects.list()).map(({ id, name }) => ({ id, name }));
+  }
+
+  /** One project's picker row: a fresh read through the reader contract, never a poller. */
+  async function counts(projectId: string): Promise<ProjectCounts["projects"][number]> {
+    try {
+      const snapshot = await (sources.tracker.refresh ?? sources.tracker.getSnapshot)(projectId);
+      const note = snapshot.error ?? (snapshot.kind === "linear" && !snapshot.project ? "Choose its Linear project on its board."
+        : snapshot.syncedAt === null ? "Not read yet." : null);
+      if (note) return { id: projectId, tracker: snapshot.kind, ready: null, flying: null, note };
+      const { board } = deriveBoard({ snapshot, connection: { status: "connected", message: "" }, settings: null, now: now(),
+        leads: await sources.leads?.(projectId) });
+      return { id: projectId, tracker: snapshot.kind, ready: board.ready.length,
+        flying: board.lanes.filter((lane) => lane.state !== "landed").length, note: null };
+    } catch {
+      return { id: projectId, tracker: null, ready: null, flying: null, note: "Couldn't read this project. Make sure its machine is online." };
+    }
+  }
+
   bb.rpc.register(boardContract, {
     board: async ({ projectId }) => {
+      const entry = project(projectId);
+      const wasShown = isShown(projectId);
+      entry.shownAt = now();
+      // A project nothing was polling is read afresh when a board starts showing it.
+      if (!wasShown) await sources.tracker.refresh?.(projectId);
       const board = await compute(projectId, true);
       publishIfChanged(projectId, board);
       return board;
     },
+    "board.projects": async () => {
+      const listed = await listProjects();
+      const row = pickDb.prepare("SELECT project_id FROM board_pick WHERE id = 1").get() as { project_id: string } | undefined;
+      return { projects: listed, lastPick: row && listed.some((item) => item.id === row.project_id) ? row.project_id : null };
+    },
+    "board.projectCounts": async () => ({ projects: await Promise.all((await listProjects()).map(({ id }) => counts(id))) }),
+    "board.pick": ({ projectId }) => {
+      pickDb.prepare("INSERT INTO board_pick VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id").run(projectId);
+      return { projectId };
+    },
   });
 
-  return { refresh };
+  return { refresh, isShown };
 }

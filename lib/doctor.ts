@@ -54,7 +54,7 @@ export function doctor(input: DoctorInput): DoctorReport {
     },
     {
       id: "setup", name: "Matt's setup files", status: missingSetup.length ? "fix" : "pass",
-      message: missingSetup.length ? `Run Matt's setup to create ${missingSetup.join(", ")}.` : "Issue tracker, triage labels and domain docs are present.",
+      message: missingSetup.length ? `Press Set up to create ${missingSetup.join(", ")} with Matt's setup in a thread.` : "Issue tracker, triage labels and domain docs are present.",
     },
     {
       id: "settings", name: "Project settings", status: parsed?.ok ? "pass" : "fix",

@@ -66,13 +66,14 @@ export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath
       readLocalMarkdown: (input, { signal }) => readLocalMarkdown(input, signal),
       inspectFiles: async ({ checkoutPath, skillPaths }) => {
         const homePath = home();
-        const [repoRulesExists, playbookExists, machineProfileExists, setup, skills] = await Promise.all([
-          exists(join(checkoutPath, "AGENTS.md")), exists(join(homePath, ".bb-squadron/playbook.md")),
+        const [repoRulesExists, houseRulesExists, playbookExists, machineProfileExists, setup, skills] = await Promise.all([
+          exists(join(checkoutPath, "AGENTS.md")), exists(join(homePath, ".bb-squadron/house-rules.md")),
+          exists(join(homePath, ".bb-squadron/playbook.md")),
           exists(join(homePath, ".bb-squadron/machine.md")),
           Promise.all(setupFiles.map(async (path) => await exists(join(checkoutPath, path)) ? [path] : [])),
           Promise.all(skillPaths.map(async (path) => await regularSkillFile(path) ? [path] : [])),
         ]);
-        return { homePath, repoRulesExists, playbookExists, machineProfileExists, setupFiles: setup.flat(), regularSkillFiles: skills.flat() };
+        return { homePath, repoRulesExists, houseRulesExists, playbookExists, machineProfileExists, setupFiles: setup.flat(), regularSkillFiles: skills.flat() };
       },
       codexMattSkills: async ({ names }) => ({ skills: await findCodexMattSkills(codexHome(), names) }),
       githubRead: (input, { signal }) => readGithub(input, signal, commands),

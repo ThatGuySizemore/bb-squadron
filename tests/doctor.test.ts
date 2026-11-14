@@ -14,7 +14,7 @@ const readyInput = {
   configurationFiles: [
     { id: "repo-rules" as const, name: "Repo rules", path: "/repo/AGENTS.md", hostId: "host", exists: true },
     { id: "project-settings" as const, name: "Project settings", path: "/repo/docs/agents/squadron.md", hostId: "host", exists: true },
-    { id: "playbook" as const, name: "Playbook", path: "/owner/.bb-squadron/playbook.md", hostId: "host", exists: true },
+    { id: "playbook" as const, name: "House rules", path: "/owner/.bb-squadron/house-rules.md", hostId: "host", exists: true },
     { id: "machine-profile" as const, name: "Machine profile", path: "/owner/.bb-squadron/machine.md", hostId: "host", exists: true },
   ],
 };

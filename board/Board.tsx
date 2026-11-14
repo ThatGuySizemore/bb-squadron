@@ -14,6 +14,7 @@ import type { BoardAction } from "../lib/fake-board.js";
 import { layoutPixels } from "../lib/pixels.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
+import { HowItWorks } from "./HowItWorks.js";
 import { currentProject, fleetFlying, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 import type { ProjectCounts } from "../lib/board-contract.js";
 import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
@@ -844,6 +845,9 @@ interface BoardViewProps {
 export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, fleetLabel, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
+  const [howOpen, setHowOpen] = useState(false);
+  const howId = useId();
+  const howButton = useRef<HTMLButtonElement>(null);
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
   const phase = useLandings(board.lanes);
@@ -910,6 +914,8 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             ) : null}
             {modeSwitch}
             {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
+            <button type="button" ref={howButton} className="sq-btn sq-how-open" aria-expanded={howOpen} aria-controls={howOpen ? howId : undefined}
+              title="See how an idea becomes a merged pull request, and where you step in" onClick={() => setHowOpen((open) => !open)}>How it works</button>
             <button type="button" className="sq-doctor" data-status={doctor?.tone ?? "unknown"} aria-expanded={doctorOpen} aria-controls={doctorId}
               title={doctor ? `Doctor: ${doctor.text}` : "Check this repo's setup"} onClick={() => setDoctorOpen((open) => !open)}>
               Doctor{doctor ? <span className="sq-sr">: </span> : null}
@@ -918,6 +924,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             {newSpec("primary")}
           </div>
         </header>
+        {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
         <TrackerLine board={board} tracker={tracker} now={Date.now()} />
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
         <PathStrip counts={counts} onJump={jump} />

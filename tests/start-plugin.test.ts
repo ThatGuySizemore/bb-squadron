@@ -1091,3 +1091,24 @@ test("a merged Outside lane also checks shared main without changing the stop br
   assert.equal(native.threads.get("outside")?.status, "active");
   assert.equal(harness.inspection.sdk.callsTo("threads.sendMessage").length, 0);
 });
+
+test("merged main forwards the project's optional Check setup through settings to its host", async (t) => {
+  const linear = workspace();
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const calls: unknown[] = [];
+  const settings = settingsFile + '\n## Check setup\n\n```sh\n./prepare-check\n```\n';
+  const { bb, harness } = host(undefined, undefined, settings, (input) => {
+    calls.push(input);
+    return { passed: false, logPath: "/scratch/setup-failed.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) };
+  });
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(calls, [{ checkoutPath: "/repo", prNumber: 7, quickCheck: "npm run check", checkSetup: "./prepare-check" }]);
+  assert.equal(board.autopilot?.status, "paused");
+  assert.deepEqual(board.autopilot?.pauseLog, { hostId: "repo-machine", path: "/scratch/setup-failed.log" });
+});

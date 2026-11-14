@@ -20,6 +20,14 @@ Project: BB Squadron
 npm run check
 ```
 
+## Check setup
+
+Before the merged-main quick check, prepare dependencies in its scratch worktree only.
+
+```sh
+npm ci
+```
+
 ## Stop list
 
 A merge stops only for these:

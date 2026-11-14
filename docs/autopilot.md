@@ -4,6 +4,8 @@ Each BB project's board has an Autopilot switch and a lane limit. Autopilot star
 
 The existing board watcher considers one start per project per cycle, and on board-changed signals. A start's own signal refreshes the board without starting another lane in that cycle. The first Ready spec with no Start refusal uses the same Start function and first message as an owner click. Doctor is checked again by Start. Turning Autopilot Off while Doctor runs prevents that automatic start.
 
+Immediately before an automatic spawn, Squadron rechecks that the selected spec is still Ready with no Start refusal, Autopilot is still On, and capacity remains. A hold applied while Doctor runs prevents that start.
+
 Lanes started by the owner count toward the limit, though an owner click can exceed it. Outside lanes, Landed lanes, stopped lanes and lanes waiting for an owner merge don't count. A lane waiting on an owner question keeps its slot. The board's formation uses the project's saved limit.
 
 A Landed spec returns to Ready when today's tracker still marks it ready and has an open, unblocked ticket that isn't held. The landed lane remains visible until a new Lead starts. If every remaining ticket is held, it stays Landed. An open PR keeps the existing lane in review.
@@ -45,6 +47,12 @@ While Autopilot is On or Paused, any merged lane PR triggers the project's quick
 The host retains stdout and stderr in `quick-check.log` under its own temporary root, removes its scratch worktree and repository, and returns the log's host path. Failure pauses with `Main fails its quick check`; Needs you links the log beside Resume. Passing checks clear neither another pause nor the stop count. A host/setup read that cannot complete blocks scheduling rather than treating unknown main as passing.
 
 Private `checkedMerges` receipts, keyed by PR URL, share the controls' serialized queue and KV key with the stop markers. The queue awaits each host result and saves the receipt together with any pause, so concurrent refreshes and reloads don't recheck a completed merge. Resume retains receipts and clears the failure log. An interrupted check without a saved result is retried. Paused projects remain watched; Off projects run no check. Outside merges also affect shared main and trigger its check without changing their threads or the stop brake. Local-only lanes don't trigger the remote-main check.
+
+Main checks hold only their project's refresh and next start. The existing watcher continues its 30-second discovery and other projects' observation while a check waits; it creates no additional polling loop.
+
+Private `pendingOutsideEnvironments` references retain observed Outside merge sources even if their specs close and disappear from the tracker before the next refresh or plugin restart. PR reads use the existing batches of at most 200 environment IDs. A reference stays while its lane is visible or its PR is unresolved; missing and unavailable PR reads retain it. Once hidden, a closed PR retires its reference, and a merged PR retires it atomically with its check receipt. Retired sources need no historical PR scan. These references supply merge evidence only: Outside lanes remain read-only and occupy no Autopilot slot.
+
+An optional [Check setup](settings.md#check-setup) command prepares dependencies only in the scratch worktree before Quick check. A setup failure retains the log, skips Quick check and applies the same main-check brake.
 
 ## Command line (SQD-220)
 

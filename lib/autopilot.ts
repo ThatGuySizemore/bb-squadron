@@ -4,12 +4,14 @@ import { z } from "zod";
 import { autopilotContract, autopilotStateSchema, type AutopilotState } from "./autopilot-contract.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { mainCheckResultSchema } from "./main-check-contract.js";
+import type { PullRequestRow } from "./pull-requests.js";
 
 const PREFIX = "autopilot.project.";
 const defaults = (): AutopilotState => ({ status: "off", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
 const storedSchema = autopilotStateSchema.extend({
   observedOutcomes: z.record(z.string(), z.enum(["stopped", "landed"])).default({}),
   checkedMerges: z.record(z.string(), mainCheckResultSchema).default({}),
+  pendingOutsideEnvironments: z.array(z.string()).default([]),
 });
 type StoredState = z.infer<typeof storedSchema>;
 
@@ -19,7 +21,7 @@ export async function registerAutopilot(bb: BbPluginApi) {
   const pending = new Map<string, Promise<unknown>>();
   const readStored = async (projectId: string): Promise<StoredState> => {
     const parsed = storedSchema.safeParse(await bb.storage.kv.get(PREFIX + projectId));
-    return parsed.success ? parsed.data : { ...defaults(), observedOutcomes: {}, checkedMerges: {} };
+    return parsed.success ? parsed.data : { ...defaults(), observedOutcomes: {}, checkedMerges: {}, pendingOutsideEnvironments: [] };
   };
   const get = async (projectId: string): Promise<AutopilotState> => {
     const state = autopilotStateSchema.parse(await readStored(projectId));
@@ -54,8 +56,15 @@ export async function registerAutopilot(bb: BbPluginApi) {
     if (state.status !== "paused") throw new Error("Autopilot isn't paused.");
     return { ...state, status: "on", pauseReason: null, pauseLog: undefined, consecutiveStops: 0 };
   });
+  /** Retain merge sources while visible or unresolved, even if the tracker later drops the spec. */
+  const rememberOutside = async (projectId: string, environmentIds: string[]) => {
+    await changeStored(projectId, (state) => ({ ...state,
+      pendingOutsideEnvironments: [...new Set([...state.pendingOutsideEnvironments, ...environmentIds])],
+    }));
+    return (await readStored(projectId)).pendingOutsideEnvironments;
+  };
   /** Hold the same project queue through the host result, before a scheduler can see a free slot. */
-  const checkMain = (projectId: string, merges: { number: number; url: string }[], check: (prNumber: number) => Promise<z.infer<typeof mainCheckResultSchema> & { hostId: string }>) =>
+  const checkMain = (projectId: string, merges: { number: number; url: string }[], check: (prNumber: number) => Promise<z.infer<typeof mainCheckResultSchema> & { hostId: string }>, outside: { requests: Record<string, PullRequestRow>; visible: string[] } = { requests: {}, visible: [] }) =>
     changeStored(projectId, async (state) => {
       if (state.status === "off") return state;
       const checkedMerges = { ...state.checkedMerges };
@@ -67,7 +76,17 @@ export async function registerAutopilot(bb: BbPluginApi) {
         if (!result.passed) next = { ...next, status: "paused", pauseReason: "Main fails its quick check",
           pauseLog: { hostId: result.hostId, path: result.logPath } };
       }
-      return { ...next, checkedMerges };
+      // Retire a terminal Outside source in the same write as its merge receipt.
+      // Missing/unavailable PR reads retain it for a later watcher pass.
+      const pendingOutsideEnvironments = state.pendingOutsideEnvironments.filter((id) => {
+        // A still-visible lane will be remembered again on the next read.
+        // Keep its reference stable until it disappears from the board.
+        if (outside.visible.includes(id)) return true;
+        const row = outside.requests[id];
+        return !(row?.outcome === "available" && (row.pullRequest.state === "closed"
+          || row.pullRequest.state === "merged" && checkedMerges[row.pullRequest.url]));
+      });
+      return { ...next, checkedMerges, pendingOutsideEnvironments };
     });
   const observe = (projectId: string, board: Board) => changeStored(projectId, (state) => {
     if (state.status === "off") return state;
@@ -105,7 +124,7 @@ export async function registerAutopilot(bb: BbPluginApi) {
       return set(projectId, patch);
     },
   });
-  return { get, set, update, pause, resume, observe, checkMain, isOn, isEnabled, enabledProjectIds };
+  return { get, set, update, pause, resume, observe, checkMain, rememberOutside, isOn, isEnabled, enabledProjectIds };
 }
 export type AutopilotControls = Awaited<ReturnType<typeof registerAutopilot>>;
 

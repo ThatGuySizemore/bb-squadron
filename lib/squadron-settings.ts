@@ -8,6 +8,8 @@ export interface SquadronRoute extends Route {
 
 export interface SquadronSettings {
   quickCheck: string;
+  /** Optional preparation command for the isolated merged-main check only. */
+  checkSetup?: string;
   stopList: string[];
   limits: {
     laneTimeLimitMs: number;
@@ -57,7 +59,7 @@ export type ScopeKey = typeof SCOPE_KEYS[number];
 export const SETTINGS_UNREADABLE = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
 export const SCOPE_MISSING = "Add the Scope section to docs/agents/squadron.md, naming at least one of Team, Project, Initiative, Label or View.";
 
-export type SettingsSection = "Quick check" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels";
+export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels";
 export interface SettingsIssue { section: SettingsSection; message: string }
 export type SettingsResult =
   | { ok: true; settings: SquadronSettings }
@@ -114,6 +116,7 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   }
   if (issues.length) return { ok: false, issues };
   const quickCheck = /(?:```|~~~)[^\n]*\n([\s\S]*?)(?:```|~~~)/.exec(parts.get("Quick check") ?? "")?.[1].trim() ?? "";
+  const checkSetup = /(?:```|~~~)[^\n]*\n([\s\S]*?)(?:```|~~~)/.exec(parts.get("Check setup") ?? "")?.[1].trim();
   const stopList = (parts.get("Stop list") ?? "").split("\n")
     .filter((line) => /^\s*[-*+]\s+/.test(line)).map((line) => line.replace(/^\s*[-*+]\s+/, "").trim());
   const values = new Map(table(parts.get("Time limits") ?? "").map(([key, value]) => [key, value]));
@@ -128,6 +131,7 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   }));
   const settings: SquadronSettings = {
       quickCheck, stopList,
+      ...(checkSetup ? { checkSetup } : {}),
       limits: {
         laneTimeLimitMs: duration(values.get("Lane time limit")), workerTimeLimitMs: duration(values.get("Worker time limit")),
       },
@@ -141,6 +145,7 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
       holdLabels: [...DEFAULT_HOLD_LABELS],
   };
   if (!quickCheck) issues.push({ section: "Quick check", message: "Put the quick check command in a fenced code block under Quick check." });
+  if (parts.has("Check setup") && !checkSetup) issues.push({ section: "Check setup", message: "Put the check setup command in a fenced code block under Check setup, or omit the section." });
   if (!stopList.length) issues.push({ section: "Stop list", message: "List the problems that stop a merge under Stop list." });
   if (Object.values(settings.limits).some((value) => !Number.isSafeInteger(value) || value <= 0)) {
     issues.push({ section: "Time limits", message: "Set positive durations such as 8 h for both lane and worker time limits." });

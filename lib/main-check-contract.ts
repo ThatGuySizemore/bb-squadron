@@ -5,7 +5,7 @@ export const mainCheckResultSchema = z.object({
 });
 export const mainCheckHostContract = {
   runMainQuickCheck: {
-    input: z.object({ checkoutPath: z.string(), prNumber: z.number().int().positive(), quickCheck: z.string().min(1) }),
+    input: z.object({ checkoutPath: z.string(), prNumber: z.number().int().positive(), quickCheck: z.string().min(1), checkSetup: z.string().min(1).optional() }),
     output: mainCheckResultSchema,
   },
 };

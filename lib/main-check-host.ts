@@ -10,7 +10,7 @@ const exec = promisify(execFile);
 const oid = z.string().regex(/^[a-f0-9]{40,64}$/);
 
 /** Only read the source checkout. Fetches and worktree metadata belong to our own scratch repository. */
-export async function runMainQuickCheck(input: { checkoutPath: string; prNumber: number; quickCheck: string }, signal: AbortSignal, commands: GithubCommand) {
+export async function runMainQuickCheck(input: { checkoutPath: string; prNumber: number; quickCheck: string; checkSetup?: string }, signal: AbortSignal, commands: GithubCommand) {
   const root = await mkdtemp(join(tmpdir(), "squadron-main-check-"));
   const repository = join(root, "repository.git");
   const worktree = join(root, "worktree");
@@ -39,13 +39,20 @@ export async function runMainQuickCheck(input: { checkoutPath: string; prNumber:
     await appendFile(logPath, `Merged main: ${mergedCommit}\nSQUADRON_BASE: ${baseCommit}\n`);
     const log = await open(logPath, "a");
     try {
-      passed = await new Promise<boolean>((resolve) => {
-        const child = spawn("/bin/sh", ["-c", input.quickCheck], { cwd: worktree, signal, timeout: 30 * 60_000,
+      const deadline = Date.now() + 30 * 60_000;
+      const run = (command: string) => new Promise<boolean>((resolve) => {
+        const child = spawn("/bin/sh", ["-c", command], { cwd: worktree, signal, timeout: Math.max(1, deadline - Date.now()),
           env: { ...process.env, SQUADRON_BASE: baseCommit! }, stdio: ["ignore", log.fd, log.fd] });
         let failed = false;
         child.once("error", () => { failed = true; });
         child.once("close", (code) => resolve(!failed && code === 0));
       });
+      if (input.checkSetup) await appendFile(logPath, "Check setup\n");
+      const prepared = !input.checkSetup || await run(input.checkSetup);
+      if (prepared && Date.now() < deadline) {
+        await appendFile(logPath, "Quick check\n");
+        passed = await run(input.quickCheck);
+      }
     } finally { await log.close(); }
   } catch {
     // Setup errors can include remote URLs or authentication output. Keep them on the host.

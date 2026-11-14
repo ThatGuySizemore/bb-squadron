@@ -106,7 +106,12 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const leads = await lanesOf(projectId, snapshot, planning);
     const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
     const environments = leads.flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
-    const pullRequests = environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined;
+    // Outside visibility remains open-only. Its unresolved merge sources survive
+    // tracker closure and reload independently, without exposing lane controls.
+    const visibleOutside = leads.flatMap(({ outside, thread }) => outside && thread.environmentId ? [thread.environmentId] : []);
+    const outsideEnvironments = await sources.autopilot?.rememberOutside(projectId, visibleOutside) ?? [];
+    const checkEnvironments = [...new Set([...environments, ...outsideEnvironments])];
+    const pullRequests = checkEnvironments.length ? await sources.pullRequests?.(checkEnvironments, lifetime.signal) : undefined;
     const { board } = deriveBoard({
       snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
@@ -120,19 +125,21 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
         ? await sources.autopilot.get(projectId) : await sources.autopilot.observe(projectId, board);
       if (!snapshot.error && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
         // Main is shared: include Outside merges and older Leads hidden by returning lanes.
-        const merges = leads.flatMap(({ thread }) => {
-          const row = thread.environmentId ? pullRequests?.[thread.environmentId] : undefined;
+        const merges = checkEnvironments.flatMap((id) => {
+          const row = pullRequests?.[id];
           return row?.outcome === "available" && row.pullRequest.state === "merged" ? [row.pullRequest] : [];
         });
         board.autopilot = await sources.autopilot.checkMain(projectId, merges, async (prNumber) => {
           const checkout = await readProjectCheckout(bb, projectId, lifetime.signal);
           const quickCheck = checkout?.settings?.ok ? checkout.settings.settings.quickCheck : null;
+          const checkSetup = checkout?.settings?.ok ? checkout.settings.settings.checkSetup : undefined;
           if (!checkout || !quickCheck) throw new Error("Main quick check setup is unavailable.");
           const result = await bb.hosts.experimental_client({ contract: mainCheckHostContract }).call("runMainQuickCheck",
-            { checkoutPath: checkout.path, prNumber, quickCheck },
+            { checkoutPath: checkout.path, prNumber, quickCheck, ...(checkSetup ? { checkSetup } : {}) },
             { hostId: checkout.hostId, signal: lifetime.signal, timeoutMs: 32 * 60_000 });
           return { ...result, hostId: checkout.hostId };
-        });
+        }, { visible: visibleOutside,
+          requests: Object.fromEntries(outsideEnvironments.flatMap((id) => pullRequests?.[id] ? [[id, pullRequests[id]]] : [])) });
       }
       board.laneCapacity = board.autopilot.laneLimit;
       board.autoStart = board.autopilot.status === "on";
@@ -178,6 +185,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
                 // Owner controls and hand starts can change while Start checks Doctor.
                 const current = await compute(projectId, false);
                 return !lifetime.signal.aborted && current.autopilot?.status === "on"
+                  && current.ready.some((spec) => spec.id === next.id && spec.startReason === null)
                   && autopilotLaneCount(current) < current.autopilot.laneLimit;
               });
             }
@@ -211,7 +219,9 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const listed = await bb.sdk.projects.list().catch(() => []);
       for (const { id, name } of listed) project(id).name = name;
       const ids = new Set([...listed.map(({ id }) => id), ...sources.autopilot?.enabledProjectIds() ?? []]);
-      await Promise.all([...ids].map(refresh));
+      // A project's refresh retains its own check/start barrier. A long host check
+      // must not hold discovery or observation of any other project.
+      for (const id of ids) void refresh(id).catch(() => { bb.log.warn("Project observation unavailable."); });
       try { await wait(WATCH_MS, stop); } catch { return; }
     }
   } });

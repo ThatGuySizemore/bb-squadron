@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -69,5 +69,52 @@ test("unavailable merge evidence fails closed with a retained log instead of che
     assert.match(await readFile(result.logPath, "utf8"), /Couldn't prepare/);
     await assert.rejects(readFile(join(root, "owner-was-used")), { code: "ENOENT" });
     assert.equal(await readFile(join(root, "unique"), "utf8"), "keep");
+  } finally { await host.experimental_dispose(); }
+});
+
+test("project check setup prepares only scratch before the real quick check, and failure retains its log", async () => {
+  const root = await mkdtemp(join(tmpdir(), "sqd-197-setup-"));
+  const remote = join(root, "remote");
+  const owner = join(root, "owner");
+  await mkdir(remote);
+  const git = async (cwd: string, ...args: string[]) => (await exec("git", args, { cwd })).stdout.trim();
+  await git(remote, "init", "-b", "main");
+  await git(remote, "config", "user.email", "fixture@example.test");
+  await git(remote, "config", "user.name", "Fixture");
+  await writeFile(join(remote, "tracked"), "base");
+  await git(remote, "add", "."); await git(remote, "commit", "-m", "base");
+  const base = await git(remote, "rev-parse", "HEAD");
+  await git(root, "clone", remote, owner);
+  await writeFile(join(owner, "unique"), "owner work");
+  await writeFile(join(remote, "tracked"), "merged");
+  await git(remote, "commit", "-am", "merge");
+  const merged = await git(remote, "rev-parse", "HEAD");
+  const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async () => ({ code: 0,
+    stdout: JSON.stringify({ state: "MERGED", baseRefName: "main", mergeCommit: { oid: merged } }),
+  })));
+  try {
+    const input = { checkoutPath: owner, prNumber: 7,
+      checkSetup: 'printf "SETUP=%s BASE=%s\\n" "$PWD" "$SQUADRON_BASE"; printf "dependency ready" > prepared',
+      quickCheck: 'test "$(cat prepared)" = "dependency ready" && printf "QUICK=%s BASE=%s\\n" "$PWD" "$SQUADRON_BASE"',
+    };
+    const result = await host.experimental_call("runMainQuickCheck", input);
+    assert.equal(result.passed, true, "the quick check requires the dependency created by project setup");
+    const log = await readFile(result.logPath, "utf8");
+    const scratch = join(await realpath(dirname(result.logPath)), "worktree");
+    assert.ok(log.includes(`SETUP=${scratch} BASE=${base}`));
+    assert.ok(log.includes(`QUICK=${scratch} BASE=${base}`));
+    assert.ok(log.indexOf("SETUP=") < log.indexOf("QUICK="));
+    const failingInput = { ...input,
+      checkSetup: 'echo setup-failed >&2; exit 9', quickCheck: 'echo SHOULD-NOT-RUN',
+    };
+    const failed = await host.experimental_call("runMainQuickCheck", failingInput);
+    assert.equal(failed.passed, false);
+    const failureLog = await readFile(failed.logPath, "utf8");
+    assert.match(failureLog, /setup-failed/);
+    assert.doesNotMatch(failureLog, /SHOULD-NOT-RUN/);
+    assert.match(failureLog, /FAIL/);
+    await assert.rejects(readFile(join(owner, "prepared")), { code: "ENOENT" });
+    assert.equal(await readFile(join(owner, "unique"), "utf8"), "owner work");
+    assert.equal(await git(owner, "rev-parse", "HEAD"), base);
   } finally { await host.experimental_dispose(); }
 });

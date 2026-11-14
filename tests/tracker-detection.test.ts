@@ -33,3 +33,14 @@ test("tracker declarations in prose work without requiring a particular heading"
   assert.equal(detectTracker("# Work\nIssues and specs for this repo live as markdown files in `.scratch/`.").kind, "local-markdown");
   assert.equal(detectTracker("# Issue tracker: Linear\n# Issue tracker: GitHub").kind, null);
 });
+
+test("unambiguous tracker mentions work when there is no formal declaration", () => {
+  assert.equal(detectTracker("Keep the feature's work in `.scratch/`.").kind, "local-markdown");
+  assert.equal(detectTracker("Read and update work with `gh issue`.").kind, "github");
+  assert.equal(detectTracker("Follow Matt's GitHub issue template.").kind, "github");
+  assert.equal(detectTracker("Find the spec in Linear.").kind, "linear");
+  assert.equal(detectTracker("Use Linear or `gh issue`.").kind, null);
+  assert.equal(detectTracker("Use `.scratch/` or Linear.").kind, null);
+  assert.equal(detectTracker("Use Linear or `gh issue`.", "## Tracker\nGitHub").kind, "github");
+  assert.equal(detectTracker("# Issue tracker: Linear\nGitHub hosts our code.").kind, "linear", "a declaration still outranks incidental mentions");
+});

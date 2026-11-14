@@ -24,6 +24,12 @@ export interface LeadThread {
   branchCandidates?: string[];
 }
 
+/** The route BB actually runs on a thread, including its unavailable-model fallback. */
+export function threadRoute(providerId: string | null, execution: { model?: string | null; reasoningLevel?: string | null } | null): Route {
+  return { family: providerId === "claude-code" ? "claude" : "gpt",
+    model: execution?.model ?? "Unknown model", effort: execution?.reasoningLevel === "high" ? "high" : "medium" };
+}
+
 export async function readWorkers(bb: BbPluginApi, projectId: string, leadId: string): Promise<WorkerThread[]> {
   const workers: WorkerThread[] = [];
   for (let offset = 0; ; offset += 200) {
@@ -44,8 +50,7 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
       leads.push({ specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
         workers: await readWorkers(bb, projectId, thread.id),
-        route: { family: thread.providerId === "claude-code" ? "claude" : "gpt",
-          model: execution?.model ?? "Unknown model", effort: execution?.reasoningLevel === "high" ? "high" : "medium" } });
+        route: threadRoute(thread.providerId, execution) });
     }
     if (threads.length < 200) return leads;
   }

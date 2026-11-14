@@ -26,6 +26,22 @@ const laneIssues = () => [
   issue("FIX-12", { title: "Third slice", parent: "FIX-1" }),
 ];
 
+test("a lane's motion counts running Lead and child threads even when every ticket is Waiting", async () => {
+  const laneLead = lead();
+  laneLead.workers = ["active", "starting", "pending", "stopping", "idle", "error"].map((status, i) =>
+    makeThreadResponse({ id: `worker-${i}`, title: `Child ${i}`, projectId: "proj-one", parentThreadId: "thr_lead",
+      status: status as "active" | "starting" | "pending" | "stopping" | "idle" | "error" }));
+  const board = deriveBoard(input(snapshot(laneIssues()), { leads: [laneLead] })).board;
+  assert.equal(board.lanes[0].workingThreads, 5);
+  assert.ok(board.lanes[0].tickets.every((ticket) => ticket.state === "blocked"));
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const html = renderToStaticMarkup(createElement(BoardView, { board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
+  assert.match(html, /5 working threads/);
+});
+
 test("a worker child whose title holds a ticket identifier links its card, and an unmatched child still shows", () => {
   const { board } = deriveBoard(input(snapshot(laneIssues()), { leads: [lead([
     { id: "thr_w2", title: "Worker FIX-2" },

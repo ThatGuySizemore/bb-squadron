@@ -1,5 +1,5 @@
 // Derives the board from a tracker snapshot and project settings.
-import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
+import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type TrackerStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
@@ -9,6 +9,7 @@ import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
 import type { LaneProgress } from "./lane-progress.js";
+import { escapeRegExp } from "./issue-text.js";
 
 /** A planning thread open in BB for one tracker issue, read from its plugin metadata. */
 export interface PlanningThread { issueId: string; threadId: string }
@@ -94,13 +95,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   });
   /** Tracker ticket states; only Linear uses the configured status mapping. */
   function ticketState(issue: TrackerIssue): Ticket["state"] {
-    if (snapshot.kind === "github") {
+    if (!usesLinear) {
       if (issue.state.type === "completed") return "done";
-      return issue.assignees.length > 0 || issue.state.type === "started" ? "working" : "blocked";
-    }
-    if (snapshot.kind === "local-markdown") {
-      if (issue.state.type === "completed") return "done";
-      return ["in-progress", "claimed"].includes(issue.state.name.toLowerCase()) ? "working" : "blocked";
+      return issue.state.type === "started" ? "working" : "blocked";
     }
     const mapping = settings?.statusMapping.ticket;
     if (issue.state.type === "completed" || issue.state.name === mapping?.done) return "done";
@@ -112,7 +109,10 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const noRemote = input.repository?.hasRemote === false;
     // An outside lane's branch is the first of its candidates that could be read.
     const branch = input.branches?.[spec.id] ?? lead.branch;
-    const localLanded = noRemote && (input.repository!.mergedBranches.includes(branch) || spec.state.type === "completed");
+    // A fresh branch at main has no lane work. Ancestry alone cannot prove a landing.
+    const mergedLaneWork = input.repository?.mergedBranches.includes(branch) &&
+      (input.repository.mergedBranchUpdatedAt[branch] ?? 0) > lead.thread.createdAt;
+    const localLanded = noRemote && (mergedLaneWork || spec.state.type === "completed");
     const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
     const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
     const laneById = new Map(laneSnapshot.issues.map((issue) => [issue.id, issue]));
@@ -126,7 +126,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const matched = new Set<string>();
     const tickets: Ticket[] = issues.sort(byIdentifier).map((issue) => {
       // The newest child naming the ticket is its worker; FIX-1 never matches FIX-12.
-      const pattern = new RegExp(`(?<![A-Za-z0-9])${issue.identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![0-9])`, "i");
+      const pattern = new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(issue.identifier)}(?![0-9])`, "i");
       const worker = children.find((child) => pattern.test(child.title ?? ""));
       if (worker) matched.add(worker.id);
       return {
@@ -157,6 +157,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
+      workingThreads: [lead.thread, ...workers].filter((thread) => RUNNING.has(thread.status)).length,
       ...(outside ? { outside } : {}),
       ...(noRemote && !outside ? { localMerge } : {}),
       ...(needs.length ? { needs } : {}),
@@ -253,25 +254,25 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       const parent = under(issue);
       return { id: issue.identifier, title: issue.title, url: issue.url, labels: labels(issue), ...(parent ? { under: parent } : {}) };
     });
-  let linear: LinearStatus["state"];
+  let status: TrackerStatus["state"];
   let message: string;
   if (usesLinear && input.connection.status !== "connected") {
-    linear = "disconnected"; message = input.connection.message;
+    status = "disconnected"; message = input.connection.message;
   } else if (usesLinear && !project) {
-    linear = "unbound"; message = "Choose the Linear team and project for this BB project.";
+    status = "unbound"; message = "Choose the Linear team and project for this BB project.";
   } else if (snapshot.error) {
     // The mirror's own poller retries; the last good copy stays on the board.
-    linear = "failed"; message = snapshot.error;
+    status = "failed"; message = snapshot.error;
   } else if (snapshot.syncedAt === null) {
-    linear = "catching-up";
+    status = "catching-up";
     message = `Reading this project's issues from ${tracker}.`;
   } else {
-    linear = "current"; message = `Up to date with ${tracker}.`;
+    status = "current"; message = `Up to date with ${tracker}.`;
   }
   return {
     board: {
       ...(input.doctor ? { doctor: input.doctor } : {}),
-      linear: { state: linear, message, syncedAt: snapshot.syncedAt,
+      tracker: { kind: snapshot.kind, state: status, message, syncedAt: snapshot.syncedAt,
         project: project?.name ?? null },
       tick: 0, laneCapacity: 0, workersPerLane: 0,
       autoStart: false, lanes, ready, shaping, openIssues,

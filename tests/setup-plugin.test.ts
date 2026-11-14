@@ -72,7 +72,7 @@ async function setup(t: import("node:test").TestContext, options: { setupFiles: 
 test("a project without squadron.md still shows its board, and Start explains what's missing", async (t) => {
   const { harness, spawned } = await setup(t, { setupFiles: allSetupFiles });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(board.linear?.state, "current");
+  assert.equal(board.tracker?.state, "current");
   assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1", "FIX-5"], "Ready shows without project settings");
   assert.deepEqual(board.openIssues.map((issue) => issue.id), ["FIX-9"]);
   const reason = board.ready.find((spec) => spec.id === "FIX-5")?.startReason;

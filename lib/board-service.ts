@@ -1,4 +1,4 @@
-// Serves the board from the Linear reader, settings and clock; publishes
+// Serves the board from the tracker reader, settings and clock; publishes
 // `board-changed` whenever a project's board model changes.
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -149,8 +149,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     }
   } });
 
-  const pickDb = bb.storage.database();
-  pickDb.exec("CREATE TABLE IF NOT EXISTS board_pick (id INTEGER PRIMARY KEY CHECK (id = 1), project_id TEXT NOT NULL)");
+  const pickKey = "board.projectPick";
 
   async function listProjects() {
     return (await bb.sdk.projects.list()).map(({ id, name }) => ({ id, name }));
@@ -163,10 +162,11 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const note = snapshot.error ?? (snapshot.kind === "linear" && !snapshot.project ? "Choose its Linear project on its board."
         : snapshot.syncedAt === null ? "Not read yet." : null);
       if (note) return { id: projectId, tracker: snapshot.kind, ready: null, flying: null, note };
-      const leads = await lanesOf(projectId, snapshot, await sources.planning?.(projectId));
+      const planning = await sources.planning?.(projectId);
+      const leads = await lanesOf(projectId, snapshot, planning);
       const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
       const { board } = deriveBoard({ snapshot, connection: { status: "connected", message: "" }, settings: null, now: now(),
-        leads, ...progress });
+        leads, planning, ...progress });
       return { id: projectId, tracker: snapshot.kind, ready: board.ready.length,
         flying: board.lanes.filter((lane) => lane.state !== "landed").length, note: null };
     } catch {
@@ -187,12 +187,12 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     },
     "board.projects": async () => {
       const listed = await listProjects();
-      const row = pickDb.prepare("SELECT project_id FROM board_pick WHERE id = 1").get() as { project_id: string } | undefined;
-      return { projects: listed, lastPick: row && listed.some((item) => item.id === row.project_id) ? row.project_id : null };
+      const picked = await bb.storage.kv.get<string>(pickKey);
+      return { projects: listed, lastPick: picked && listed.some((item) => item.id === picked) ? picked : null };
     },
     "board.projectCounts": async () => ({ projects: await Promise.all((await listProjects()).map(({ id }) => counts(id))) }),
-    "board.pick": ({ projectId }) => {
-      pickDb.prepare("INSERT INTO board_pick VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET project_id = excluded.project_id").run(projectId);
+    "board.pick": async ({ projectId }) => {
+      await bb.storage.kv.set(pickKey, projectId);
       return { projectId };
     },
   });

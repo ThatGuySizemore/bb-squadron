@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 export const trackerKindSchema = z.enum(["linear", "github", "local-markdown"]);
-export const trackerDetectionSchema = z.object({ kind: trackerKindSchema.nullable(), reason: z.string() });
 export const trackerLabelSchema = z.object({ id: z.string(), name: z.string(), color: z.string() });
 export const trackerStateSchema = z.object({ id: z.string(), name: z.string(), type: z.string() });
 export const trackerAssigneeSchema = z.object({ id: z.string(), name: z.string() });
@@ -40,13 +39,3 @@ export interface TrackerReader {
   refresh?(bbProjectId: string): Promise<TrackerSnapshot>;
   onChange(listener: (bbProjectId: string) => void): () => void;
 }
-
-export const trackerContract = {
-  "tracker.detect": {
-    input: z.object({ bbProjectId: z.string().min(1) }).strict(),
-    output: trackerDetectionSchema,
-  },
-  "tracker.snapshot": {
-    input: z.object({ bbProjectId: z.string().min(1) }).strict(), output: trackerSnapshotSchema,
-  },
-} as const;

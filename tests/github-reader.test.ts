@@ -77,7 +77,7 @@ test("Doctor rejects a github.com-only login for the checkout's enterprise host 
 });
 
 
-test("tracker.snapshot selects the GitHub reader on the selected project's host without a Linear binding", async () => {
+test("the tracker reader selects GitHub on the selected project's host without a Linear binding", async () => {
   const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, recorded));
   const { bb, harness } = createFakePluginHost({ experimental_hostEntry: true, sdk: {
     projects: { get: async () => ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
@@ -89,8 +89,8 @@ test("tracker.snapshot selects the GitHub reader on the selected project's host 
     return host.experimental_call("githubRead", input as { bbProjectId: string; checkoutPath: string });
   } });
   try {
-    registerTracker(bb, { getSnapshot: () => { throw new Error("GitHub needs no Linear binding"); }, onChange: () => () => {} });
-    const snapshot = await harness.behavior.callRpc("tracker.snapshot", { bbProjectId: "project" }) as TrackerSnapshot;
+    const tracker = registerTracker(bb, { getSnapshot: () => { throw new Error("GitHub needs no Linear binding"); }, onChange: () => () => {} });
+    const snapshot = await tracker.getSnapshot("project");
     assert.equal(snapshot.error, null);
     assert.equal(snapshot.project?.name, "fixture/repo");
     assert.equal(snapshot.issues.length, 5);

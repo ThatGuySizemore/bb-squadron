@@ -53,7 +53,7 @@ const doctorPass: DoctorReport = { ready: true, configurationFiles: [file(true)]
   check("github", "GitHub login", "pass", "gh is signed in for github.com."),
 ] };
 
-const linear = (project: string): Board["linear"] => ({ state: "current", message: "", syncedAt: now - 12_000, project });
+const linear = (project: string): Board["tracker"] => ({ state: "current", message: "", syncedAt: now - 12_000, project });
 const base = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false } as const;
 
 export interface Fixture {
@@ -77,7 +77,7 @@ export const pickerProjects = { counts, projects: [
 
 const squadronFlying: Fixture = {
   name: "squadron", projectName: "BB Squadron", tracker: { kind: "linear" }, fleet: 2,
-  board: { ...base, doctor: doctorPass, linear: linear("Sizemore · BB Squadron"), ready: [], shaping: [], openIssues: [], lanes: [
+  board: { ...base, doctor: doctorPass, tracker: linear("Sizemore · BB Squadron"), ready: [], shaping: [], openIssues: [], lanes: [
     { specId: SPEC_947.id, title: SPEC_947.title, url: SPEC_947.url, outside: true, lead: codex, leadThreadId: "thr_3r2xjejz9k", branch: "connect",
       state: "flying", minutes: 7, acceptOwner: false,
       needs: [{ threadId: "thr_3r2xjejz9k", kind: "waiting", text: "Lead · Connect asks you to approve the comp on SIZE-948." }],
@@ -88,14 +88,14 @@ const squadronFlying: Fixture = {
 
 const squadronReady: Fixture = {
   name: "squadron-ready", projectName: "BB Squadron", tracker: { kind: "linear" }, fleet: 1,
-  board: { ...base, doctor: doctorPass, linear: linear("Sizemore · BB Squadron"), shaping: [], openIssues: [], lanes: landed,
+  board: { ...base, doctor: doctorPass, tracker: linear("Sizemore · BB Squadron"), shaping: [], openIssues: [], lanes: landed,
     ready: [{ ...SPEC_947, ticketCount: 12, routes: [claude, codex], blockedBy: [], acceptOwner: false, startReason: null,
       waiting: connect({}).filter((t) => t.blockedBy.length).map(({ id, title, blockedBy }) => ({ id, title, blockedBy })) }] },
 };
 
 const squadronPublished: Fixture = {
   name: "squadron-published", projectName: "BB Squadron", tracker: { kind: "linear" }, fleet: 1,
-  board: { ...base, doctor: doctorPass, linear: linear("Sizemore · BB Squadron"), ready: [], lanes: landed,
+  board: { ...base, doctor: doctorPass, tracker: linear("Sizemore · BB Squadron"), ready: [], lanes: landed,
     shaping: [{ ...SPEC_947, ticketCount: 0, missing: "Ready label, but no tickets yet", action: "tickets" }],
     openIssues: [
       { id: "SIZE-904", title: "Doctor and settings: check gh for the repo's host, require Matt's setup docs, match route labels without case", labels: ["needs-triage"], url: "https://linear.app/sizemore/issue/SIZE-904", priority: 3 },

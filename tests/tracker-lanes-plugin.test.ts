@@ -24,9 +24,12 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
   const settings = (await readFile("tests/fixtures/squadron.md", "utf8")).split("## Status mapping")[0];
   await writeFile(join(root, "docs/agents/squadron.md"), settings);
   git(root, "init", "-b", "main");
+  let commitTime = Date.parse("2026-01-01T00:00:00Z");
   const commit = (message: string) => {
     git(root, "add", ".");
-    git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", message);
+    execFileSync("git", ["-C", root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", message],
+      { env: { ...process.env, GIT_AUTHOR_DATE: new Date(commitTime).toISOString(), GIT_COMMITTER_DATE: new Date(commitTime).toISOString() }, stdio: "pipe" });
+    commitTime += 10_000;
   };
   commit("Initial fixture");
   if (kind === "github") git(root, "remote", "add", "origin", "https://github.example/fixture/repo.git");
@@ -57,7 +60,8 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
       getPluginMetadata: async ({ threadId }) => metadata.get(threadId) ?? {},
       defaultExecutionOptions: async () => ({ model: "gpt-6.1-sol", reasoningLevel: "high", permissionMode: "auto", serviceTier: "default", source: "client/turn/start" }),
       spawn: async (args) => {
-        const thread = makeThreadResponse({ id: "lead", projectId: args.projectId, providerId: args.providerId, environmentId: "environment", status: "active" });
+        const thread = makeThreadResponse({ id: "lead", projectId: args.projectId, providerId: args.providerId, environmentId: "environment", status: "active",
+          createdAt: Date.parse("2026-01-01T00:00:01Z") });
         threads.set(thread.id, thread); metadata.set(thread.id, args.pluginMetadata ?? {});
         return thread;
       },
@@ -74,6 +78,20 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
   return { root, commit, harness, threads, metadata,
     board: async () => await harness.behavior.callRpc("board", { projectId: "project" }) as Board };
 }
+
+test("a new no-remote branch at main stays Flying until it carries lane work that main contains", async (t) => {
+  const { root, commit, harness, board } = await fixture(t);
+  git(root, "branch", "integration/flight");
+  await harness.behavior.callRpc("lane.start", { projectId: "project", specId: "flight" });
+  assert.equal((await board()).lanes[0]?.state, "flying", "a branch cut at main is no landing evidence");
+  git(root, "checkout", "integration/flight");
+  await writeFile(join(root, "implementation.md"), "Lane work\n");
+  commit("Lane implementation");
+  git(root, "checkout", "main");
+  assert.equal((await board()).lanes[0]?.state, "flying", "unmerged work is still Flying");
+  git(root, "merge", "--ff-only", "integration/flight");
+  assert.equal((await board()).lanes[0]?.state, "landed", "fast-forwarding actual lane work still lands");
+});
 
 test("Start in a no-remote local tracker spawns a Lead with its tracker instructions and needs no GitHub login", async (t) => {
   const { harness, board } = await fixture(t);
@@ -136,7 +154,7 @@ test("no-remote Merge messages the Lead with a fixed order, and actual ancestry 
   assert.equal((await board()).lanes[0].state, "flying", "sending an order is not evidence of landing");
   await assert.rejects(harness.behavior.callRpc("lane.merge", { projectId: "project", specId: "flight" },
     { experimental_caller: { kind: "plugin", pluginId: "other" } }), /from the Squadron board/);
-  git(root, "merge", "--ff-only", "integration/flight");
+  git(root, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "merge", "--no-ff", "integration/flight", "-m", "Merge lane fixture");
   const landed = (await board()).lanes[0];
   assert.equal(landed.state, "landed");
   assert.equal(landed.tickets[0]?.state, "done");
@@ -155,6 +173,15 @@ test("a no-remote spec marked done on main lands even without its ready label or
   const landed = (await board()).lanes[0];
   assert.equal(landed.state, "landed");
   assert.equal(landed.tickets[0]?.state, "done");
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const html = renderToStaticMarkup(createElement(BoardView, { board: await board(), demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
+  assert.match(html, /Lane landed/);
+  assert.doesNotMatch(html, /integration\/flight merged/, "a completed spec does not prove a branch merge");
+  assert.match(html, /title="Open the issue"/);
+  assert.doesNotMatch(html, /Open in Linear/);
 });
 
 test("stale Status lines stay Waiting despite a branch commit claiming completion", async (t) => {

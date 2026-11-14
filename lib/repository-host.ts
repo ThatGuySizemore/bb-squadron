@@ -14,12 +14,16 @@ export async function readRepositoryState(input: { checkoutPath: string; branche
   // A failed repository read is unknown, never evidence that there is no remote.
   const hasRemote = (await git(["remote"])).trim().length > 0;
   const main = await git(["rev-parse", "--verify", "refs/heads/main^{commit}"]).then((s) => s.trim()).catch(() => null);
-  if (!main) return { hasRemote, mainUpdatedAt: null, mergedBranches: [] };
+  if (!main) return { hasRemote, mainUpdatedAt: null, mergedBranches: [], mergedBranchUpdatedAt: {} };
   const mainUpdatedAt = Number((await git(["show", "-s", "--format=%ct", main])).trim()) * 1000;
   const mergedBranches: string[] = [];
+  const mergedBranchUpdatedAt: Record<string, number> = {};
   for (const branch of [...new Set(input.branches)].filter(Boolean)) {
     const tip = await git(["rev-parse", "--verify", "--end-of-options", `${branch}^{commit}`]).then((s) => s.trim()).catch(() => null);
-    if (tip && await git(["merge-base", "--is-ancestor", tip, main]).then(() => true).catch(() => false)) mergedBranches.push(branch);
+    if (tip && await git(["merge-base", "--is-ancestor", tip, main]).then(() => true).catch(() => false)) {
+      mergedBranches.push(branch);
+      mergedBranchUpdatedAt[branch] = Number((await git(["show", "-s", "--format=%ct", tip])).trim()) * 1000;
+    }
   }
-  return { hasRemote, mainUpdatedAt, mergedBranches };
+  return { hasRemote, mainUpdatedAt, mergedBranches, mergedBranchUpdatedAt };
 }

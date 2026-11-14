@@ -112,7 +112,7 @@ test("the board refreshes local files every 30 seconds and retains its last comp
   at = 61_000;
   const failed = await board();
   assert.equal(failed.ready[0]?.title, "Updated main title");
-  assert.equal(failed.linear?.state, "failed");
-  assert.equal(failed.linear?.message, "Couldn't read this project's local markdown tracker. Make sure its machine and checkout are available.");
-  assert.equal(failed.linear?.syncedAt, 31_000);
+  assert.equal(failed.tracker?.state, "failed");
+  assert.equal(failed.tracker?.message, "Couldn't read this project's local markdown tracker. Make sure its machine and checkout are available.");
+  assert.equal(failed.tracker?.syncedAt, 31_000);
 });

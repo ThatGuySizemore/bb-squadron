@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import { trackerContract, type TrackerReader, type TrackerSnapshot } from "./tracker-contract.js";
+import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import { registerGithubReader } from "./github-reader.js";
 import { linearTrackerSnapshot } from "./tracker-snapshot.js";
 import { registerLocalMarkdownReader } from "./local-markdown-reader.js";
@@ -26,7 +26,7 @@ export function registerTracker(bb: BbPluginApi, mirror: {
     if (found.kind === "local-markdown") return local.getSnapshot(bbProjectId);
     // Unknown trackers expose a configuration error without requesting Linear setup.
     return { kind: found.kind, bbProjectId, project: null, issues: [], relations: [], labels: [], states: [],
-      syncedAt: null, error: found.kind ? `${found.kind} reader is not available yet.` : found.reason };
+      syncedAt: null, error: found.reason };
   }
   /** A fresh read: a bound Linear project syncs once; other readers read on getSnapshot. */
   async function refresh(bbProjectId: string): Promise<TrackerSnapshot> {
@@ -36,12 +36,8 @@ export function registerTracker(bb: BbPluginApi, mirror: {
     }
     return getSnapshot(bbProjectId);
   }
-  bb.rpc.register(trackerContract, {
-    "tracker.detect": ({ bbProjectId }) => detect(bbProjectId),
-    "tracker.snapshot": ({ bbProjectId }) => getSnapshot(bbProjectId),
-  });
   return { getSnapshot, refresh, onChange(listener) {
-    const unsubscribes = [mirror.onChange(listener), local.onChange(listener)];
+    const unsubscribes = [mirror.onChange(listener), github.onChange(listener), local.onChange(listener)];
     return () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
   } };
 }

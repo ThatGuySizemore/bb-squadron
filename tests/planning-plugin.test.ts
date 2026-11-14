@@ -186,7 +186,9 @@ test("New spec works for a project whose tracker isn't Linear, and names that tr
 });
 
 test("Plan tickets on a Shaping spec opens a planning thread that plans that spec's tickets", async (t) => {
-  const { harness } = await setup(t);
+  const { harness } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.filter((node) => node.parent?.id !== "fix-1"),
+  } } }));
   const started = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-1", step: "tickets" }) as { threadId: string };
   assert.equal(started.threadId, "thr_plan_1");
   const { title, prompt, pluginMetadata } = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { title: string; prompt: string; pluginMetadata: unknown };
@@ -195,6 +197,38 @@ test("Plan tickets on a Shaping spec opens a planning thread that plans that spe
   assert.ok(prompt.includes("This spec already exists"), "the planner doesn't write a new spec");
   assert.match(prompt, /`to-tickets`/);
   assert.ok(prompt.includes("`ready-for-agent`"), "the planner finishes by marking the spec ready");
+});
+
+test("Plan tickets reviews existing tickets and blockers without publishing duplicates", async (t) => {
+  const { harness } = await setup(t);
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-1", step: "tickets" });
+  const { prompt } = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string };
+  assert.match(prompt, /Review the existing tickets/);
+  assert.match(prompt, /Do not create duplicate tickets/);
+  assert.match(prompt, /FIX-2/);
+  assert.match(prompt, /FIX-3/);
+  assert.match(prompt, /OUT-10/);
+  assert.match(prompt, /blockers/);
+  assert.match(prompt, /only.*ready-for-agent.*open, unblocked ticket/);
+  assert.doesNotMatch(prompt, /Publish the tickets/);
+});
+
+test("an all-blocked Shaping spec keeps its blockers in the planning seed", async (t) => {
+  const rawBlocker = workspaceIssues.data.issues.nodes[0].inverseRelations.nodes[0].issue;
+  const { harness } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.parent?.id === "fix-1" ? { ...node,
+      inverseRelations: { nodes: [{ id: `blocks-${node.id}`, type: "blocks", issue: rawBlocker, relatedIssue: node }], pageInfo: end },
+    } : node),
+  } } }));
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.match(board.shaping.find((row) => row.id === "FIX-1")?.missing ?? "", /Every ticket waits on a blocker: OUT-10/);
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-1", step: "tickets" });
+  const { prompt } = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string };
+  assert.match(prompt, /FIX-2 waits on OUT-10/);
+  assert.match(prompt, /FIX-3 waits on OUT-10/);
+  assert.match(prompt, /Keep unresolved blockers and their links intact/);
+  assert.doesNotMatch(prompt, /Publish the tickets/);
 });
 
 test("Plan moves an Open issue to Shaping, and Resume planning reopens that same thread", async (t) => {

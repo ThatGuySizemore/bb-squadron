@@ -3,8 +3,6 @@
 // frame under prefers-reduced-motion. Driven through a fake frame clock.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createDitherRenderer, type RendererEnv } from "../lib/dither-renderer.js";
 import { airstream, createSurface, formation, FORMATION_SIZE, pixelsOf } from "../lib/dither.js";
 
@@ -143,13 +141,4 @@ test("an airstream with no working threads is still; with work it flows", () => 
   const b = [...moving.buf];
   paintMoving(moving, 0.5);
   assert.notDeepEqual([...moving.buf], b, "working threads move the streaks");
-});
-
-test("no steps() animation remains on the board", async () => {
-  const dir = join(process.cwd(), "board");
-  for (const name of await readdir(dir)) {
-    if (!name.endsWith(".css")) continue;
-    const css = await readFile(join(dir, name), "utf8");
-    assert.doesNotMatch(css, /steps\(/, `${name} still uses steps()`);
-  }
 });

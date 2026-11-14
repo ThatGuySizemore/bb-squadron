@@ -1,19 +1,33 @@
 import { z } from "zod";
 
+export const doctorReportSchema = z.object({
+  ready: z.boolean(),
+  checks: z.array(z.object({
+    id: z.enum(["skills", "setup", "settings", "linear", "github", "playbook", "machine-profile"]), name: z.string(),
+    status: z.enum(["pass", "fix", "warning"]), message: z.string(),
+  })),
+  configurationFiles: z.array(z.object({
+    id: z.enum(["repo-rules", "project-settings", "playbook", "machine-profile"]),
+    name: z.string(), path: z.string(), hostId: z.string(), exists: z.boolean(),
+  })),
+});
+
 export const doctorContract = {
   doctor: {
     input: z.object({ projectId: z.string().min(1), environmentId: z.string().min(1).optional() }),
-    output: z.object({
-      ready: z.boolean(),
-      checks: z.array(z.object({
-        id: z.enum(["skills", "settings", "linear", "github"]), name: z.string(),
-        status: z.enum(["pass", "fix"]), message: z.string(),
-      })),
-    }),
+    output: doctorReportSchema,
   },
 };
 
 export const doctorHostContract = {
+  inspectFiles: {
+    input: z.object({ checkoutPath: z.string(), skillPaths: z.array(z.string()) }),
+    output: z.object({
+      homePath: z.string(), repoRulesExists: z.boolean(), playbookExists: z.boolean(), machineProfileExists: z.boolean(),
+      setupFiles: z.array(z.string()), regularSkillFiles: z.array(z.string()),
+    }),
+    experimental_retryable: true,
+  },
   githubLogin: {
     input: z.object({}),
     output: z.object({ authenticated: z.boolean() }),

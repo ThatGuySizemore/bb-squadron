@@ -1,0 +1,261 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { deriveBoard } from "../lib/board-derive.js";
+import { needsYou } from "../lib/board-model.js";
+import { blocks, input, issue, snapshot } from "./fixtures/board-snapshots.js";
+import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+
+test("a live Lead makes its spec Flying and links the Lead instead of offering Start", () => {
+  const snap = snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent", "ui"] }),
+    issue("FIX-2", { parent: "FIX-1" }),
+  ]);
+  const { board } = deriveBoard(input(snap, { leads: [{ specId: "fix-1", thread: makeThreadResponse({
+    id: "thr_lead", projectId: "proj-one", providerId: "claude-code", status: "active",
+    createdAt: Date.parse("2026-11-13T20:00:00Z"),
+  }), route: { family: "claude", model: "claude-opus-5-5", effort: "high" }, branch: "spec/fix-1" }] }));
+  assert.deepEqual(board.ready, []);
+  assert.equal(board.lanes.length, 1);
+  assert.equal(board.lanes[0].state, "flying");
+  assert.equal(board.lanes[0].specId, "FIX-1");
+  assert.equal(board.lanes[0].leadThreadId, "thr_lead");
+  assert.deepEqual(board.lanes[0].lead, { family: "claude", model: "claude-opus-5-5", effort: "high" });
+  assert.equal(board.lanes[0].minutes, 0);
+});
+
+test("ready-for-agent specs show under Ready with their tickets, and parentless issues under Unplanned", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { title: "Board reads Linear", labels: ["ready-for-agent"] }),
+    issue("FIX-2", { title: "Mirror issues", parent: "FIX-1", labels: ["ready-for-agent"] }),
+    issue("FIX-3", { title: "Board page", parent: "FIX-1", labels: ["ui", "ready-for-agent"] }),
+    issue("FIX-4", { title: "Webhooks", labels: ["v2"] }),
+  ])));
+  assert.deepEqual(board.ready.map(({ id, title, ticketCount, routes }) => ({ id, title, ticketCount, routes })), [{
+    id: "FIX-1", title: "Board reads Linear", ticketCount: 2, routes: [
+      { family: "gpt", model: "gpt-6.1-sol", effort: "high" },
+      { family: "claude", model: "claude-opus-5-5", effort: "high" },
+    ],
+  }]);
+  assert.deepEqual(board.unplanned.map(({ id, title, labels }) => ({ id, title, labels })), [
+    { id: "FIX-4", title: "Webhooks", labels: ["v2"] },
+  ]);
+  assert.deepEqual(board.lanes, []);
+  assert.equal(board.laneCapacity, 0);
+  assert.equal(board.workersPerLane, 0);
+});
+
+test("open blockers across specs, inside or outside the project, hold Start with the reason", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-10", { labels: ["ready-for-agent"] }),
+    issue("FIX-11", { parent: "FIX-10" }),
+    issue("FIX-20", { labels: ["ready-for-agent"] }),
+    issue("FIX-21", { parent: "FIX-20" }),
+    issue("OUT-9", { title: "Outside work", outside: true }),
+    issue("FIX-30", { labels: ["ready-for-agent"] }),
+    issue("FIX-31", { parent: "FIX-30" }),
+    issue("FIX-8", { done: true }),
+    issue("OUT-7", { outside: true, done: true }),
+  ], [blocks("FIX-1", "FIX-10"), blocks("OUT-9", "FIX-20"), blocks("FIX-1", "FIX-20"),
+    blocks("FIX-8", "FIX-30"), blocks("OUT-7", "FIX-30")])));
+  const rows = Object.fromEntries(board.ready.map((spec) => [spec.id, spec]));
+  assert.deepEqual(rows["FIX-10"].blockedBy, ["FIX-1"]);
+  assert.equal(rows["FIX-10"].startReason, "Waits on FIX-1");
+  assert.deepEqual(rows["FIX-20"].blockedBy, ["FIX-1", "OUT-9"]);
+  assert.deepEqual(rows["FIX-20"].blockers, [
+    { id: "FIX-1", title: "Issue FIX-1", url: "https://linear.app/fixture/issue/FIX-1", outside: false },
+    { id: "OUT-9", title: "Outside work", url: "https://linear.app/fixture/issue/OUT-9", outside: true },
+  ]);
+  assert.equal(rows["FIX-20"].startReason, "Waits on FIX-1 and OUT-9 (outside this project)");
+  assert.deepEqual(rows["FIX-30"].blockedBy, []);
+  assert.deepEqual(board.unplanned.map((row) => row.id), [], "outside and closed blockers never become rows");
+});
+
+test("a spec waits for Doctor, open tickets and an available frontier", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-5", { labels: ["ready-for-agent"] }),
+    issue("FIX-6", { labels: ["ready-for-agent"] }),
+    issue("FIX-7", { parent: "FIX-6" }),
+  ], [blocks("FIX-2", "FIX-7")])));
+  assert.deepEqual(board.ready.map((spec) => [spec.id, spec.startReason]), [
+    ["FIX-1", "Check Doctor before starting a lane."],
+    ["FIX-5", "Has no open tickets. Plan its tickets first."],
+    ["FIX-6", "Every ticket waits on a blocker: FIX-2"],
+  ]);
+});
+
+test("Ready shows open blockers of its tickets while preserving a partially available frontier", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }), issue("FIX-3", { parent: "FIX-1" }),
+    issue("FIX-10", { labels: ["ready-for-agent"] }), issue("FIX-11", { parent: "FIX-10" }),
+    issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
+  ], [blocks("FIX-11", "FIX-2"), blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3"),
+    blocks("FIX-11", "FIX-3")])));
+  const row = board.ready[0];
+  assert.deepEqual(row.blockedBy, ["FIX-11", "OUT-9"]);
+  assert.deepEqual(row.blockers, [
+    { id: "FIX-11", title: "Issue FIX-11", url: "https://linear.app/fixture/issue/FIX-11", outside: false },
+    { id: "OUT-9", title: "Issue OUT-9", url: "https://linear.app/fixture/issue/OUT-9", outside: true },
+  ]);
+  assert.equal(row.startReason, "Every ticket waits on a blocker: FIX-11, OUT-9");
+
+  const partial = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }), issue("FIX-3", { parent: "FIX-1" }),
+    issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
+  ], [blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3")]))).board.ready[0];
+  assert.deepEqual(partial.blockedBy, ["OUT-9"]);
+  assert.equal(partial.startReason, "Check Doctor before starting a lane.");
+});
+
+test("Start waits on a valid docs/agents/squadron.md before anything else after blockers", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }),
+  ]), { settings: { ok: false, issues: [{ section: "Routes", message: "Add routes." }] } }));
+  assert.equal(board.ready[0].startReason, "Fix docs/agents/squadron.md first: Routes. Open Doctor for details.");
+  assert.deepEqual(board.ready[0].routes, []);
+});
+
+test("every open issue stays visible: a child without a Ready parent waits in Unplanned with its parent named", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-49", { done: true }),
+    issue("FIX-50", { parent: "FIX-49" }),
+    issue("FIX-60", { parent: "GONE-1" }),
+    issue("FIX-69", { title: "Draft spec" }),
+    issue("FIX-70", { parent: "FIX-69" }),
+    issue("OUT-3", { outside: true }),
+    issue("FIX-80", { parent: "OUT-3" }),
+  ])));
+  assert.deepEqual(board.unplanned.map(({ id, under }) => ({ id, under })), [
+    { id: "FIX-50", under: "Under FIX-49, which is closed" },
+    { id: "FIX-60", under: "Under an issue this board can't see" },
+    { id: "FIX-69", under: undefined },
+    { id: "FIX-70", under: "Under FIX-69" },
+    { id: "FIX-80", under: "Under OUT-3, outside this project" },
+  ]);
+});
+
+test("disconnected, unbound and failed reads say what happened without asking for a sync", () => {
+  const disconnected = deriveBoard(input(snapshot([issue("FIX-4")], [], { syncedAt: null }), {
+    connection: { status: "disconnected", message: "Connect Linear in Squadron settings." },
+  }));
+  assert.deepEqual([disconnected.board.linear?.state, disconnected.board.linear?.message],
+    ["disconnected", "Connect Linear in Squadron settings."]);
+
+  const unbound = deriveBoard(input(snapshot([], [], { binding: null, syncedAt: null })));
+  assert.deepEqual([unbound.board.linear?.state, unbound.board.linear?.project], ["unbound", null]);
+
+  const failed = deriveBoard(input(snapshot([issue("FIX-4")], [], { error: "Linear is unavailable. Try again shortly." })));
+  assert.deepEqual([failed.board.linear?.state, failed.board.linear?.message],
+    ["failed", "Linear is unavailable. Try again shortly."]);
+  assert.deepEqual(failed.board.unplanned.map((row) => row.id), ["FIX-4"], "the last good copy stays on the board");
+});
+
+test("connecting Linear and choosing a project wait on the owner before anything else", () => {
+  const { board } = deriveBoard(input(snapshot([], [], { binding: null, syncedAt: null })));
+  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [
+    { kind: "setup", text: "Choose the Linear team and project for this BB project." },
+  ]);
+});
+
+test("Start uses the Doctor's first failing fix and owner-file warnings don't block it", () => {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })]);
+  const doctor = {
+    ready: false, configurationFiles: [], checks: [
+      { id: "skills" as const, name: "Matt's plugin", status: "fix" as const, message: "Install Matt's plugin in Codex." },
+      { id: "github" as const, name: "GitHub login", status: "fix" as const, message: "Run gh auth login." },
+    ],
+  };
+  assert.equal(deriveBoard(input(snap, { doctor })).board.ready[0].startReason, "Install Matt's plugin in Codex.");
+  const warnings = { ready: true, configurationFiles: [], checks: [
+    { id: "playbook" as const, name: "Playbook", status: "warning" as const, message: "Optional playbook is missing." },
+    { id: "machine-profile" as const, name: "Machine profile", status: "warning" as const, message: "Optional machine profile is missing." },
+  ] };
+  const board = deriveBoard(input(snap, { doctor: warnings })).board;
+  assert.equal(board.ready[0].startReason, null);
+  assert.deepEqual(board.doctor, warnings);
+});
+
+test("Start waits for a current bound Linear snapshot and a ready Doctor", () => {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })]);
+  const doctor = { ready: true, checks: [], configurationFiles: [] };
+  assert.equal(deriveBoard(input(snap, { doctor })).board.ready[0].startReason, null);
+  for (const overrides of [
+    { snapshot: { ...snap, error: "Linear is unavailable." } },
+    { snapshot: { ...snap, syncedAt: null } },
+    { snapshot: { ...snap, binding: null } },
+    { connection: { status: "disconnected", message: "Connect Linear." } },
+    { doctor: { ready: false, checks: [], configurationFiles: [] } },
+  ]) {
+    assert.notEqual(deriveBoard(input(snap, { doctor, ...overrides })).board.ready[0].startReason, null);
+  }
+});
+
+/** A Flying lane for FIX-1 whose Lead and workers are in the given BB states. */
+function laneWith(lead: Partial<ReturnType<typeof makeThreadResponse>> & { hasPendingInteraction?: boolean; queuedWork?: "none" | "waiting" | "failed" },
+  workers: (Partial<ReturnType<typeof makeThreadResponse>> & { hasPendingInteraction?: boolean; queuedWork?: "none" | "waiting" | "failed" })[] = []) {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })]);
+  return deriveBoard(input(snap, { leads: [{
+    specId: "fix-1", route: { family: "gpt", model: "gpt-6.1-sol", effort: "high" }, branch: "spec/fix-1",
+    thread: { ...makeThreadResponse({ id: "thr_lead", projectId: "proj-one", status: "active", runtime: { displayStatus: "active" } }), ...lead },
+    workers: workers.map((worker, i) => ({ ...makeThreadResponse({ id: `thr_w${i + 1}`, projectId: "proj-one", parentThreadId: "thr_lead",
+      title: `Worker FIX-${i + 2}`, status: "active", runtime: { displayStatus: "active" } }), ...worker })),
+  }] })).board;
+}
+const kinds = (board: ReturnType<typeof laneWith>) => needsYou(board).map(({ kind, specId, threadId }) => ({ kind, specId, threadId }));
+
+test("a lane thread waiting on the owner is in Needs you until it moves on", () => {
+  assert.deepEqual(kinds(laneWith({}, [{ status: "idle", runtime: { displayStatus: "idle" }, hasPendingInteraction: true }, {}])),
+    [{ kind: "waiting", specId: "FIX-1", threadId: "thr_w1" }]);
+  assert.deepEqual(kinds(laneWith({ hasPendingInteraction: true })), [{ kind: "waiting", specId: "FIX-1", threadId: "thr_lead" }]);
+  const answered = laneWith({}, [{ hasPendingInteraction: false }]);
+  assert.deepEqual(kinds(answered), []);
+  assert.equal(answered.lanes[0].state, "flying");
+});
+
+test("a failed or blocked lane thread is in Needs you until it runs again", () => {
+  assert.deepEqual(kinds(laneWith({}, [{ status: "error", runtime: { displayStatus: "error" } }])),
+    [{ kind: "failed", specId: "FIX-1", threadId: "thr_w1" }]);
+  assert.deepEqual(kinds(laneWith({ queuedWork: "failed" })), [{ kind: "blocked", specId: "FIX-1", threadId: "thr_lead" }]);
+  assert.deepEqual(kinds(laneWith({ runtime: { displayStatus: "waiting-for-host" } })),
+    [{ kind: "blocked", specId: "FIX-1", threadId: "thr_lead" }]);
+  assert.deepEqual(kinds(laneWith({}, [{ status: "active", runtime: { displayStatus: "active" } }])), []);
+  const text = needsYou(laneWith({}, [{ status: "error", runtime: { displayStatus: "error" } }]))[0].text;
+  assert.match(text, /Worker FIX-2/, "the item names the thread");
+});
+
+test("a lane whose Lead and workers have all stopped is Stopped and in Needs you, and clears when it runs again", () => {
+  const idle = { status: "idle" as const, runtime: { displayStatus: "idle" as const } };
+  const stopped = laneWith(idle, [idle]);
+  assert.equal(stopped.lanes[0].state, "stopped");
+  assert.deepEqual(kinds(stopped), [{ kind: "stopped", specId: "FIX-1", threadId: "thr_lead" }]);
+  // A Lead between turns while its worker builds is still flying.
+  const working = laneWith(idle, [{}]);
+  assert.equal(working.lanes[0].state, "flying");
+  assert.deepEqual(kinds(working), []);
+  const resumed = laneWith({}, [idle]);
+  assert.equal(resumed.lanes[0].state, "flying");
+  assert.deepEqual(kinds(resumed), []);
+  // A stopped lane with a failed Lead lists the failure once, not also as a bare stop.
+  const failed = laneWith({ status: "error", runtime: { displayStatus: "error" } }, [idle]);
+  assert.equal(failed.lanes[0].state, "stopped");
+  assert.deepEqual(kinds(failed), [{ kind: "failed", specId: "FIX-1", threadId: "thr_lead" }]);
+});
+
+test("Doctor problems are setup items in Needs you, and warnings aren't", () => {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] })]);
+  const doctor = { ready: false, configurationFiles: [], checks: [
+    { id: "skills" as const, name: "Matt's plugin", status: "fix" as const, message: "Install Matt's plugin in Codex." },
+    { id: "playbook" as const, name: "Playbook", status: "warning" as const, message: "No playbook yet." },
+    { id: "github" as const, name: "GitHub", status: "pass" as const, message: "Signed in." },
+  ] };
+  assert.deepEqual(needsYou(deriveBoard(input(snap, { doctor })).board).map(({ kind, text }) => ({ kind, text })), [
+    { kind: "setup", text: "Install Matt's plugin in Codex." },
+  ]);
+  assert.deepEqual(needsYou(deriveBoard(input(snap, { doctor: { ...doctor, ready: true, checks: doctor.checks.slice(1) } })).board), []);
+});

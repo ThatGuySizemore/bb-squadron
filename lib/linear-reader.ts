@@ -24,6 +24,7 @@ const relatedNode = issueNode.omit({ labels: true });
 const relationNode = z.object({ id: z.string(), type: z.string(), issue: relatedNode, relatedIssue: relatedNode });
 const graphNode = issueNode.extend({ relations: connection(relationNode), inverseRelations: connection(relationNode) });
 const issuesResponse = z.object({ issues: connection(graphNode) });
+const laneSpecResponse = z.object({ issue: issueNode.extend({ children: connection(issueNode) }).nullable() });
 const referenceFields = `id identifier title description url updatedAt team { id } project { id } parent { id } state { id name type }`;
 const relationFields = `nodes { id type issue { ${referenceFields} } relatedIssue { ${referenceFields} } } pageInfo { hasNextPage endCursor }`;
 const issueFields = `id identifier title description url updatedAt team { id } project { id } parent { id }
@@ -44,7 +45,9 @@ async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pag
   }
 }
 
-export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
+export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
+  /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
+  laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
   now?: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 } = {}) {
@@ -54,7 +57,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
   const running = new Set<Promise<unknown>>();
   const inFlight = new Map<string, { binding: string; task: Promise<MirrorSnapshot> }>();
   let wake = new AbortController();
-  const polls = new Map<string, { at: number; quiet: number }>();
+  const polls = new Map<string, number>();
   // Server-side listeners (the board watcher) hear the same changes as pages.
   const listeners = new Set<(bbProjectId: string) => void>();
   function changed(bbProjectId: string) {
@@ -71,14 +74,12 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
     return result;
   }
   bb.onDispose(async () => { lifetime.abort(); wake.abort(); await Promise.allSettled([...running]); });
+  const snapshots = new Map<string, MirrorSnapshot>();
   const db = bb.storage.database();
-  // Separate, named tables avoid sharing the SDK migration index with A5.
-  db.exec(`CREATE TABLE IF NOT EXISTS mirror_bindings (bb_project_id TEXT PRIMARY KEY, binding TEXT NOT NULL);
-    CREATE TABLE IF NOT EXISTS mirror_snapshots (bb_project_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL);`);
+  db.exec(`CREATE TABLE IF NOT EXISTS mirror_bindings (bb_project_id TEXT PRIMARY KEY, binding TEXT NOT NULL)`);
   function getSnapshot(bbProjectId: string): MirrorSnapshot {
     const row = db.prepare("SELECT binding FROM mirror_bindings WHERE bb_project_id = ?").get(bbProjectId) as { binding: string } | undefined;
-    const cached = db.prepare("SELECT snapshot FROM mirror_snapshots WHERE bb_project_id = ?").get(bbProjectId) as { snapshot: string } | undefined;
-    return cached ? JSON.parse(cached.snapshot) : { binding: row ? JSON.parse(row.binding) as LinearBinding : null,
+    return snapshots.get(bbProjectId) ?? { binding: row ? JSON.parse(row.binding) as LinearBinding : null,
       issues: [], relations: [], labels: [], states: [], syncedAt: null, error: null };
   }
   async function projectTeams(id: string, initial: z.infer<typeof targetResponse>["project"]["teams"]) {
@@ -114,11 +115,9 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
     const binding: LinearBinding = { bbProjectId: value.bbProjectId, team: result.team,
       project: { id: result.project.id, name: result.project.name } };
     if (lifetime.signal.aborted) throw new LinearRequestError("unavailable");
-    db.transaction(() => {
-      db.prepare("INSERT INTO mirror_bindings VALUES (?, ?) ON CONFLICT(bb_project_id) DO UPDATE SET binding = excluded.binding")
-        .run(value.bbProjectId, JSON.stringify(binding));
-      db.prepare("DELETE FROM mirror_snapshots WHERE bb_project_id = ?").run(value.bbProjectId);
-    })();
+    db.prepare("INSERT INTO mirror_bindings VALUES (?, ?) ON CONFLICT(bb_project_id) DO UPDATE SET binding = excluded.binding")
+      .run(value.bbProjectId, JSON.stringify(binding));
+    snapshots.delete(value.bbProjectId);
     polls.delete(value.bbProjectId);
     wake.abort(); wake = new AbortController();
     changed(value.bbProjectId);
@@ -145,8 +144,7 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
       if (signal.aborted) throw safe;
       const snapshot = getSnapshot(bbProjectId);
       if (JSON.stringify(snapshot.binding) !== expected) return snapshot;
-      if (snapshot.binding) db.prepare("INSERT INTO mirror_snapshots VALUES (?, ?) ON CONFLICT(bb_project_id) DO UPDATE SET snapshot = excluded.snapshot")
-        .run(bbProjectId, JSON.stringify({ ...snapshot, error: safe.message }));
+      if (snapshot.binding) snapshots.set(bbProjectId, { ...snapshot, error: safe.message });
       if (snapshot.error !== safe.message) changed(bbProjectId);
       throw safe;
     }
@@ -227,6 +225,36 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
       seen.add(next);
       after = next;
     } while (true);
+    // The open walk misses a lane's done tickets and a spec its Lead closed after the merge.
+    // Read each Lead's spec and its completed sub-issues so the lane can land and stay Landed.
+    let laneSpecIds: string[] = [];
+    try { laneSpecIds = await options.laneSpecIds?.(bbProjectId) ?? []; }
+    catch (error) { bb.log.warn(`lane spec ids unavailable: ${error instanceof Error ? error.name : "unknown"}`); }
+    for (const id of new Set(laneSpecIds)) {
+      let childrenAfter: string | null = null;
+      const childCursors = new Set<string>();
+      do {
+        let issue: z.infer<typeof laneSpecResponse>["issue"];
+        try {
+          issue = laneSpecResponse.parse(await graphql(`query SquadronLaneSpec($id: String!, $after: String) {
+            issue(id: $id) { ${issueFields}
+              children(first: 50, after: $after, filter: { state: { type: { eq: "completed" } } }) { nodes { ${issueFields} } pageInfo { hasNextPage endCursor } }
+            }
+          }`, { id, after: childrenAfter })).issue;
+        } catch (error) {
+          // A deleted spec must not stop the whole read.
+          if (error instanceof LinearRequestError && error.code === "graphql") break;
+          throw error;
+        }
+        if (!issue) break;
+        putIssue(issue, issue.labels.nodes);
+        for (const child of issue.children.nodes) putIssue(child, child.labels.nodes);
+        if (!issue.children.pageInfo.hasNextPage) break;
+        const cursor: string | null = issue.children.pageInfo.endCursor;
+        if (!cursor || childCursors.has(cursor) || childCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
+        childCursors.add(cursor); childrenAfter = cursor;
+      } while (true);
+    }
     const teamLabels: MirrorSnapshot["labels"] = [];
     const teamStates: MirrorSnapshot["states"] = [];
     const stateCursors = new Set<string>();
@@ -271,37 +299,33 @@ export function registerLinearMirror(bb: BbPluginApi, linear: Pick<LinearAuth, "
       syncedAt: now(), error: null };
     const current = getSnapshot(bbProjectId);
     if (JSON.stringify(current.binding) !== JSON.stringify(binding)) return current;
-    db.prepare("INSERT INTO mirror_snapshots VALUES (?, ?) ON CONFLICT(bb_project_id) DO UPDATE SET snapshot = excluded.snapshot")
-      .run(bbProjectId, JSON.stringify(snapshot));
+    snapshots.set(bbProjectId, snapshot);
     if (previous.error || JSON.stringify([previous.issues, previous.relations, previous.labels, previous.states]) !== JSON.stringify([snapshot.issues, snapshot.relations, snapshot.labels, snapshot.states])) {
       changed(bbProjectId);
     }
     return snapshot;
   }
-  bb.background.service("linear-mirror", { start: async (signal) => {
-    polls.clear(); // Every service start does a full walk, irrespective of persisted sync time.
+  bb.background.service("linear-reader", { start: async (signal) => {
+    polls.clear(); // Every service start rebuilds the in-memory snapshot.
     let budgetAt = 0;
     while (!signal.aborted && !lifetime.signal.aborted) {
       const rows = db.prepare("SELECT bb_project_id FROM mirror_bindings ORDER BY bb_project_id").all() as { bb_project_id: string }[];
       for (const { bb_project_id: id } of rows) {
         if (signal.aborted || lifetime.signal.aborted || now() < budgetAt) break;
-        const poll = polls.get(id) ?? { at: 0, quiet: 0 };
-        if (poll.at > now()) continue;
-        const before = getSnapshot(id);
+        const at = polls.get(id) ?? 0;
+        if (at > now()) continue;
         try {
-          const after = await sync(id, signal);
-          const changed = JSON.stringify([before.issues, before.relations, before.labels, before.states]) !== JSON.stringify([after.issues, after.relations, after.labels, after.states]);
-          const quiet = changed ? 0 : poll.quiet + 1;
-          polls.set(id, { at: now() + (quiet === 0 ? 10_000 : quiet === 1 ? 30_000 : 60_000), quiet });
+          await sync(id, signal);
+          polls.set(id, now() + 30_000);
         } catch (error) {
           if (signal.aborted || lifetime.signal.aborted) return;
           const retry = error instanceof LinearRequestError && error.code === "rate_limited" ? error.retryAfterMs ?? 60_000 : 30_000;
           if (error instanceof LinearRequestError && error.code === "rate_limited") budgetAt = now() + retry;
-          polls.set(id, { at: now() + Math.max(1_000, retry), quiet: poll.quiet });
+          polls.set(id, now() + Math.max(1_000, retry));
         }
       }
       if (signal.aborted || lifetime.signal.aborted) return;
-      const next = rows.length ? Math.min(...rows.map(({ bb_project_id: id }) => polls.get(id)?.at ?? now())) : now() + 60_000;
+      const next = rows.length ? Math.min(...rows.map(({ bb_project_id: id }) => polls.get(id) ?? now())) : now() + 60_000;
       const sleepFor = Math.max(1, Math.max(next, budgetAt) - now());
       try { await wait(sleepFor, AbortSignal.any([signal, lifetime.signal, wake.signal])); }
       catch { if (signal.aborted || lifetime.signal.aborted) return; }

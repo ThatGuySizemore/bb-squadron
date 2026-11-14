@@ -11,12 +11,10 @@ npm run check
 - The plugin fails to build or load.
 - A test assertion is weakened.
 
-## Limits
+## Time limits
 
 | Setting | Value |
 |---|---|
-| Lanes at once | 3 |
-| Workers per lane | 2 |
 | Lane time limit | 8 h |
 | Worker time limit | 90 m |
 
@@ -27,3 +25,11 @@ npm run check
 | `ui` | Claude | claude-opus-5-5 | high |
 | `data` | GPT | gpt-6.1-sol | medium |
 | (default) | GPT | gpt-6.1-sol | high |
+
+## Final review
+
+other
+
+## Status mapping
+
+Default.

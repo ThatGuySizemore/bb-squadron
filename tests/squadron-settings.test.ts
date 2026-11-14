@@ -11,18 +11,23 @@ test("repo settings supply the quick check, stop list, limits and ordered routes
     settings: {
       quickCheck: "npm run check",
       stopList: ["The plugin fails to build or load.", "A test assertion is weakened."],
-      limits: { lanesAtOnce: 3, workersPerLane: 2, laneTimeLimitMs: 28_800_000, workerTimeLimitMs: 5_400_000 },
+      limits: { laneTimeLimitMs: 28_800_000, workerTimeLimitMs: 5_400_000 },
       routes: [
         { label: "ui", family: "claude", model: "claude-opus-5-5", effort: "high" },
         { label: "data", family: "gpt", model: "gpt-6.1-sol", effort: "medium" },
         { label: null, family: "gpt", model: "gpt-6.1-sol", effort: "high" },
       ],
+      finalReviewFamily: "other",
+      statusMapping: {
+        lane: { ready: "Todo", flying: "In Progress", inReview: "In Review", landed: "Done" },
+        ticket: { waiting: "Todo", working: "In Progress", inBranch: "In Review", done: "Done" },
+      },
     },
   });
 });
 
 test("each missing settings section has its own plain fix", () => {
-  for (const section of ["Quick check", "Stop list", "Limits", "Routes"] as const) {
+  for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping"] as const) {
     const sample = fixture.replace(new RegExp(`## ${section}\\n[\\s\\S]*?(?=\\n## |$)`), "");
     assert.deepEqual(parseSquadronSettings(sample), {
       ok: false, issues: [{ section, message: `Add the ${section} section to docs/agents/squadron.md.` }],
@@ -46,13 +51,14 @@ test("present but unusable sections fail closed instead of supplying unsafe sett
   const samples = [
     [fixture.replace("npm run check", ""), "Quick check"],
     [fixture.replace(/^- .+$/gm, ""), "Stop list"],
-    [fixture.replace("| Lanes at once | 3 |", "| Lanes at once | -1 |"), "Limits"],
-    [fixture.replace("| Worker time limit | 90 m |", "| Worker time limit | soon |"), "Limits"],
-    [fixture.replace("| Workers per lane | 2 |", ""), "Limits"],
+    [fixture.replace("| Worker time limit | 90 m |", "| Worker time limit | soon |"), "Time limits"],
     [fixture.replace("| (default) | GPT | gpt-6.1-sol | high |", ""), "Routes"],
     [fixture.replace("| `ui` | Claude |", "| `ui` | mystery |"), "Routes"],
     [fixture.replace("| claude-opus-5-5 | high |", "| claude-opus-5-5 | none |"), "Routes"],
     [fixture.replace("| claude-opus-5-5 | high |", "| | high |"), "Routes"],
+    [fixture.replace("\nother\n", "\nClaude\n"), "Final review"],
+    [fixture.replace("Default.", ""), "Status mapping"],
+    [fixture.replace("Default.", "| State | Linear status |\n|---|---|\n| Ready | Todo |"), "Status mapping"],
   ];
   for (const [sample, section] of samples) {
     const result = parseSquadronSettings(sample);
@@ -74,4 +80,32 @@ test("an early default stays a fallback while matching labels keep file order", 
   assert.deepEqual(resolveRoute(result.settings, ["unknown"]), {
     family: "gpt", model: "gpt-6.1-sol", effort: "high",
   });
+});
+
+test("the owner can choose the same final-review family and custom statuses for every state", () => {
+  const result = parseSquadronSettings(fixture.replace("\nother\n", "\nsame\n").replace("Default.", `| State | Linear status |
+|---|---|
+| Ready | Backlog |
+| Flying | Building |
+| In review | Waiting to Merge |
+| Landed | Shipped |
+| Waiting | Queued |
+| Working | Coding |
+| In branch | Waiting to Merge |
+| Done | Complete |`));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.settings.finalReviewFamily, "same");
+  assert.deepEqual(result.settings.statusMapping, {
+    lane: { ready: "Backlog", flying: "Building", inReview: "Waiting to Merge", landed: "Shipped" },
+    ticket: { waiting: "Queued", working: "Coding", inBranch: "Waiting to Merge", done: "Complete" },
+  });
+});
+
+test("this repo maps In review and In branch to its Waiting to Merge status", () => {
+  const result = parseSquadronSettings(readFileSync("docs/agents/squadron.md", "utf8"));
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.settings.statusMapping.lane.inReview, "Waiting to Merge");
+  assert.equal(result.settings.statusMapping.ticket.inBranch, "Waiting to Merge");
 });

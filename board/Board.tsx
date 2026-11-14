@@ -2,13 +2,13 @@ import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } 
 import type { CSSProperties, ReactNode } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
-import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
+import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
+import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
 import type { boardContract } from "../lib/board-contract.js";
-import { boardChanged, linearOutboxChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
+import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
-import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
+import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
@@ -147,7 +147,7 @@ const LANE_LABEL: Record<LaneState, string> = {
   flying: "Flying",
   stopped: "Stopped",
   "spec-review": "Spec review",
-  "pr-open": "PR open",
+  "pr-open": "In review",
   "merge-waits": "Merge waits on you",
   landed: "Landed",
 };
@@ -170,9 +170,18 @@ function useOpen() {
 
 // ---------- the board ----------
 
+/** The settings' reviewer on a live lane; the demo pairs the other family from its own routes. */
+function laneReviewer(lane: Lane): Route {
+  return lane.reviewer ?? reviewerFor(lane.lead, "other", lane.tickets.map((t) => t.route));
+}
+
+const PR_CHECKS: Record<PullRequest["checks"], string> = {
+  passing: "checks pass", failing: "checks fail", pending: "checks running", none: "no checks", unknown: "checks unknown",
+};
+
 function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
-  const reviewer = reviewerFor(ticket.route);
+  const reviewer = laneReviewer(lane);
   const state = ticket.state;
   const levels =
     state === "working" ? [2, 3, 5] : state === "question" ? [2, 4, 6, 4] : state === "review" ? [2] : state === "branch" ? [3] : state === "failed" || state === "done" ? [4] : [];
@@ -214,7 +223,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
         <span className="sq-peg-id">{ticket.id}</span>
         <span className="sq-peg-state">{sub}</span>
       </span>
-      {state === "blocked" ? <span className="sq-peg-after sq-num">after {waitsOn.join(", ") || "blockers"}</span> : null}
+      {state === "blocked" && waitsOn.length > 0 ? <span className="sq-peg-after sq-num">after {waitsOn.join(", ")}</span> : null}
       <span className="sq-peg-title">{ticket.title}</span>
       <span className="sq-peg-foot">
         <AiChip route={state === "review" ? reviewer : ticket.route} />
@@ -234,7 +243,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       {body}
     </button>
   ) : (
-    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${state === "blocked" ? `waits on ${waitsOn.join(", ")}` : sub}`}>
+    <div className="sq-peg" data-size={size} data-state={state} aria-label={`${ticket.id}, ${ticket.title}: ${state === "blocked" && waitsOn.length > 0 ? `waits on ${waitsOn.join(", ")}` : sub}`}>
       {body}
     </div>
   );
@@ -259,8 +268,35 @@ function useOverflow<T extends HTMLElement>() {
   return [ref, overflow] as const;
 }
 
-function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean }) {
+/** A Stop or Resume on its way to the Lead, or a Merge on its way to the pull-request plugin. */
+export interface LaneAction { specId: string; type: "stop" | "resume" | "merge" }
+
+const LANE_ACTION_LABEL: Record<LaneAction["type"], string> = { stop: "Stop", resume: "Resume", merge: "Merge" };
+const LANE_ACTION_PENDING: Record<LaneAction["type"], string> = { stop: "Stopping…", resume: "Resuming…", merge: "Merging…" };
+const LANE_ACTION_STATUS: Record<LaneAction["type"], string> = {
+  stop: "Asking the Lead to wind down",
+  resume: "Asking the Lead to carry on",
+  merge: "Squash-merging the PR",
+};
+
+/** Stop, Resume or Merge, disabled while any lane action is on its way. */
+function LaneActionButton({ type, specId, acting, tone, dispatch }: {
+  type: LaneAction["type"]; specId: string; acting: LaneAction | null; tone: "plain" | "primary" | "amber"; dispatch: (a: BoardAction) => void;
+}) {
+  const mine = acting?.specId === specId;
+  return (
+    <>
+      {mine && acting.type === type ? <span className="sq-plan-why" role="status">{LANE_ACTION_STATUS[type]}</span> : null}
+      <Btn tone={tone} disabled={acting !== null} onClick={() => dispatch({ type, specId })}>
+        {mine && acting.type === type ? LANE_ACTION_PENDING[type] : LANE_ACTION_LABEL[type]}
+      </Btn>
+    </>
+  );
+}
+
+function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting?: LaneAction | null }) {
   const open = useOpen();
+  const stopped = lane.stopped ?? lane.state === "stopped";
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
@@ -269,7 +305,15 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
       {landing ? <Burst /> : null}
       <div className="sq-tail">
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
-        <h3 className="sq-line-title">{lane.title}</h3>
+        <h3 className="sq-line-title">
+          {lane.url ? (
+            <button type="button" className="sq-issue-link" title="Open the spec in Linear" onClick={() => open.external(lane.url!, `${lane.specId} in Linear`)}>
+              {lane.title}
+            </button>
+          ) : (
+            lane.title
+          )}
+        </h3>
         <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, `the Lead thread for ${lane.specId}`)}>
           <AiChip route={lane.lead} prefix="Lead" />
         </button>
@@ -279,33 +323,33 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
           </span>
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
-        {lane.state === "spec-review" ? <AiChip route={reviewerFor(lane.lead)} prefix="Reviewer" /> : null}
+        {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" /> : null}
         {lane.pr ? (
-          <button type="button" className="sq-pr" data-checks={lane.pr.checks} onClick={() => open.external(lane.pr!.url, `PR #${lane.pr!.number} on GitHub`)}>
+          <button
+            type="button"
+            className="sq-pr"
+            data-checks={lane.pr.checks}
+            data-pr={lane.pr.state}
+            aria-label={`PR #${lane.pr.number}${lane.pr.state && lane.pr.state !== "open" ? `, ${lane.pr.state}` : ""}, ${PR_CHECKS[lane.pr.checks]}. Open on GitHub.`}
+            onClick={() => open.external(lane.pr!.url, `PR #${lane.pr!.number} on GitHub`)}
+          >
             <span className="sq-pr-dot" aria-hidden="true" />
             PR #{lane.pr.number}
-            <span className="sq-pr-checks">{lane.pr.checks === "passing" ? "checks pass" : lane.pr.checks === "failing" ? "checks fail" : "checks running"}</span>
+            {lane.pr.state && lane.pr.state !== "open" ? <span className="sq-pr-state">{lane.pr.state}</span> : null}
+            <span className="sq-pr-checks">{PR_CHECKS[lane.pr.checks]}</span>
           </button>
         ) : null}
         <span className="sq-branch">{lane.branch}</span>
         {lane.state !== "landed" ? (
           <div className="sq-actions">
-            {lane.state === "merge-waits" ? (
-              <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: lane.specId })}>
-                Merge
-              </Btn>
-            ) : null}
-            {lane.state === "stopped" ? (
-              <Btn tone="primary" onClick={() => dispatch({ type: "resume", specId: lane.specId })}>
-                Resume
-              </Btn>
-            ) : null}
-            {lane.state === "flying" ? <Btn onClick={() => dispatch({ type: "stop", specId: lane.specId })}>Stop</Btn> : null}
-            <span className="sq-isolated">
+            {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {stopped ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {(demo ? lane.state === "flying" : !stopped) ? <LaneActionButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {demo ? <span className="sq-isolated">
               <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
                 Cancel
               </Btn>
-            </span>
+            </span> : null}
           </div>
         ) : null}
       </div>
@@ -339,22 +383,38 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
             ))}
           </div>
         </div>
+        {lane.unmatchedThreads?.length ? (
+          <div className="sq-threads">
+            <span className="sq-threads-label">Other threads</span>
+            <ul>
+              {lane.unmatchedThreads.map((t) => (
+                <li key={t.threadId}>
+                  <button type="button" className="sq-issue-link" title="Open the thread beside the board" onClick={() => open.thread(t.threadId, t.title || "the thread")}>
+                    {t.title || "Untitled thread"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </article>
   );
 }
 
-const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = { setup: "Setup", question: "Question", stopped: "Stopped", write: "Write", merge: "Merge" };
+const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
+  setup: "Setup", waiting: "Waiting", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
+};
 
-function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
+export function NeedsYouStrip({ items, dispatch, setup, demo = false, acting = null }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
-  /** Controls for a setup item, such as choosing the Linear project. */
+  /** Controls for the Linear setup item, such as choosing the Linear project. */
   setup?: ReactNode;
-  onRetry?: (writeId: string) => Promise<void>;
+  demo?: boolean;
+  acting?: LaneAction | null;
 }) {
   const open = useOpen();
-  const [retrying, setRetrying] = useState<string | null>(null);
   if (items.length === 0) {
     return <p className="sq-clear">Nothing needs you. Every lane is flying on its own.</p>;
   }
@@ -364,58 +424,41 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
         <li key={item.key} className="sq-need" data-kind={item.kind}>
           <Dither levels={[3, 6, 3]} />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
-          {item.issueId ? (
-            <span className="sq-need-issue sq-num">{item.issueId}</span>
-          ) : item.ticketId ?? item.specId ? (
+          {item.ticketId ?? item.specId ? (
             <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" />
           ) : (
             <span />
           )}
           <span className="sq-need-text">
             {item.text}
-            {item.writeId ? <span className="sq-need-receipt"> Receipt <span className="sq-mono">{item.writeId}</span></span> : null}
           </span>
           <span className="sq-need-actions">
-            {item.kind === "setup" ? setup : null}
-            {item.kind === "write" && item.writeId && onRetry ? (
-              <Btn
-                tone="amber"
-                disabled={retrying === item.writeId}
-                onClick={() => {
-                  setRetrying(item.writeId!);
-                  void onRetry(item.writeId!).finally(() => setRetrying(null));
-                }}
-              >
-                {retrying === item.writeId ? "Retrying" : "Retry"}
-              </Btn>
-            ) : null}
-            {item.kind === "write" && item.threadId ? (
-              <Btn onClick={() => open.thread(item.threadId!, "the thread that asked for this write")}>Open thread</Btn>
-            ) : null}
-            {item.kind === "question" && item.threadId ? (
+            {item.key === "setup" ? setup : null}
+            {item.kind === "waiting" && item.threadId ? (
               <Btn
                 tone="amber"
                 onClick={() => {
-                  open.thread(item.threadId!, `the worker thread for ${item.ticketId}`);
-                  window.setTimeout(() => dispatch({ type: "answer", ticketId: item.ticketId! }), 900);
+                  open.thread(item.threadId!, `the thread waiting on you in ${item.specId}`);
+                  if (item.ticketId) window.setTimeout(() => dispatch({ type: "answer", ticketId: item.ticketId! }), 900);
                 }}
               >
                 Answer in thread
               </Btn>
             ) : null}
+            {(item.kind === "failed" || item.kind === "blocked") && item.threadId ? (
+              <Btn onClick={() => open.thread(item.threadId!, `the ${item.kind} thread in ${item.specId}`)}>Open thread</Btn>
+            ) : null}
             {item.kind === "stopped" ? (
               <>
-                <Btn tone="amber" onClick={() => dispatch({ type: "resume", specId: item.specId })}>
-                  Resume
-                </Btn>
-                <Btn onClick={() => toast(`Prototype: opens a planning thread on ${item.specId}.`)}>Re-plan</Btn>
+                <LaneActionButton type="resume" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} />
+                {demo ? (
+                  <Btn onClick={() => toast(`Prototype: opens a planning thread on ${item.specId}.`)}>Re-plan</Btn>
+                ) : item.threadId ? (
+                  <Btn onClick={() => open.thread(item.threadId!, `the Lead thread for ${item.specId}`)}>Open Lead</Btn>
+                ) : null}
               </>
             ) : null}
-            {item.kind === "merge" ? (
-              <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: item.specId })}>
-                Merge
-              </Btn>
-            ) : null}
+            {item.kind === "merge" ? <LaneActionButton type="merge" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} /> : null}
           </span>
         </li>
       ))}
@@ -435,9 +478,10 @@ function IssueTitle({ title, url, className }: { title: string; url?: string; cl
   );
 }
 
-function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void }) {
-  // Real specs carry the Helper core's reason; the demo computes its own.
-  const blocked = spec.startReason !== undefined ? spec.startReason : canStart(board, spec);
+function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
+  // Real specs carry the board model's reason; the demo computes its own.
+  const blocked = (spec.startReason !== undefined ? spec.startReason : canStart(board, spec))
+    ?? (startBusy ? "Wait for the Lead thread to open." : null);
   return (
     <li className="sq-ready" data-blocked={blocked !== null}>
       <PixelText text={spec.id} cell={2} className="sq-ready-id" />
@@ -451,9 +495,9 @@ function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; di
         ))}
       </span>
       {spec.acceptOwner ? <span className="sq-tag">accept:owner</span> : <span />}
-      <span className="sq-ready-why">{blocked ?? ""}</span>
-      <Btn tone="primary" disabled={blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
-        Start
+      <span className="sq-ready-why" role={opening ? "status" : undefined}>{opening ? "Opening its Lead thread" : blocked ?? ""}</span>
+      <Btn tone="primary" disabled={opening || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
+        {opening ? "Opening…" : "Start"}
       </Btn>
     </li>
   );
@@ -516,19 +560,19 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
-const LANDING_MS = 1600;
-
-/** Re-renders once a landing's burst window has passed. */
-function useLandingClock(lanes: Lane[]): number {
+/** Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed. */
+function useLandings(lanes: Lane[]): (lane: Lane) => boolean {
+  const seen = useRef<Landings | null>(null);
+  // Folded in as each board arrives, so a lane never flashes into Landed before its burst.
+  const landings = useMemo(() => (seen.current = nextLandings(seen.current, lanes, Date.now())), [lanes]);
   const [now, setNow] = useState(() => Date.now());
-  const pending = lanes.filter((l) => l.landedAt !== undefined && now - l.landedAt < LANDING_MS);
+  const pending = Object.values(landings.until).filter((until) => until > now);
   useEffect(() => {
     if (pending.length === 0) return;
-    const until = Math.min(...pending.map((l) => l.landedAt! + LANDING_MS));
-    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, until - Date.now()) + 20);
+    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, Math.min(...pending) - Date.now()) + 20);
     return () => window.clearTimeout(t);
   });
-  return Math.max(now, ...lanes.map((l) => l.landedAt ?? 0));
+  return (lane) => lane.state === "landed" && (landings.until[lane.specId] ?? 0) > now;
 }
 
 /** Where the board's copy of Linear stands, in one muted line under the header. */
@@ -537,12 +581,10 @@ function LinearLine({ board, now }: { board: Board; now: number }) {
   if (!linear || linear.state === "disconnected" || linear.state === "unbound") return null;
   const age = linear.syncedAt === null ? null : Math.max(0, Math.round((now - linear.syncedAt) / 60_000));
   const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
-  const pending = board.writes?.pendingCount ?? 0;
   return (
     <p className="sq-linear" data-state={linear.state} role="status" aria-live="polite">
       <span className="sq-linear-project">{linear.project}</span>
       <span>{linear.state === "current" ? read : linear.state === "failed" ? `${linear.message} ${read}` : linear.message}</span>
-      {pending > 0 ? <span className="sq-num">{pending} Linear {pending === 1 ? "write" : "writes"} waiting to send.</span> : null}
     </p>
   );
 }
@@ -556,21 +598,22 @@ interface BoardViewProps {
   onPlan: (issueId?: string) => void;
   /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
   planning?: string | null;
+  starting?: string | null;
+  /** A Stop or Resume on its way to a Lead. */
+  acting?: LaneAction | null;
   setup?: ReactNode;
-  onRetry?: (writeId: string) => Promise<void>;
   /** Replaces Ready and Unplanned while the board can't show them. */
   notice?: ReactNode;
   footer?: ReactNode;
 }
 
-/** The board page, fed by the live Helper or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, setup, onRetry, notice, footer }: BoardViewProps) {
+/** The board page, fed by the live reader or by the synthetic simulation. */
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
-  const now = useLandingClock(board.lanes);
-  const isLanding = (l: Lane) => l.state === "landed" && l.landedAt !== undefined && now - l.landedAt < LANDING_MS;
+  const isLanding = useLandings(board.lanes);
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || isLanding(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !isLanding(l));
@@ -582,7 +625,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
         <header className="sq-head">
           <div className="sq-head-title">
             <h1>Squadron</h1>
-            <FormationMark flying={flying.length} capacity={board.laneCapacity} />
+            {demo ? <FormationMark flying={flying.length} capacity={board.laneCapacity} /> : null}
             {demo ? (
               <span className="sq-tag" data-tone="amber">
                 Synthetic data
@@ -590,7 +633,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             ) : null}
           </div>
           <p className="sq-head-counts sq-num">
-            {flying.length} of {board.laneCapacity} lanes flying · {openTickets} tickets open · {items.length} {items.length === 1 ? "needs" : "need"} you
+            {demo ? `${flying.length} of ${board.laneCapacity} lanes flying` : `${flying.length} ${flying.length === 1 ? "lane" : "lanes"} on the board`} · {openTickets} tickets open · {items.length} {items.length === 1 ? "needs" : "need"} you
           </p>
           <div className="sq-head-actions">
             {demo ? (
@@ -623,7 +666,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           <h2 id="sq-needs-h">
             Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
           </h2>
-          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} demo={demo} acting={acting} />
         </section>
         <DoctorPanel open={doctorOpen} id={doctorId} />
 
@@ -632,7 +675,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           {onLine.length === 0 ? (
             <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
           ) : (
-            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} />)
+            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} demo={demo} acting={acting} />)
           )}
         </section>
 
@@ -645,7 +688,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           ) : (
             <ul className="sq-ready-list">
               {board.ready.map((spec) => (
-                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} />
+                <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
               ))}
             </ul>
           )}
@@ -743,7 +786,7 @@ export function liveNotice(state: { projectId: string | null; board: Board | nul
   return null;
 }
 
-/** Start or reopen a planning thread, open it beside the board, and say when it can't write to Linear. */
+/** Start or reopen a planning thread, open it beside the board, and report a start failure. */
 export async function planFromBoard(deps: {
   start: (input: { projectId: string; issueId?: string }) => Promise<PlanningStarted>;
   openThread: (threadId: string) => void;
@@ -752,19 +795,67 @@ export async function planFromBoard(deps: {
   try {
     const started = await deps.start(issueId ? { projectId, issueId } : { projectId });
     deps.openThread(started.threadId);
-    if (!started.writes) deps.notify(`This planning thread can't publish to Linear: ${started.message ?? "Squadron's Linear writes are unavailable."}`);
   } catch (error) {
     // The server's refusals are written for the owner.
     deps.notify(error instanceof Error && error.message ? error.message : "Couldn't start planning. Try again.");
   }
 }
 
-/** The real board for the BB project in view, read from the Helper. */
+/** Start a lane through the board's public RPC and follow its Lead. */
+export async function startFromBoard(deps: {
+  start: (input: { projectId: string; specId: string }) => Promise<{ threadId: string }>;
+  openThread: (threadId: string) => void;
+  notify: (text: string) => void;
+  refresh: () => Promise<void>;
+}, projectId: string, specId: string) {
+  try {
+    const started = await deps.start({ projectId, specId });
+    deps.openThread(started.threadId);
+  } catch (error) {
+    deps.notify(error instanceof Error && error.message ? error.message : "Couldn't start this lane. Try again.");
+  } finally { await deps.refresh(); }
+}
+
+type LeadMessage = { specId: string; type: "stop" | "resume" };
+/** Send Stop or Resume to a lane's Lead through the board's public RPC, then read the board again. */
+export async function messageLeadFromBoard(deps: {
+  send: (type: LeadMessage["type"], input: { projectId: string; specId: string }) => Promise<{ threadId: string }>;
+  notify: (text: string) => void;
+  refresh: () => Promise<void>;
+}, projectId: string, action: LeadMessage) {
+  try {
+    await deps.send(action.type, { projectId, specId: action.specId });
+    deps.notify(action.type === "stop"
+      ? `Asked the Lead for ${action.specId} to wind down. Its workers save their work first.`
+      : `Asked the Lead for ${action.specId} to carry on from its last summary.`);
+  } catch (error) {
+    deps.notify(error instanceof Error && error.message ? error.message
+      : `Couldn't ${action.type === "stop" ? "stop" : "resume"} ${action.specId}. Try again.`);
+  } finally { await deps.refresh(); }
+}
+
+/** Squash-merge a lane's PR through the board's public RPC, then read the board again. */
+export async function mergeFromBoard(deps: {
+  merge: (input: { projectId: string; specId: string }) => Promise<{ number: number }>;
+  notify: (text: string) => void;
+  refresh: () => Promise<void>;
+}, projectId: string, specId: string) {
+  try {
+    const merged = await deps.merge({ projectId, specId });
+    deps.notify(`Squash-merged PR #${merged.number} for ${specId}. The lane lands when BB sees the merge.`);
+  } catch (error) {
+    deps.notify(error instanceof Error && error.message ? error.message : `Couldn't merge ${specId}'s PR. Try again.`);
+  } finally { await deps.refresh(); }
+}
+
+/** The real board for the BB project in view, read from the reader. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract>();
+  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof laneContract>();
   const open = useOpen();
   const [planning, setPlanning] = useState<string | null>(null);
+  const [starting, setStarting] = useState<string | null>(null);
+  const [acting, setActing] = useState<LaneAction | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -788,7 +879,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     void load();
     return () => { request.current++; };
   }, [load]);
-  // The outbox can announce the same parked write several times; read once per burst.
+  // Coalesce connection-change signals.
   const pending = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(pending.current), []);
   const loadSoon = useCallback(() => {
@@ -798,21 +889,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   useSquadronSignal(boardChanged, (payload) => {
     if (payload.projectId === projectId) void load();
   });
-  useSquadronSignal(linearOutboxChanged, (payload) => {
-    if (payload.bbProjectId === projectId) loadSoon();
-  });
   useSquadronSignal(linearConnectionChanged, () => { loadSoon(); });
-  const retry = useCallback(async (id: string) => {
-    if (!projectId) return;
-    try {
-      const receipt = await rpc.call("linear.outboxResume", { bbProjectId: projectId, id });
-      if (receipt.status === "blocked") toast("The write still couldn't go through. Its reason is on the board.");
-    } catch (error) {
-      // The server's refusals are written for the owner, such as reconnecting the original workspace.
-      toast(error instanceof Error && error.message ? error.message : "Couldn't retry the write. Try again.");
-    }
-    await load();
-  }, [rpc, projectId, load]);
   const plan = useCallback(async (issueId?: string) => {
     if (!projectId || planning !== null) return;
     setPlanning(issueId ?? "");
@@ -824,15 +901,42 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       }, projectId, issueId);
     } finally { setPlanning(null); }
   }, [rpc, projectId, planning, open]);
+  const start = useCallback(async (specId: string) => {
+    if (!projectId || starting !== null) return;
+    setStarting(specId);
+    try {
+      await startFromBoard({ start: (input) => rpc.call("lane.start", input),
+        openThread: (threadId) => open.thread(threadId, "the Lead thread"), notify: (text) => toast(text), refresh: load,
+      }, projectId, specId);
+    } finally { setStarting(null); }
+  }, [rpc, projectId, starting, open, load]);
+  const act = useCallback(async (action: LaneAction) => {
+    if (!projectId || acting !== null) return;
+    setActing(action);
+    try {
+      if (action.type === "merge") {
+        await mergeFromBoard({ merge: (input) => rpc.call("lane.merge", input), notify: (text) => toast(text), refresh: load },
+          projectId, action.specId);
+      } else {
+        await messageLeadFromBoard({ send: (type, input) => rpc.call(type === "stop" ? "lane.stop" : "lane.resume", input),
+          notify: (text) => toast(text), refresh: load }, projectId, { type: action.type, specId: action.specId });
+      }
+    } finally { setActing(null); }
+  }, [rpc, projectId, acting, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
       board={board ?? EMPTY_BOARD}
       demo={false}
       modeSwitch={modeSwitch}
-      dispatch={() => undefined}
+      dispatch={(action) => {
+        if (action.type === "start") void start(action.specId);
+        else if (action.type === "stop" || action.type === "resume" || action.type === "merge") void act({ type: action.type, specId: action.specId });
+      }}
       onPlan={(issueId) => void plan(issueId)}
       planning={planning}
+      starting={starting}
+      acting={acting}
       notice={notice ? (
         <>
           {notice}
@@ -840,7 +944,6 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         </>
       ) : undefined}
       setup={board?.linear?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
-      onRetry={retry}
     />
   );
 }

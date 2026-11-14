@@ -1,5 +1,5 @@
 /* The live board's additions: the Linear line, issue links, parent context,
-   blocked-write receipts and the project binding controls. Tokens only. */
+   project binding controls. Tokens only. */
 
 .sq-linear {
   display: flex;
@@ -54,22 +54,6 @@
   color: var(--sq-muted);
 }
 
-/* A write's issue may be a ticket: mono, like ticket ids on pegs, never pixel type. */
-.sq-need-issue {
-  font-family: var(--sq-mono);
-  font-size: 11px;
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
-}
-@container (max-width: 900px) {
-  .sq-need-issue {
-    display: none;
-  }
-}
-.sq-need-receipt {
-  font-size: 12px;
-  color: var(--sq-muted);
-}
 .sq-mono {
   font-family: var(--sq-mono);
   font-size: 11px;
@@ -107,4 +91,45 @@
   flex-basis: 100%;
   font-size: 12px;
   color: var(--sq-red-ink);
+}
+
+/* ---------- lane detail: spec link, PR state, other threads ---------- */
+
+/* The tail card's spec title opens Linear; it keeps the Title voice. */
+.sq .sq-line-title .sq-issue-link {
+  font: inherit;
+  color: inherit;
+  text-wrap: balance;
+}
+.sq-pr-state {
+  font-weight: 400;
+  color: var(--sq-muted);
+}
+/* No checks, or none known yet: a hollow square, so the dot never reads as a result. */
+.sq-pr[data-checks="none"] .sq-pr-dot,
+.sq-pr[data-checks="unknown"] .sq-pr-dot {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--sq-rule-ink);
+}
+/* Child threads of the Lead that match no ticket, so none is hidden. */
+.sq-threads {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 10px;
+  font-size: 12px;
+}
+.sq-threads-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sq-muted);
+}
+.sq-threads ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }

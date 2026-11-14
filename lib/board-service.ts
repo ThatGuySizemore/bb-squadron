@@ -1,32 +1,34 @@
-// Serves the board: reads the mirror, settings, outbox health and clock,
-// runs the Helper core, carries out its commands, and publishes
+// Serves the board from the Linear reader, settings and clock; publishes
 // `board-changed` whenever a project's board model changes.
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
 import { boardContract } from "./board-contract.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
-import { helperCore, type HelperInput } from "./helper-core.js";
+import { deriveBoard, type BoardInput } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
-import type { OutboxHealth } from "./linear-outbox-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
+import type { DoctorReport } from "./doctor.js";
+import type { LeadThread } from "./lead-threads.js";
+import type { PullRequestRow } from "./pull-requests.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
+  doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
+  leads?(projectId: string): Promise<LeadThread[]>;
+  /** Rows from BB's pull-request plugin for the Leads' environments. */
+  pullRequests?(environmentIds: string[], signal?: AbortSignal): Promise<Record<string, PullRequestRow>>;
   mirror: {
     getSnapshot(bbProjectId: string): MirrorSnapshot;
-    sync(bbProjectId: string): Promise<MirrorSnapshot>;
     onChange(listener: (bbProjectId: string) => void): () => void;
   };
-  /** The outbox's safe health read for one BB project. */
-  writes?(bbProjectId: string): Promise<OutboxHealth>;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
 const REUSE_MS = 60_000;
-/** The watcher's pass interval, for changes nothing announces (clock, outbox). */
+/** The watcher's pass interval, for changes nothing announces (clock, settings). */
 const WATCH_MS = 15_000;
 
 export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
@@ -35,14 +37,13 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
 } = {}) {
   const now = options.now ?? Date.now;
   const wait = options.wait ?? (async (ms, signal) => { await delay(ms, undefined, { signal }); });
-  const startedAt = now();
   const lifetime = new AbortController();
   bb.onDispose(() => { lifetime.abort(); });
   const projects = new Map<string, {
     published: string | null;
-    connection?: { at: number; value: HelperInput["connection"] };
+    connection?: { at: number; value: BoardInput["connection"] };
     settings?: { at: number; value: SettingsResult | null };
-    catchingUp?: Promise<unknown>;
+    doctor?: { at: number; value: DoctorReport };
     /** The refresh in progress, and whether another signal arrived during it. */
     refreshing?: Promise<void>;
     again?: boolean;
@@ -58,7 +59,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     catch { return null; }
   }
 
-  async function connection(): Promise<HelperInput["connection"]> {
+  async function connection(): Promise<BoardInput["connection"]> {
     try {
       const value = await sources.connection();
       return { status: value.status, message: value.message };
@@ -71,19 +72,16 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const at = now();
     if (fresh || !entry.connection || at - entry.connection.at > REUSE_MS) entry.connection = { at, value: await connection() };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
-    let writes: OutboxHealth | null = null;
-    try { writes = await sources.writes?.(projectId) ?? null; } catch { writes = null; }
-    const { board, commands } = helperCore({
+    if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
+    const leads = await sources.leads?.(projectId);
+    const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
+    const { board } = deriveBoard({
       snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
-      settings: entry.settings.value, writes, now: now(), startedAt,
+      settings: entry.settings.value, now: now(),
+      doctor: entry.doctor?.value,
+      leads,
+      pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
-    for (const command of commands) {
-      if (command.type === "sync" && !entry.catchingUp && !lifetime.signal.aborted) {
-        // A failed read is recorded on the snapshot; either way the board is read again.
-        const done = entry.catchingUp = sources.mirror.sync(projectId).catch(() => undefined)
-          .finally(() => { if (entry.catchingUp === done) entry.catchingUp = undefined; void refresh(projectId); });
-      }
-    }
     return board;
   }
 

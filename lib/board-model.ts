@@ -1,6 +1,6 @@
 // The board runtime schema is also the source of its public TypeScript types.
 import { z } from "zod";
-import { outboxHealthSchema } from "./linear-outbox-contract.js";
+import { doctorReportSchema } from "./doctor-contract.js";
 
 const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
 const ticket = z.object({
@@ -11,12 +11,28 @@ const ticket = z.object({
 const lane = z.object({
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
+  /** No lane thread is running, independent of the PR's In review state. Derived only. */
+  stopped: z.boolean().optional(),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
-  pr: z.object({ number: z.number(), checks: z.enum(["pending", "passing", "failing"]), url: z.string() }).optional(),
+  pr: z.object({
+    number: z.number(), checks: z.enum(["pending", "passing", "failing", "none", "unknown"]), url: z.string(),
+    state: z.enum(["draft", "open", "merged", "closed"]).optional(),
+  }).optional(),
   stopReason: z.string().optional(), landedAt: z.number().optional(),
+  /** Who runs the lane's final review, from the final-review family. */
+  reviewer: route.optional(),
+  /** The spec in Linear. */
+  url: z.string().optional(),
+  /** Child threads of the Lead that match no ticket, so no thread is hidden. */
+  unmatchedThreads: z.array(z.object({ threadId: z.string(), title: z.string() })).optional(),
+  /** Lane threads that wait on the owner, failed or are blocked, read from BB thread states. */
+  needs: z.array(z.object({
+    threadId: z.string(), kind: z.enum(["waiting", "failed", "blocked"]), text: z.string(),
+  })).optional(),
 });
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
 const boardSchema = z.object({
+  doctor: doctorReportSchema.optional(),
   tick: z.number(), laneCapacity: z.number(), workersPerLane: z.number(), autoStart: z.boolean(),
   lanes: z.array(lane),
   ready: z.array(z.object({
@@ -31,9 +47,6 @@ const boardSchema = z.object({
   linear: z.object({
     state: z.enum(["disconnected", "unbound", "catching-up", "current", "failed"]), message: z.string(),
     syncedAt: z.number().nullable(), project: z.string().nullable(),
-  }).optional(),
-  writes: outboxHealthSchema.extend({
-    blocked: z.array(outboxHealthSchema.shape.blocked.element.extend({ issueIdentifiers: z.array(z.string()), reasonText: z.string() })),
   }).optional(),
 });
 
@@ -50,11 +63,7 @@ export type Board = z.infer<typeof boardSchema>;
 export type ReadySpec = Board["ready"][number];
 export type UnplannedIssue = Board["unplanned"][number];
 export type LinearStatus = NonNullable<Board["linear"]>;
-export type BoardBlockedWrite = NonNullable<Board["writes"]>["blocked"][number];
-/** Public type retained; delivery failures are WriteDeliveryBlocked errors. */
-export type BlockedWrite = BoardBlockedWrite;
-
-export type NeedsYouKind = "setup" | "question" | "stopped" | "write" | "merge";
+export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge";
 
 export interface NeedsYouItem {
   key: string;
@@ -64,10 +73,6 @@ export interface NeedsYouItem {
   ticketId?: string;
   text: string;
   threadId: string | null;
-  /** The outbox receipt to retry, for a blocked write. */
-  writeId?: string;
-  /** The issue a blocked write touches. It may be a ticket, so it isn't set in pixel type. */
-  issueId?: string;
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
@@ -76,18 +81,10 @@ export function needsYou(board: Board): NeedsYouItem[] {
   if (board.linear?.state === "disconnected" || board.linear?.state === "unbound") {
     items.push({ key: "setup", kind: "setup", specId: "", text: board.linear.message, threadId: null });
   }
-  for (const write of board.writes?.blocked ?? []) {
-    items.push({
-      key: `write:${write.id}`, kind: "write", specId: "", writeId: write.id, threadId: write.threadId,
-      ...(write.issueIdentifiers[0] ? { issueId: write.issueIdentifiers[0] } : {}),
-      text: `A Linear write${write.issueIdentifiers.length ? ` for ${write.issueIdentifiers.join(", ")}` : ""} couldn't go through. ${write.reasonText}`,
-    });
-  }
-  if (board.writes?.hasMore) {
-    const more = Math.max(0, board.writes.blockedCount - board.writes.blocked.length);
-    items.push({ key: "write:more", kind: "write", specId: "", threadId: null,
-      text: more > 0 ? `${more} more Linear ${more === 1 ? "write" : "writes"} couldn't go through. Retry the ones above first.`
-        : "More Linear writes couldn't go through. Retry the ones above first." });
+  for (const check of board.doctor?.checks ?? []) {
+    if (check.status === "fix") {
+      items.push({ key: `setup:${check.id}`, kind: "setup", specId: "", text: check.message, threadId: null });
+    }
   }
   for (const lane of board.lanes) {
     if (lane.state === "merge-waits") {
@@ -95,11 +92,15 @@ export function needsYou(board: Board): NeedsYouItem[] {
         key: `merge:${lane.specId}`,
         kind: "merge",
         specId: lane.specId,
-        text: `PR #${lane.pr?.number} passed checks and both reviews. accept:owner holds it for your merge.`,
+        text: `PR #${lane.pr?.number} passed its checks. accept:owner holds it for your merge.`,
         threadId: lane.leadThreadId,
       });
     }
-    if (lane.state === "stopped") {
+    for (const need of lane.needs ?? []) {
+      items.push({ key: `${need.kind}:${need.threadId}`, kind: need.kind, specId: lane.specId, text: need.text, threadId: need.threadId });
+    }
+    // A failure or a question already says why the lane isn't moving.
+    if ((lane.stopped ?? lane.state === "stopped") && lane.state !== "landed" && lane.state !== "merge-waits" && !lane.needs?.length) {
       items.push({
         key: `stopped:${lane.specId}`,
         kind: "stopped",
@@ -112,7 +113,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       if (ticket.state === "question" && ticket.threadId) {
         items.push({
           key: `question:${ticket.id}`,
-          kind: "question",
+          kind: "waiting",
           specId: lane.specId,
           ticketId: ticket.id,
           text: ticket.question ?? "The worker asked a question.",
@@ -121,7 +122,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { setup: 0, stopped: 1, question: 2, write: 3, merge: 4 };
+  const order: Record<NeedsYouKind, number> = { setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 
@@ -149,14 +150,42 @@ export function dependencyColumns(tickets: Ticket[]): Ticket[][] {
   return columns.filter(Boolean);
 }
 
+/** How long a landing's burst plays on the sortie line before the lane moves to Landed. */
+export const LANDING_MS = 1600;
+
+/** The lane states one board view has seen, and when each landing it saw plays until. */
+export interface Landings { seen: Record<string, LaneState>; until: Record<string, number> }
+
+/**
+ * A landing plays once: only when this view saw the lane in another state and now sees it Landed.
+ * A lane already Landed when the board opens is history, so a reload never replays it.
+ */
+export function nextLandings(previous: Landings | null, lanes: readonly Lane[], now: number): Landings {
+  const until: Record<string, number> = {};
+  for (const lane of lanes) {
+    const playing = previous?.until[lane.specId];
+    const before = previous?.seen[lane.specId];
+    if (playing !== undefined && playing > now) until[lane.specId] = playing;
+    else if (lane.state === "landed" && before !== undefined && before !== "landed") until[lane.specId] = now + LANDING_MS;
+  }
+  return { seen: Object.fromEntries(lanes.map((lane) => [lane.specId, lane.state])), until };
+}
+
+/** Merge shows, and the server merges, only for an open PR whose checks pass. The demo's PRs carry no state. */
+export function canMerge(lane: { pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+  return (lane.pr?.state ?? "open") === "open" && lane.pr?.checks === "passing";
+}
+
 export function otherFamily(family: Family): Family {
   return family === "claude" ? "gpt" : "claude";
 }
 
-export function reviewerFor(route: Route): Route {
-  return otherFamily(route.family) === "claude"
-    ? { family: "claude", model: "Opus 5.5", effort: "high" }
-    : { family: "gpt", model: "GPT-6.1 Sol", effort: "high" };
+/** The final reviewer: the Lead's own route for "same", else the first route of the other family. */
+export function reviewerFor(lead: Route, finalReviewFamily: "other" | "same", routes: readonly Route[]): Route {
+  if (finalReviewFamily === "same") return lead;
+  const family = otherFamily(lead.family);
+  return routes.find((route) => route.family === family)
+    ?? { family, model: family === "claude" ? "Claude" : "GPT", effort: lead.effort };
 }
 
 export function formatMinutes(minutes: number): string {

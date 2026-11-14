@@ -2,9 +2,6 @@ import { z } from "zod";
 
 export const planningStartedSchema = z.object({
   threadId: z.string(),
-  /** False when the thread opened without Squadron's Linear writes; `message` says why. */
-  writes: z.boolean(),
-  message: z.string().nullable(),
 });
 export type PlanningStarted = z.infer<typeof planningStartedSchema>;
 

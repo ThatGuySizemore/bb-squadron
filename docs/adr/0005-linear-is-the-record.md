@@ -1,5 +1,7 @@
 # Linear is the record; the plugin retains links and delivery state
 
+Status: partly superseded by ADR-0006. Linear stays the record; the plugin keeps only bindings and settings.
+
 On 13 Nov 2026 we decided Linear holds every delivered status, comment and blocker. The plugin's database retains which thread, worktree, branch and PR belong to which issue, and the live state of each run. The Helper can rebuild links from thread metadata and branch names on start. This does not make all local state disposable.
 
 The Helper checks Linear on a timer and catches up in full on every start, because BB does not replay thread events missed while a plugin was down. Webhooks are an optional speed-up for later, since they need a public URL.

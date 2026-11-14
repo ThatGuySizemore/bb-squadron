@@ -5,7 +5,6 @@ export interface SquadronSignal<T> { name: string; payload: z.ZodType<T> }
 /** projectId is the BB project ID in this existing public channel. */
 export const boardChanged = { name: "board-changed", payload: z.object({ projectId: z.string() }) } as const;
 export const linearConnectionChanged = { name: "linear-connection-changed", payload: z.null() } as const;
-export const linearOutboxChanged = { name: "linear-outbox-changed", payload: z.object({ bbProjectId: z.string() }) } as const;
 /** Public mirror signal for consumers that need the raw snapshot. The board
  * service uses the mirror's server hook, then emits its derived board signal. */
 export const linearMirrorChanged = { name: "linear-mirror-changed", payload: z.object({ bbProjectId: z.string() }) } as const;

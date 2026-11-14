@@ -1,73 +1,88 @@
 # Glossary
 
-The words BB Squadron uses. Use these, and only these, in code, tickets, comments and the UI.
+The words BB Squadron uses. Use these, and only these, in code, tickets, comments and the UI. Squadron shows and starts work. Matt Pocock's skills and the agents do the work.
 
 ## Work
 
-**Spec**: A Linear issue holding a feature's `to-spec` write-up. Its sub-issues are its tickets. One spec becomes one lane, one integration branch and one PR.
+**Spec**: A Linear issue holding a feature's `to-spec` write-up and labelled `ready-for-agent`. Its sub-issues are its tickets. One spec becomes one lane, one integration branch and one PR.
 _Avoid_: epic, feature issue, PRD
 
 **Ticket**: A sub-issue of a spec: one tracer-bullet slice that one worker can finish in one sitting.
-_Avoid_: task, story, slice (except when describing the shape)
+_Avoid_: task, story
 
-**Blocker**: An issue that must be Done before another may start, from Linear's native "blocks" relation. Specs block specs; tickets block tickets, across specs too.
+**Blocker**: An issue that must be Done before another may start, from Linear's native "blocks" relation.
 _Avoid_: dependency (in UI copy), prerequisite
 
 **Frontier**: The tickets of a spec whose blockers are all done and that nobody is working on yet.
 
-**Follow-up**: An issue filed during a lane for something worth doing that should not hold the merge, labelled `follow-up` and linked to its spec.
-
-**Unplanned**: An open issue that is neither a ready spec nor one of its tickets, including a sub-issue whose parent is closed, outside the project, missing or not ready. It waits in the board's Unplanned row, which names any parent without changing it in Linear, until a planning thread turns it into a spec.
+**Unplanned**: An open issue that is neither a spec nor one of its tickets. It waits in the board's Unplanned row until planning turns it into a spec.
 
 ## Roles
 
-**Owner**: The person the factory works for. Only the owner answers questions, merges `accept:owner` specs and changes settings.
+**Owner**: The person the factory works for. Only the owner answers questions and changes settings, and an `accept:owner` spec merges only on the owner's click or the owner's order to the Chief.
 
-**Helper**: The plugin's own code. It watches Linear, starts and stops Leads, enforces time limits, moves Linear statuses and writes every Linear change. It is not an agent and makes no technical calls.
-_Avoid_: chief, orchestrator (in UI copy), dispatcher
+**Chief**: An optional, long-running thread for one BB project that the owner talks to, running Matt's `chief-of-staff`. It can plan and press the board's buttons for the owner, but no lane depends on it.
+_Avoid_: Helper, orchestrator, dispatcher
 
-**Lead**: The agent thread that owns one spec until its PR merges. It runs `implement-spec`: it starts workers for the frontier, merges their work into the integration branch, starts reviews and opens the PR.
+**Lead**: The agent thread that owns one spec until its PR merges. It runs `implement-spec`, with its workers as BB child threads.
 _Avoid_: supervisor, manager
 
 **Worker**: A child thread of a Lead that builds one ticket with `tdd`, in its own worktree, on a branch cut from the integration branch.
 _Avoid_: builder, implementer, subagent
 
-**Reviewer**: A fresh thread from the other family that reviews a ticket, or the whole spec, with `code-review`. Its verdict counts only for the commit it reviewed.
+**Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its PR merges.
 
-**Planning thread**: An interactive thread started from the board's Plan button. It runs `grill-with-docs`, then `to-spec` and `to-tickets`, with the owner.
+**Planning thread**: A thread started from the Plan button that runs `grill-with-docs`, then `to-spec` and `to-tickets`, with the owner.
 
 ## Running
 
-**Lane**: One spec being worked: its Lead, workers, reviewers, integration branch and PR.
+**Lane**: One spec being worked: its Lead, workers, reviewer, integration branch and PR.
 
-**Integration branch**: The one branch a lane builds on. Workers branch from it and merge back into it; its PR goes to `main`.
+**Lane state**: Ready, Flying, In review or Landed. It is always read from the Lead thread, the PR and Linear, and never stored.
 
-**Family**: Which company's models a thread runs on: Claude (Claude Code) or GPT (Codex). A reviewer is always from the other family than the work it reviews.
+**Ticket state**: Waiting, Working, In branch or Done.
 
-**Route**: A row in the repo's AI table that maps a ticket label to a family, model and effort. The table lives in `docs/agents/squadron.md`.
+**Status mapping**: The table that names the Linear status for each lane state and ticket state.
 
-**Two strikes**: A failure gets two fix attempts. After that the lane stops and asks the owner.
+**Integration branch**: The one branch a lane builds on. Workers branch from it and merge back into it, and its PR goes to `main`.
 
-**Stop list**: The project's list of problems that block a merge. Anything else becomes a follow-up.
+**Family**: Which company's models a thread runs on: Claude (Claude Code) or GPT (Codex).
+
+**Route**: A row that maps a ticket label to a family, model and effort.
+
+**Identity**: Who an agent appears as in Linear and in Git. It is set for each family, and Squadron never holds the credential.
+
+**Two strikes**: Work reported done that then fails its quick check or review, or a worker that is truly stuck, is a strike. After two strikes on one ticket the Lead stops the lane and asks the owner.
+
+**Stop**: The owner's request that a Lead wind down. Its workers save their work in progress to their branches and tickets, and the Lead posts a summary on the spec.
+_Avoid_: cancel, kill
+
+**Resume**: The owner's request that a stopped Lead carry on from its last summary.
+
+**Stop list**: The project's list of problems that block a merge.
 
 **Quick check**: The project's fast test command, run before every merge into the integration branch and before the PR merges.
 
-**Doctor**: The check that runs before a lane starts: Matt's skill setup, `docs/agents/squadron.md`, Linear connection and `gh` login.
+**Doctor**: The check that must pass before Start: Matt's plugin in each family's harness, Matt's setup files, Squadron's settings, the Linear key and `gh` login.
+
+## Configuration
+
+**Repo rules**: How to work on a repo's code: its `AGENTS.md` and Matt's `docs/agents/` setup. Checked in, and not Squadron's.
+
+**Project settings**: How the fleet flies one repo: quick check, stop list, routes, final-review family, time limits and status mapping. Checked in as `docs/agents/squadron.md`.
+
+**Playbook**: How the owner likes work done in every project, read by both families. Private to the owner. Its Never and Held entries beat every other rule.
+_Avoid_: global rules, harness rules
+
+**Machine profile**: What one machine has: devices and how to use them, tools for each family, identities, and notes for each project. Private to the owner, one per machine.
+_Avoid_: personal settings, local config
+
+**Secret**: A credential, kept only in BB's secret settings and never in a file.
 
 ## Board
 
-**Board**: The Squadron page in BB's left sidebar. One row per spec, plus the Unplanned row.
+**Board**: The Squadron page in BB's sidebar and the owner's front door for every action: Plan, Start, Stop, Resume and Merge.
 
-**Needs you**: The first section of the board listing what waits on the owner: connection or binding setup, agent questions, stopped lanes, blocked Linear writes and `accept:owner` merges.
+**Needs you**: The board's first section: threads waiting on the owner, `accept:owner` PRs ready to merge, and setup problems.
 
 **Binding**: The owner's choice of which Linear team and project a BB project's board reads.
-
-**Mirror**: The board's local copy of Linear issues, labels, states and blockers, rebuilt from Linear.
-
-**Outbox**: The Helper's durable queue of Linear writes awaiting delivery or recovery.
-
-**Grant**: The Helper's restriction on which Linear writes a particular thread may request. It is not owner approval.
-
-**Receipt**: The result for one queued Linear write, identified by a stable ID: pending, blocked or delivered. Pending means it awaits delivery; blocked means it needs recovery; delivered means Linear confirmed it or Squadron reconciled the original write.
-
-**Signed comment**: A Linear comment carrying the agent's role and model. App auth uses the agent's name and avatar; personal-key auth labels the comment body under the connected person's name.

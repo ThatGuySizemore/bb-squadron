@@ -15,6 +15,7 @@ Object.assign(globalThis, { window: { matchMedia: () => media, setTimeout, clear
 Object.assign(globalThis, { __bbPluginRuntime: { react: React, pluginSdkApp: {
   experimental_useProviders: () => ({ providers: [] }),
   experimental_ProviderIcon: () => null,
+  experimental_FileLink: ({ target, children }: { target: { path: string }; children: React.ReactNode }) => React.createElement("a", { href: target.path }, children),
   useBbNavigate: () => ({ toThread: (id: string) => navigations.push(id), openUrl: (url: string) => { navigations.push(url); return true; } }),
   useBbContext: () => ({ projectId: "proj-one" }),
   useRpc: () => ({ call: async () => { throw new Error("Static rendering runs no effects."); } }),

@@ -82,12 +82,14 @@ test("a spec waits for Doctor, open tickets and an available frontier", () => {
   ], [blocks("FIX-2", "FIX-7")])));
   assert.deepEqual(board.ready.map((spec) => [spec.id, spec.startReason]), [
     ["FIX-1", "Check Doctor before starting a lane."],
-    ["FIX-5", "Has no open tickets. Plan its tickets first."],
-    ["FIX-6", "Every ticket waits on a blocker: FIX-2"],
   ]);
+  assert.deepEqual(board.shaping.map((spec) => [spec.id, spec.missing, spec.action]), [
+    ["FIX-5", "Has the ready-for-agent label but no open tickets.", "tickets"],
+    ["FIX-6", "Every ticket waits on a blocker: FIX-2", "tickets"],
+  ], "a ready label without an available frontier is still Shaping");
 });
 
-test("Ready shows open blockers of its tickets while preserving a partially available frontier", () => {
+test("a spec whose every ticket waits is Shaping with its blockers; a partial frontier stays Ready", () => {
   const { board } = deriveBoard(input(snapshot([
     issue("FIX-1", { labels: ["ready-for-agent"] }),
     issue("FIX-2", { parent: "FIX-1" }), issue("FIX-3", { parent: "FIX-1" }),
@@ -95,13 +97,10 @@ test("Ready shows open blockers of its tickets while preserving a partially avai
     issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
   ], [blocks("FIX-11", "FIX-2"), blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3"),
     blocks("FIX-11", "FIX-3")])));
-  const row = board.ready[0];
-  assert.deepEqual(row.blockedBy, ["FIX-11", "OUT-9"]);
-  assert.deepEqual(row.blockers, [
-    { id: "FIX-11", title: "Issue FIX-11", url: "https://linear.app/fixture/issue/FIX-11", outside: false },
-    { id: "OUT-9", title: "Issue OUT-9", url: "https://linear.app/fixture/issue/OUT-9", outside: true },
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-10"], "FIX-1 has no open, unblocked ticket, so it isn't Ready");
+  assert.deepEqual(board.shaping.map(({ id, ticketCount, missing, action }) => ({ id, ticketCount, missing, action })), [
+    { id: "FIX-1", ticketCount: 2, missing: "Every ticket waits on a blocker: FIX-11, OUT-9", action: "tickets" },
   ]);
-  assert.equal(row.startReason, "Every ticket waits on a blocker: FIX-11, OUT-9");
 
   const partial = deriveBoard(input(snapshot([
     issue("FIX-1", { labels: ["ready-for-agent"] }),
@@ -121,23 +120,105 @@ test("Start waits on a valid docs/agents/squadron.md before anything else after 
   assert.deepEqual(board.ready[0].routes, []);
 });
 
-test("every open issue stays visible: a child without a Ready parent waits in Open issues with its parent named", () => {
+test("every open issue stays visible: a child without a spec parent is an Open issue with its parent named", () => {
   const { board } = deriveBoard(input(snapshot([
     issue("FIX-49", { done: true }),
     issue("FIX-50", { parent: "FIX-49" }),
     issue("FIX-60", { parent: "GONE-1" }),
     issue("FIX-69", { title: "Draft spec" }),
     issue("FIX-70", { parent: "FIX-69" }),
+    issue("FIX-71", { parent: "FIX-70" }),
     issue("OUT-3", { outside: true }),
     issue("FIX-80", { parent: "OUT-3" }),
   ])));
   assert.deepEqual(board.openIssues.map(({ id, under }) => ({ id, under })), [
     { id: "FIX-50", under: "Under FIX-49, which is closed" },
     { id: "FIX-60", under: "Under an issue this board can't see" },
-    { id: "FIX-69", under: undefined },
-    { id: "FIX-70", under: "Under FIX-69" },
+    { id: "FIX-71", under: "Under FIX-70" },
     { id: "FIX-80", under: "Under OUT-3, outside this project" },
   ]);
+  assert.deepEqual(board.shaping.map((spec) => [spec.id, spec.ticketCount]), [["FIX-69", 1]],
+    "a parentless issue with tickets is a spec being shaped, and its child is a ticket");
+});
+
+test("Open issues lists every open issue that isn't a spec or a ticket, each ready for Plan", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-3", { title: "Idea", labels: ["bug"] }),
+    issue("FIX-4", { title: "Done idea", done: true }),
+    issue("FIX-5", { title: "Only closed children" }),
+    issue("FIX-6", { parent: "FIX-5", done: true }),
+    issue("OUT-1", { outside: true }),
+  ])));
+  assert.deepEqual(board.openIssues.map(({ id, title, labels }) => ({ id, title, labels })), [
+    { id: "FIX-3", title: "Idea", labels: ["bug"] },
+    { id: "FIX-5", title: "Only closed children", labels: [] },
+  ]);
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1"]);
+  assert.deepEqual(board.shaping, []);
+});
+
+test("a spec is Shaping while its planning thread is open, it has tickets but no ready label, or the label but no tickets", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-10", { title: "Being planned" }),
+    issue("FIX-20", { title: "Tickets, no label" }),
+    issue("FIX-21", { parent: "FIX-20" }), issue("FIX-22", { parent: "FIX-20" }),
+    issue("FIX-30", { title: "Label, no tickets", labels: ["ready-for-agent"] }),
+    issue("FIX-31", { parent: "FIX-30", done: true }),
+    issue("FIX-40", { title: "Still planning tickets" }),
+    issue("FIX-41", { parent: "FIX-40" }),
+  ]), { planning: [{ issueId: "fix-10", threadId: "thr_plan_10" }, { issueId: "fix-40", threadId: "thr_plan_40" }] }));
+  assert.deepEqual(board.shaping, [
+    { id: "FIX-10", title: "Being planned", url: "https://linear.app/fixture/issue/FIX-10", ticketCount: 0,
+      missing: "Planning is still open in its thread.", action: "resume", threadId: "thr_plan_10" },
+    { id: "FIX-20", title: "Tickets, no label", url: "https://linear.app/fixture/issue/FIX-20", ticketCount: 2,
+      missing: "Has 2 tickets but no ready-for-agent label.", action: "tickets" },
+    { id: "FIX-30", title: "Label, no tickets", url: "https://linear.app/fixture/issue/FIX-30", ticketCount: 0,
+      missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" },
+    { id: "FIX-40", title: "Still planning tickets", url: "https://linear.app/fixture/issue/FIX-40", ticketCount: 1,
+      missing: "Planning is still open in its thread.", action: "resume", threadId: "thr_plan_40" },
+  ]);
+  assert.deepEqual(board.openIssues, [], "a spec being shaped and its tickets leave Open issues");
+  assert.deepEqual(board.ready, []);
+});
+
+test("Ready needs the ready label or Status: ready-for-agent and an open, unblocked ticket", () => {
+  const issues = [
+    issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-5", { status: "ready-for-agent" }), issue("FIX-6", { parent: "FIX-5" }),
+    issue("FIX-8", { status: "Ready-For-Agent" }), issue("FIX-9", { parent: "FIX-8" }),
+  ];
+  for (const kind of ["linear", "local-markdown", "github"] as const) {
+    const { board } = deriveBoard(input(snapshot(issues), { kind }));
+    assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1", "FIX-5", "FIX-8"], kind);
+    assert.deepEqual([board.shaping, board.openIssues], [[], []], kind);
+  }
+});
+
+test("an open planning thread keeps a spec Shaping even when it would otherwise be Ready", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-5", { labels: ["ready-for-agent"] }), issue("FIX-6", { parent: "FIX-5" }),
+  ]), { planning: [{ issueId: "fix-1", threadId: "thr_plan" }] }));
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-5"]);
+  assert.deepEqual(board.shaping.map(({ id, action, threadId, missing }) => ({ id, action, threadId, missing })), [
+    { id: "FIX-1", action: "resume", threadId: "thr_plan", missing: "Planning is still open in its thread." },
+  ]);
+});
+
+test("a Ready row lists which tickets wait on which blockers when only part of its frontier is available", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1", title: "Waits twice" }), issue("FIX-3", { parent: "FIX-1" }),
+    issue("FIX-4", { parent: "FIX-1", title: "Waits on a sibling" }),
+    issue("OUT-9", { outside: true }), issue("FIX-11"), issue("FIX-8", { done: true }),
+  ], [blocks("FIX-11", "FIX-2"), blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3"), blocks("FIX-3", "FIX-4")])));
+  assert.deepEqual(board.ready[0].waiting, [
+    { id: "FIX-2", title: "Waits twice", blockedBy: ["FIX-11", "OUT-9"] },
+    { id: "FIX-4", title: "Waits on a sibling", blockedBy: ["FIX-3"] },
+  ]);
+  assert.equal(board.ready[0].startReason, "Check Doctor before starting a lane.", "FIX-3 is available, so Start isn't held");
 });
 
 test("disconnected, unbound and failed reads say what happened without asking for a sync", () => {

@@ -206,7 +206,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
   }));
   assert.match(html, /<h2[^>]*>Open issues<\/h2>/, "the section uses the glossary's Open issue term");
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
-    "Doctor checks", "Linear webhooks", "No lanes flying."]) {
+    "Doctor checks", "Linear webhooks", "Nothing is flying. Start a Ready spec to launch its lane.", "Start FIX-5"]) {
     assert.ok(html.includes(text), `the board shows ${text}`);
   }
   assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Start<\/button>/g) ?? []).length, 1, "the blocked spec's Start button is disabled");
@@ -231,7 +231,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
 test("empty, disconnected, unbound and failed boards each say what to do", async () => {
   await import("./fixtures/app-runtime.js");
   const { liveNotice } = await import("../board/Board.js");
-  const base = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [], openIssues: [] };
+  const base = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [] };
   const status = (state: NonNullable<Board["linear"]>["state"], syncedAt: number | null = null): Board =>
     ({ ...base, linear: { state, message: "", syncedAt, project: null } });
   assert.equal(liveNotice({ projectId: null, board: null, failed: false }), "Choose a BB project to see its board.");

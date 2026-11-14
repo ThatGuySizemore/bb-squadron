@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import type { Board } from "../lib/board-model.js";
 import type { DoctorReport } from "../lib/doctor.js";
 
-const base: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], openIssues: [] };
+const base: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [] };
 const report = (fix: ("setup" | "settings")[], settingsExists = true): DoctorReport => ({
   ready: fix.length === 0,
   checks: [

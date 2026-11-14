@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } 
 import type { CSSProperties, ReactNode } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
+import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
 import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
 import type { boardContract, PickerProjects } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
@@ -504,11 +504,55 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
       <Btn tone="primary" disabled={opening || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
         {opening ? "Opening…" : "Start"}
       </Btn>
+      {spec.waiting?.length ? (
+        <ul className="sq-ready-waiting" aria-label={`Tickets of ${spec.id} that wait on blockers`}>
+          {spec.waiting.map((ticket) => (
+            <li key={ticket.id} title={ticket.title}>
+              <span className="sq-mono">{ticket.id}</span> waits on {list(ticket.blockedBy)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </li>
   );
 }
 
-function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: (issueId: string) => void; opening: boolean }) {
+/** "A", "A and B", "A, B and C". */
+function list(ids: readonly string[]): string {
+  return ids.length < 2 ? ids.join("") : `${ids.slice(0, -1).join(", ")} and ${ids[ids.length - 1]}`;
+}
+
+function ShapingRow({ spec, onPlan, opening }: { spec: ShapingSpec; onPlan: Plan; opening: boolean }) {
+  const label = spec.action === "resume" ? "Resume planning" : "Plan tickets";
+  return (
+    <li className="sq-shaping">
+      <PixelText text={spec.id} cell={2} className="sq-ready-id" />
+      <IssueTitle title={spec.title} url={spec.url} className="sq-shaping-title" />
+      <span className="sq-ready-meta sq-num">
+        {spec.ticketCount} {spec.ticketCount === 1 ? "ticket" : "tickets"}
+      </span>
+      <span className="sq-shaping-missing" role={opening ? "status" : undefined}>
+        {opening ? (spec.action === "resume" ? "Opening its planning thread" : "Starting a planning thread for its tickets") : spec.missing}
+      </span>
+      <Btn disabled={opening} title={opening ? undefined : `${label} for ${spec.id}`}
+        onClick={() => (spec.action === "resume" ? onPlan(spec.id) : onPlan(spec.id, "tickets"))}>
+        {opening ? "Opening…" : label}
+      </Btn>
+    </li>
+  );
+}
+
+/** An empty section: how work gets into it, and the button that does it. */
+function EmptySection({ text, action }: { text: string; action: ReactNode }) {
+  return (
+    <div className="sq-empty">
+      <p className="sq-clear">{text}</p>
+      {action}
+    </div>
+  );
+}
+
+function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: Plan; opening: boolean }) {
   return (
     <li>
       {issue.priority !== undefined ? <PriorityDot priority={issue.priority} /> : <span />}
@@ -594,6 +638,9 @@ function LinearLine({ board, now }: { board: Board; now: number }) {
   );
 }
 
+/** Plan an issue (or Resume its planning), Plan a spec's tickets, or with no issue start a New spec. */
+type Plan = (issueId?: string, step?: "tickets") => void;
+
 /** Set up is offered when Matt's setup files or docs/agents/squadron.md are missing.
  * A squadron.md that exists but needs a fix stays Doctor's job. */
 export function needsSetup(board: Board): boolean {
@@ -616,8 +663,8 @@ interface BoardViewProps {
   /** The synthetic simulation; the live board passes false. */
   demo: boolean;
   modeSwitch: ReactNode;
-  onPlan: (issueId?: string) => void;
-  /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
+  onPlan: Plan;
+  /** The planning button that is opening its thread: an issue id, or "" for New spec. */
   planning?: string | null;
   starting?: string | null;
   /** A Stop or Resume on its way to a Lead. */
@@ -626,7 +673,7 @@ interface BoardViewProps {
   /** Starts the Set up thread; the button shows when needsSetup(board). */
   onSetUp?: () => void;
   settingUp?: boolean;
-  /** Replaces Ready and Open issues while the board can't show them. */
+  /** Replaces Ready, Shaping and Open issues while the board can't show them. */
   notice?: ReactNode;
   /** A safe, visible note about an update the board couldn't use. */
   diagnostic?: string | null;
@@ -648,6 +695,13 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || isLanding(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !isLanding(l));
+  const startable = board.ready.find((spec) => (spec.startReason !== undefined ? spec.startReason : canStart(board, spec)) === null);
+  // New spec starts the path from nothing; one planning thread opens at a time.
+  const newSpec = (tone: "primary" | "plain" = "plain") => (
+    <Btn tone={tone} disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : "Plan a new spec from nothing"} onClick={() => onPlan()}>
+      {planning === "" ? "Opening…" : "New spec"}
+    </Btn>
+  );
   const openTickets = flying.reduce((n, l) => n + l.tickets.filter((t) => t.state !== "branch" && t.state !== "done").length, 0);
   const doctor = doctorStatus(board);
   const setUpButton = onSetUp && needsSetup(board) ? (
@@ -693,9 +747,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             ) : null}
             {modeSwitch}
             {planning === "" ? <span className="sq-plan-why" role="status">Starting a planning thread</span> : null}
-            <Btn tone="primary" disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : undefined} onClick={() => onPlan()}>
-              {planning === "" ? "Opening…" : "Plan a spec"}
-            </Btn>
+            {newSpec("primary")}
             <button type="button" className="sq-btn sq-doctor-button" aria-expanded={doctorOpen} aria-controls={doctorId} onClick={() => setDoctorOpen((open) => !open)}>
               Doctor{doctor ? <span className="sq-sr">: </span> : null}
               {doctor ? <span className="sq-doctor-status" data-status={doctor.tone}>{doctor.text}</span> : null}
@@ -717,7 +769,11 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
         <section className="sq-section" aria-labelledby="sq-flying-h">
           <h2 id="sq-flying-h">Flying</h2>
           {onLine.length === 0 ? (
-            <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
+            <EmptySection text="Nothing is flying. Start a Ready spec to launch its lane." action={startable ? (
+              <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
+                {starting === startable.id ? "Opening…" : `Start ${startable.id}`}
+              </Btn>
+            ) : newSpec()} />
           ) : (
             onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} demo={demo} acting={acting} />)
           )}
@@ -728,7 +784,8 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           {notice ? (
             <p className="sq-clear">{notice}</p>
           ) : board.ready.length === 0 ? (
-            <p className="sq-clear">No specs are ready. Plan one from Open issues.</p>
+            <EmptySection text="No spec is Ready. A spec is Ready once it has the ready-for-agent label and an open ticket nothing blocks."
+              action={newSpec()} />
           ) : (
             <ul className="sq-ready-list">
               {board.ready.map((spec) => (
@@ -738,10 +795,23 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           )}
         </section>
 
+        <section className="sq-section" aria-labelledby="sq-shaping-h">
+          <h2 id="sq-shaping-h">Shaping</h2>
+          {notice ? null : board.shaping.length === 0 ? (
+            <EmptySection text="No spec is being shaped. Plan an open issue, or start a new spec from nothing." action={newSpec()} />
+          ) : (
+            <ul className="sq-shaping-list">
+              {board.shaping.map((spec) => (
+                <ShapingRow key={spec.id} spec={spec} onPlan={onPlan} opening={planning === spec.id} />
+              ))}
+            </ul>
+          )}
+        </section>
+
         <section className="sq-section" aria-labelledby="sq-open-issues-h">
           <h2 id="sq-open-issues-h">Open issues</h2>
           {notice ? null : board.openIssues.length === 0 ? (
-            <p className="sq-clear">No open issues. Every open issue belongs to a ready spec.</p>
+            <EmptySection text="No open issues. Issues in this project that aren't specs or tickets wait here for Plan." action={newSpec()} />
           ) : (
             <ul className="sq-open-issues">
               {board.openIssues.map((issue) => (
@@ -798,7 +868,7 @@ function DemoBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       demo
       modeSwitch={modeSwitch}
       dispatch={(action) => send({ type: "board", action })}
-      onPlan={(issueId) => toast(issueId ? `Prototype: opens a planning thread on ${issueId}.` : "Prototype: opens a planning thread (grill-with-docs → to-spec → to-tickets).")}
+      onPlan={(issueId, step) => toast(issueId ? `Prototype: opens a planning thread ${step === "tickets" ? "for the tickets of" : "on"} ${issueId}.` : "Prototype: opens a planning thread (grill-with-docs → to-spec → to-tickets).")}
       footer={
         <footer className="sq-sim">
           <span className="sq-tag" data-tone="amber">
@@ -816,7 +886,7 @@ function DemoBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   );
 }
 
-const EMPTY_BOARD: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], openIssues: [] };
+const EMPTY_BOARD: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [] };
 
 /** What the live page shows before it has a board, or when it can't get one. */
 export function liveNotice(state: { projectId: string | null; board: Board | null; failed: boolean }): string | null {
@@ -832,12 +902,12 @@ export function liveNotice(state: { projectId: string | null; board: Board | nul
 
 /** Start or reopen a planning thread, open it beside the board, and report a start failure. */
 export async function planFromBoard(deps: {
-  start: (input: { projectId: string; issueId?: string }) => Promise<PlanningStarted>;
+  start: (input: { projectId: string; issueId?: string; step?: "tickets" }) => Promise<PlanningStarted>;
   openThread: (threadId: string) => void;
   notify: (text: string) => void;
-}, projectId: string, issueId?: string): Promise<void> {
+}, projectId: string, issueId?: string, step?: "tickets"): Promise<void> {
   try {
-    const started = await deps.start(issueId ? { projectId, issueId } : { projectId });
+    const started = await deps.start(issueId ? { projectId, issueId, ...(step ? { step } : {}) } : { projectId });
     deps.openThread(started.threadId);
   } catch (error) {
     // The server's refusals are written for the owner.
@@ -978,7 +1048,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       toast(error instanceof Error && error.message ? error.message : "Couldn't start the setup thread. Try again.");
     } finally { setSettingUp(false); }
   }, [rpc, projectId, settingUp, open]);
-  const plan = useCallback(async (issueId?: string) => {
+  const plan = useCallback(async (issueId?: string, step?: "tickets") => {
     if (!projectId || planning !== null) return;
     setPlanning(issueId ?? "");
     try {
@@ -986,7 +1056,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         start: (input) => rpc.call("planning.start", input),
         openThread: (threadId) => open.thread(threadId, "the planning thread"),
         notify: (text) => { toast(text); },
-      }, projectId, issueId);
+      }, projectId, issueId, step);
     } finally { setPlanning(null); }
   }, [rpc, projectId, planning, open]);
   const start = useCallback(async (specId: string) => {
@@ -1028,7 +1098,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         if (action.type === "start") void start(action.specId);
         else if (action.type === "stop" || action.type === "resume" || action.type === "merge") void act({ type: action.type, specId: action.specId });
       }}
-      onPlan={(issueId) => void plan(issueId)}
+      onPlan={(issueId, step) => void plan(issueId, step)}
       planning={planning}
       starting={starting}
       acting={acting}

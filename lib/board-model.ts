@@ -39,6 +39,14 @@ const boardSchema = z.object({
     id: z.string(), title: z.string(), ticketCount: z.number(), routes: z.array(route), blockedBy: z.array(z.string()),
     acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
     startReason: z.string().nullable().optional(),
+    /** Open tickets that wait on open blockers, so a partial frontier shows why the rest won't start. */
+    waiting: z.array(z.object({ id: z.string(), title: z.string(), blockedBy: z.array(z.string()) })).optional(),
+  })),
+  /** Specs that aren't Ready: what's missing, and the one button that fixes it. */
+  shaping: z.array(z.object({
+    id: z.string(), title: z.string(), url: z.string().optional(), ticketCount: z.number(), missing: z.string(),
+    /** "resume" reopens the open planning thread; "tickets" plans the spec's tickets. */
+    action: z.enum(["resume", "tickets"]), threadId: z.string().optional(),
   })),
   openIssues: z.array(z.object({
     id: z.string(), title: z.string(), labels: z.array(z.string()), url: z.string().optional(), under: z.string().optional(),
@@ -62,6 +70,7 @@ export type Blocker = z.infer<typeof blocker>;
 export type Board = z.infer<typeof boardSchema>;
 export type ReadySpec = Board["ready"][number];
 export type OpenIssue = Board["openIssues"][number];
+export type ShapingSpec = Board["shaping"][number];
 export type LinearStatus = NonNullable<Board["linear"]>;
 export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge";
 

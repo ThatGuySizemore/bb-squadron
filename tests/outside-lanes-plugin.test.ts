@@ -139,6 +139,17 @@ test("a thread Squadron started, or one under it, is never an outside lane", asy
   assert.deepEqual(result.ready.map((row) => row.id), ["bb-bot"], "the spec stays Ready for Start");
 });
 
+test("an outside lane's fresh worktree branch at main is not a landed lane", async (t) => {
+  const { root, add, board } = await fixture(t);
+  const mainTime = Number(git(root, "show", "-s", "--format=%ct", "main")) * 1000;
+  add({ id: "thr_bbbot", title: "Implement bb Bot spec", firstMessage: "Implement `.scratch/bb-bot/spec.md`.",
+    createdAt: mainTime + 1_000, environmentBranchName: "bb/implement-bb-bot-spec-thr_bbbot" });
+  const lane = (await board()).lanes[0];
+  assert.equal(lane.branch, "bb/implement-bb-bot-spec-thr_bbbot");
+  assert.equal(lane.outside, true);
+  assert.equal(lane.state, "flying");
+});
+
 test("an outside lane has no lane buttons, and Start, Stop, Resume and Merge refuse it without messaging its thread", async (t) => {
   const { add, harness, board } = await fixture(t);
   // Idle, so a Squadron lane would offer Resume; its tickets reached the branch, so it would offer a local Merge.

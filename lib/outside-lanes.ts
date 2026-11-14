@@ -1,7 +1,8 @@
 // Outside lanes: lanes started outside Squadron, found from BB's threads and shown read-only.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
-import { readWorkers, type LeadThread } from "./lead-threads.js";
+import { readWorkers, threadRoute, type LeadThread } from "./lead-threads.js";
+import { escapeRegExp } from "./issue-text.js";
 import { isActiveProjectThread } from "./project-thread.js";
 import { openSpecs, type PlanningThread } from "./board-derive.js";
 
@@ -16,14 +17,12 @@ export interface ProjectThread {
   firstMessage: string | null;
 }
 
-const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
 /** Whether the text names the spec by identifier, repository path or title, as a whole word. */
 export function namesSpec(text: string | null, spec: Pick<TrackerIssue, "identifier" | "title" | "path">): boolean {
   if (!text) return false;
   return [spec.identifier, spec.path, spec.title].some((name) => name?.trim() &&
     // SIZE-94 never matches SIZE-947, and bb-bot never matches bb-bots-sidebar.
-    new RegExp(`(?<![\\w-])${escape(name.trim())}(?!\\w|-\\w)`, "i").test(text));
+    new RegExp(`(?<![\\w-])${escapeRegExp(name.trim())}(?!\\w|-\\w)`, "i").test(text));
 }
 
 /**
@@ -113,8 +112,7 @@ export function createOutsideLaneReader(bb: BbPluginApi): OutsideLaneReader {
       const branchCandidates = [...new Set([...namedIntegrationBranches(known.get(threadId)?.firstMessage ?? null), ...(own ? [own] : [])])];
       lanes.push({ specId, thread, outside: true, branch: branchCandidates[0] ?? "", branchCandidates,
         workers: await readWorkers(bb, projectId, threadId),
-        route: { family: thread.providerId === "claude-code" ? "claude" : "gpt",
-          model: execution?.model ?? "Unknown model", effort: execution?.reasoningLevel === "high" ? "high" : "medium" } });
+        route: threadRoute(thread.providerId, execution) });
     }
     return lanes;
   };

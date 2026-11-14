@@ -5,7 +5,7 @@ import { createDoctorHost } from "../host.js";
 
 test("machine Doctor reports only the GitHub check result, including unavailable CLI", async () => {
   const cases = [
-    { checkLogin: async () => true, expected: { authenticated: true } },
+    { checkLogin: async () => ({ authenticated: true }), expected: { authenticated: true } },
     { checkLogin: async () => { throw new Error("private command error"); }, expected: { authenticated: false } },
   ];
   for (const { checkLogin, expected } of cases) {
@@ -33,7 +33,7 @@ test("machine Doctor checks setup and owner-file existence and rejects a symlink
   const skill = join(plugin, "tdd/SKILL.md");
   await writeFile(skill, "Skill");
   await symlink(join(plugin, "tdd"), join(plugin, "linked"), "dir");
-  const host = experimental_createHostEntryHarness(createDoctorHost(async () => true, () => owner));
+  const host = experimental_createHostEntryHarness(createDoctorHost(async () => ({ authenticated: true }), () => owner));
   try {
     assert.deepEqual(await host.experimental_call("inspectFiles", { checkoutPath: repo, skillPaths: [skill, join(plugin, "linked/SKILL.md"), join(plugin, "missing/SKILL.md")] }), {
       homePath: owner, repoRulesExists: true, playbookExists: true, machineProfileExists: false,

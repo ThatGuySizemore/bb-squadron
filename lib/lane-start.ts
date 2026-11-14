@@ -23,9 +23,9 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   outside?: OutsideLaneReader;
 }) {
   /** The outside lane flying this spec, if a thread Squadron didn't start names it. */
-  async function outsideLanes(projectId: string, snapshot: TrackerSnapshot, leads: LeadThread[]): Promise<LeadThread[]> {
+  async function outsideLanes(projectId: string, snapshot: TrackerSnapshot, leads: LeadThread[], planning?: Awaited<ReturnType<typeof readPlanningThreads>>): Promise<LeadThread[]> {
     if (!sources.outside) return [];
-    return sources.outside(projectId, outsideLaneSpecs(snapshot, leads, await readPlanningThreads(bb, projectId)));
+    return sources.outside(projectId, outsideLaneSpecs(snapshot, leads, planning ?? await readPlanningThreads(bb, projectId)));
   }
   const refuse = (specId: string, action: string) =>
     new Error(`${specId} was started outside Squadron, so Squadron doesn't ${action} it. Open its thread to follow it.`);
@@ -36,12 +36,13 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
     const existing = spec && leads.find((lead) => lead.specId === spec.id);
     if (existing) return { threadId: existing.thread.id };
-    const outside = spec ? (await outsideLanes(projectId, snapshot, leads)).filter((lane) => lane.specId === spec.id) : [];
+    const planning = await readPlanningThreads(bb, projectId);
+    const outside = spec ? (await outsideLanes(projectId, snapshot, leads, planning)).filter((lane) => lane.specId === spec.id) : [];
     if (outside.length) throw refuse(specId, "start another Lead for");
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to start a lane in.");
     const doctor = await sources.doctor(projectId);
-    const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], settings: checkout.settings, doctor,
+    const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], planning, settings: checkout.settings, doctor,
       connection: { status: "connected", message: "" }, now: Date.now() });
     const ready = board.ready.find((row) => row.id === specId);
     if (!ready || !spec) throw new Error(`${specId} isn't a ready spec in this project's tracker. Read the board again.`);

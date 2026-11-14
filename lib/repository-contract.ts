@@ -4,6 +4,8 @@ export const repositoryStateSchema = z.object({
   hasRemote: z.boolean(),
   mainUpdatedAt: z.number().nullable(),
   mergedBranches: z.array(z.string()),
+  /** Tip commit times for the merged branches. Read fresh, never retained as run state. */
+  mergedBranchUpdatedAt: z.record(z.string(), z.number()),
 });
 export type RepositoryState = z.infer<typeof repositoryStateSchema>;
 

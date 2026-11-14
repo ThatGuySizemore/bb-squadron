@@ -62,7 +62,7 @@ test("install, bind a recorded workspace, sync it and read the real board throug
   await harness.lifecycle.install();
 
   const unbound = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(unbound.linear?.state, "unbound");
+  assert.equal(unbound.tracker?.state, "unbound");
   assert.deepEqual([unbound.ready, unbound.openIssues], [[], []]);
 
   await harness.behavior.callRpc("linear.bind", binding);
@@ -71,8 +71,8 @@ test("install, bind a recorded workspace, sync it and read the real board throug
     { projectId: "proj-one" });
 
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(board.linear?.state, "current");
-  assert.equal(board.linear?.project, "Fixture team · Fixture project");
+  assert.equal(board.tracker?.state, "current");
+  assert.equal(board.tracker?.project, "Fixture team · Fixture project");
   assert.deepEqual(board.ready.map(({ id, ticketCount, blockedBy, startReason, routes }) => ({ id, ticketCount, blockedBy, startReason, models: routes.map((route) => route.model) })), [
     { id: "FIX-1", ticketCount: 2, blockedBy: ["OUT-10"], startReason: "Waits on OUT-10 (outside this project)", models: ["gpt-6.1-sol", "claude-opus-5-5"] },
     { id: "FIX-5", ticketCount: 1, blockedBy: [], startReason: null, models: ["gpt-6.1-sol"] },
@@ -129,7 +129,7 @@ test("a reload keeps the binding and rebuilds the board from Linear without a st
   await until(() => linear.operations.filter((name) => name === "SquadronVocabulary").length >= 2, "full read after reload");
   await until(() => harness.inspection.realtimeSignals.some((signal) => signal.channel === "linear-mirror-changed"), "fresh snapshot");
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(board.linear?.state, "current");
+  assert.equal(board.tracker?.state, "current");
   assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9", "FIX-12"]);
 });
 
@@ -140,7 +140,7 @@ test("without a Linear credential the board asks the owner to connect and reads 
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(board.linear, { state: "disconnected", message: "Connect Linear in Squadron settings.", syncedAt: null, project: null });
+  assert.deepEqual(board.tracker, { kind: "linear", state: "disconnected", message: "Connect Linear in Squadron settings.", syncedAt: null, project: null });
   assert.deepEqual(linear.operations, []);
 });
 
@@ -182,7 +182,7 @@ test("a failed read keeps the last good copy and shows Linear's safe reason", as
   t.after(() => poll.controller.abort());
   await until(() => harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length > signalsBeforeFailure, "board-changed after the failure");
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual([board.linear?.state, board.linear?.message], ["failed", "Linear could not complete the request."]);
+  assert.deepEqual([board.tracker?.state, board.tracker?.message], ["failed", "Linear could not complete the request."]);
   assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9"]);
   assert.ok(!JSON.stringify(board).includes("fake-private-provider-detail"));
 });
@@ -232,8 +232,8 @@ test("empty, disconnected, unbound and failed boards each say what to do", async
   await import("./fixtures/app-runtime.js");
   const { liveNotice } = await import("../board/Board.js");
   const base = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [] };
-  const status = (state: NonNullable<Board["linear"]>["state"], syncedAt: number | null = null): Board =>
-    ({ ...base, linear: { state, message: "", syncedAt, project: null } });
+  const status = (state: NonNullable<Board["tracker"]>["state"], syncedAt: number | null = null): Board =>
+    ({ ...base, tracker: { state, message: "", syncedAt, project: null } });
   assert.equal(liveNotice({ projectId: null, board: null, failed: false }), "Choose a BB project to see its board.");
   assert.equal(liveNotice({ projectId: "p", board: null, failed: false }), "Reading the board.");
   assert.equal(liveNotice({ projectId: "p", board: null, failed: true }), "Couldn't load the board. Make sure BB is running, then try again.");

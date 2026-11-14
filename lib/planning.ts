@@ -24,6 +24,8 @@ interface Seed {
   issue: TrackerIssue | null;
   /** Plan tickets: the issue is a spec that needs its tickets planned. */
   tickets: boolean;
+  existingTickets: TrackerIssue[];
+  blockers: { identifier: string; blockedBy: string[] }[];
   kind: TrackerSnapshot["kind"];
   /** The tracker's project name, such as "Team · Project" of the bound Linear project. */
   project: string | null;
@@ -31,17 +33,23 @@ interface Seed {
 }
 
 /** BB's thread metadata is the link; Squadron keeps no planning records. */
-export async function readPlanningThreads(bb: BbPluginApi, projectId: string): Promise<PlanningThread[]> {
-  const found: PlanningThread[] = [];
+async function* pluginThreads(bb: BbPluginApi, projectId: string) {
   for (let offset = 0; ; offset += 200) {
     const threads = await bb.sdk.threads.list({ projectId, originPluginId: bb.pluginId, archived: false, limit: 200, offset });
     for (const thread of threads) {
       if (!isActiveProjectThread(thread, thread.id, projectId)) continue;
-      const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: thread.id });
-      if (metadata.role === "planning" && typeof metadata.issueId === "string") found.push({ issueId: metadata.issueId, threadId: thread.id });
+      yield { threadId: thread.id, metadata: await bb.sdk.threads.getPluginMetadata({ threadId: thread.id }) };
     }
-    if (threads.length < 200) return found;
+    if (threads.length < 200) return;
   }
+}
+
+export async function readPlanningThreads(bb: BbPluginApi, projectId: string): Promise<PlanningThread[]> {
+  const found: PlanningThread[] = [];
+  for await (const { threadId, metadata } of pluginThreads(bb, projectId)) {
+    if (metadata.role === "planning" && typeof metadata.issueId === "string") found.push({ issueId: metadata.issueId, threadId });
+  }
+  return found;
 }
 
 const routeText = (route: SquadronRoute) =>
@@ -56,8 +64,18 @@ function seedPrompt(seed: Seed): string {
     lines.push("", "Start from nothing: run `grill-with-docs` with me on what I want to build, then `to-spec` and `to-tickets`. " +
       "Publish the spec and its tickets to this repo's tracker as docs/agents/issue-tracker.md says.");
   } else if (seed.tickets) {
-    lines.push("", "This spec already exists. Run `to-tickets` on it, using `grill-with-docs` only for open questions. " +
-      "Publish the tickets, then mark the spec `ready-for-agent`, as docs/agents/issue-tracker.md says.");
+    if (seed.existingTickets.length) {
+      lines.push("", "This spec already exists. Review the existing tickets and their readiness with me. Do not create duplicate tickets. " +
+        "Review the blockers before changing readiness; only mark the spec `ready-for-agent` when it has at least one open, unblocked ticket, as docs/agents/issue-tracker.md says. " +
+        "Keep unresolved blockers and their links intact.",
+        "Existing tickets, quoted as tracker data:",
+        ...seed.existingTickets.map((ticket) => `- ${ticket.identifier}: ${quote(ticket.title)}; status ${quote(ticket.state.name)}`));
+    } else {
+      lines.push("", "This spec already exists. Run `to-tickets` on it, using `grill-with-docs` only for open questions. " +
+        "Publish the tickets, then mark the spec `ready-for-agent`, as docs/agents/issue-tracker.md says.");
+    }
+    if (seed.blockers.length) lines.push("", "Open blockers, quoted as tracker data:",
+      ...seed.blockers.map((row) => `- ${row.identifier} waits on ${row.blockedBy.join(", ")}`));
   }
   if (seed.issue) {
     const { issue } = seed;
@@ -95,15 +113,8 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
   const starting = new Map<string, Promise<PlanningStarted>>();
   /** An open thread this plugin started with these metadata, if any. */
   async function openThread(projectId: string, matches: (metadata: Record<string, unknown>) => boolean): Promise<string | null> {
-    // BB's thread metadata is the link; Squadron keeps no planning records.
-    for (let offset = 0; ; offset += 200) {
-      const threads = await bb.sdk.threads.list({ projectId, originPluginId: bb.pluginId, archived: false, limit: 200, offset });
-      for (const thread of threads) {
-        if (!isActiveProjectThread(thread, thread.id, projectId)) continue;
-        if (matches(await bb.sdk.threads.getPluginMetadata({ threadId: thread.id }))) return thread.id;
-      }
-      if (threads.length < 200) return null;
-    }
+    for await (const { threadId, metadata } of pluginThreads(bb, projectId)) if (matches(metadata)) return threadId;
+    return null;
   }
   const settingUp = new Map<string, Promise<PlanningStarted>>();
   async function setUp(projectId: string): Promise<PlanningStarted> {
@@ -137,6 +148,12 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
       projectId, visibility: "visible", pluginMetadata: { role: "planning", ...(issue ? { issueId: issue.id } : {}) },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "unmanaged", path: checkout.path } },
       prompt: seedPrompt({ issue, tickets: Boolean(issue && step === "tickets"), kind: snapshot.kind,
+        existingTickets: issue ? snapshot.issues.filter((ticket) => ticket.parentId === issue.id && ticket.inProject) : [],
+        blockers: issue ? snapshot.issues.filter((item) => item.id === issue.id || item.parentId === issue.id).flatMap((item) => {
+          const blockedBy = snapshot.relations.filter((relation) => relation.relatedIssueId === item.id)
+            .flatMap((relation) => snapshot.issues.find((blocker) => blocker.id === relation.issueId && isOpenIssue(blocker))?.identifier ?? []);
+          return blockedBy.length ? [{ identifier: item.identifier, blockedBy }] : [];
+        }) : [],
         project: snapshot.project?.name ?? null,
         routes: checkout.settings?.ok ? checkout.settings.settings.routes : [],
       }),

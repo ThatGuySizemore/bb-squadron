@@ -29,7 +29,7 @@ async function regularSkillFile(path: string): Promise<boolean> {
   } catch { return false; }
 }
 
-export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<boolean | { authenticated: boolean; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand) {
+export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<{ authenticated: boolean; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand) {
   return experimental_defineHostEntry({
     contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract, ...repositoryHostContract },
     handlers: {
@@ -48,8 +48,7 @@ export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath
       githubRead: (input, { signal }) => readGithub(input, signal, commands),
       githubLogin: async ({ checkoutPath }, { signal }) => {
         try {
-          const result = await (checkLogin ? checkLogin(signal, checkoutPath) : githubLogin(signal, checkoutPath, commands));
-          return typeof result === "boolean" ? { authenticated: result } : result;
+          return await (checkLogin ? checkLogin(signal, checkoutPath) : githubLogin(signal, checkoutPath, commands));
         }
         catch { return { authenticated: false }; }
       },

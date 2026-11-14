@@ -285,7 +285,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
   // The airstream's pace: the lane's working threads. A lane with none working is still.
-  const working = lane.tickets.filter((t) => t.state === "working").length;
+  const working = lane.workingThreads ?? 0;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
   // At side-panel width the line shows only the pegs being worked, with every ticket behind a disclosure.
   const narrow = useContext(PlacementContext) === "panel";
@@ -298,7 +298,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
       <span className="sq-progress-count sq-num">
         {done}/{lane.tickets.length} in branch
       </span>
-      {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working</span> : null}
+      {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working {working === 1 ? "thread" : "threads"}</span> : null}
     </div>
   );
   const others = lane.unmatchedThreads?.length ? (
@@ -478,11 +478,11 @@ export function NeedsYouStrip({ items, dispatch, setup, setUp, demo = false, act
   );
 }
 
-/** An issue's title, opening it in Linear when the row is real. */
+/** An issue's title, opening its tracker record when the row is real. */
 function IssueTitle({ title, url, className }: { title: string; url?: string; className: string }) {
   const open = useOpen();
   return url ? (
-    <button type="button" className={`${className} sq-issue-link`} title="Open in Linear" onClick={() => open.external(url, title)}>
+    <button type="button" className={`${className} sq-issue-link`} title="Open the issue" onClick={() => open.external(url, title)}>
       {title}
     </button>
   ) : (
@@ -618,7 +618,7 @@ function landedWhen(at: number | undefined, now: number): string | null {
 
 function LandedRow({ lane, fresh }: { lane: Lane; fresh: boolean }) {
   const when = landedWhen(lane.landedAt, Date.now());
-  const proof = lane.pr ? `PR #${lane.pr.number} merged` : `${lane.branch} merged`;
+  const proof = lane.pr?.state === "merged" ? `PR #${lane.pr.number} merged` : "Lane landed";
   return (
     <li className="sq-row sq-landed-row" data-fresh={fresh}>
       <Plate id={lane.specId} landed />
@@ -708,18 +708,18 @@ export interface TrackerInfo {
 }
 
 function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerInfo; now: number }) {
-  const linear = board.linear;
-  const kind = tracker ? tracker.kind : linear ? "linear" : undefined;
+  const status = board.tracker;
+  const kind = tracker ? tracker.kind : status?.kind !== undefined ? status.kind : status ? "linear" : undefined;
   if (kind === undefined) return null;
   if (kind === "linear") {
-    if (!linear || linear.state === "disconnected" || linear.state === "unbound") return null;
-    const age = linear.syncedAt === null ? null : Math.max(0, Math.round((now - linear.syncedAt) / 60_000));
+    if (!status || status.state === "disconnected" || status.state === "unbound") return null;
+    const age = status.syncedAt === null ? null : Math.max(0, Math.round((now - status.syncedAt) / 60_000));
     const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
     return (
-      <p className="sq-trackerline sq-linear" data-state={linear.state} role="status" aria-live="polite">
+      <p className="sq-trackerline sq-linear" data-state={status.state} role="status" aria-live="polite">
         <span className="sq-kind">Linear</span>
-        {linear.project ? <strong className="sq-linear-project">{linear.project}</strong> : null}
-        <span>{linear.state === "current" ? read : linear.state === "failed" ? `${linear.message} ${read}` : linear.message}</span>
+        {status.project ? <strong className="sq-linear-project">{status.project}</strong> : null}
+        <span>{status.state === "current" ? read : status.state === "failed" ? `${status.message} ${read}` : status.message}</span>
       </p>
     );
   }
@@ -825,13 +825,14 @@ interface BoardViewProps {
   tracker?: TrackerInfo;
   /** Lanes flying across every project, for the formation mark; null while unknown. */
   fleet?: number | null;
+  fleetLabel?: string;
   footer?: ReactNode;
   /** The full page, or a thread's side panel: the comp's narrow layout, with thread links opening in the main view. */
   placement?: Placement;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, fleetLabel, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -873,7 +874,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             {demo ? (
               <FormationMark flying={flying.length} label={`${flying.length} of ${board.laneCapacity} lanes flying`} />
             ) : fleet !== null ? (
-              <FormationMark flying={fleet} label={`${fleet} ${fleet === 1 ? "lane" : "lanes"} flying across your projects`} />
+              <FormationMark flying={fleet} label={fleetLabel ?? `${fleet} ${fleet === 1 ? "lane" : "lanes"} flying across your projects`} />
             ) : null}
             <h1>Squadron</h1>
           </div>
@@ -1014,9 +1015,14 @@ function DemoBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     const id = window.setInterval(() => send({ type: "tick" }), sim.speed === 3 ? 700 : 2100);
     return () => window.clearInterval(id);
   }, [sim.playing, sim.speed]);
+  // The labelled simulation has synthetic Lead/worker threads instead of BB thread records.
+  const board = { ...sim.board, lanes: sim.board.lanes.map((lane) => ({ ...lane,
+    workingThreads: lane.state === "stopped" || lane.state === "landed" ? 0
+      : 1 + lane.tickets.filter((ticket) => ticket.state === "working" || ticket.state === "review").length,
+  })) };
   return (
     <BoardView
-      board={sim.board}
+      board={board}
       demo
       modeSwitch={modeSwitch}
       dispatch={(action) => send({ type: "board", action })}
@@ -1045,10 +1051,13 @@ export function liveNotice(state: { projectId: string | null; board: Board | nul
   if (!state.projectId) return "Choose a BB project to see its board.";
   if (state.failed) return "Couldn't load the board. Make sure BB is running, then try again.";
   if (!state.board) return "Reading the board.";
-  const linear = state.board.linear?.state;
-  if (linear === "disconnected") return "Connect Linear to see this project's issues.";
-  if (linear === "unbound") return "Choose this project's Linear team and project above.";
-  if (linear === "catching-up" && state.board.linear?.syncedAt === null) return "Reading this project's issues from Linear.";
+  const status = state.board.tracker?.state;
+  if (status === "disconnected") return "Connect Linear to see this project's issues.";
+  if (status === "unbound") return "Choose this project's Linear team and project above.";
+  if (status === "catching-up" && state.board.tracker?.syncedAt === null) {
+    const kind = state.board.tracker.kind;
+    return kind ? `Reading this project's issues from ${trackerName(kind)}.` : "Reading this project's issues from Linear.";
+  }
   return null;
 }
 
@@ -1127,13 +1136,8 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const [picked, setPicked] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerId = useId();
-  // Every project's counts, read once when the page opens and again whenever the picker opens, for the formation mark.
+  // Other projects' counts become available only when the picker opens.
   const [counts, setCounts] = useState<ProjectCounts | null>(null);
-  useEffect(() => {
-    let current = true;
-    rpc.call("board.projectCounts", null).then((next) => { if (current) setCounts(next); }).catch(() => undefined);
-    return () => { current = false; };
-  }, [rpc]);
   // A new route context replaces an earlier pick in this page.
   useEffect(() => { setPicked(null); }, [context]);
   const projectId = currentProject({ picked, context, lastPick: listed?.lastPick ?? null });
@@ -1253,14 +1257,17 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const notice = liveNotice({ projectId, board, failed });
   const projectName = listed?.projects.find((item) => item.id === projectId)?.name ?? null;
   const row = counts?.projects.find((item) => item.id === projectId);
+  const trackerKind = board?.tracker?.kind !== undefined ? board.tracker.kind : row?.tracker;
   const shownCounts = board ? { ready: board.ready.length, flying: board.lanes.filter((lane) => lane.state !== "landed").length } : null;
   return (
     <BoardView
       projectId={projectId}
-      tracker={row ? { kind: row.tracker, note: row.note } : undefined}
-      projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(row ? row.tracker : undefined, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
+      tracker={board?.tracker?.kind !== undefined ? { kind: board.tracker.kind, note: board.tracker.message } : row ? { kind: row.tracker, note: row.note } : undefined}
+      projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(trackerKind, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
       projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} onCounts={setCounts} /> : null}
       fleet={board ? fleetFlying(counts, projectId, board.lanes.filter((lane) => lane.state !== "landed").length) : null}
+      fleetLabel={counts ? "Known lanes flying. The shown project is live; other available counts are from the last project-picker read."
+        : "Lanes flying in this project. Open the project picker to include other projects."}
       onSetUp={() => void setUp()}
       settingUp={settingUp}
       diagnostic={diagnostic}
@@ -1282,7 +1289,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
           {failed ? <> <Btn onClick={() => void load()}>Try again</Btn></> : null}
         </>
       ) : undefined}
-      setup={board?.linear?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
+      setup={board?.tracker?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
     />
   );
 }

@@ -225,14 +225,14 @@ test("disconnected, unbound and failed reads say what happened without asking fo
   const disconnected = deriveBoard(input(snapshot([issue("FIX-4")], [], { syncedAt: null }), {
     connection: { status: "disconnected", message: "Connect Linear in Squadron settings." },
   }));
-  assert.deepEqual([disconnected.board.linear?.state, disconnected.board.linear?.message],
+  assert.deepEqual([disconnected.board.tracker?.state, disconnected.board.tracker?.message],
     ["disconnected", "Connect Linear in Squadron settings."]);
 
   const unbound = deriveBoard(input(snapshot([], [], { binding: null, syncedAt: null })));
-  assert.deepEqual([unbound.board.linear?.state, unbound.board.linear?.project], ["unbound", null]);
+  assert.deepEqual([unbound.board.tracker?.state, unbound.board.tracker?.project], ["unbound", null]);
 
   const failed = deriveBoard(input(snapshot([issue("FIX-4")], [], { error: "Linear is unavailable. Try again shortly." })));
-  assert.deepEqual([failed.board.linear?.state, failed.board.linear?.message],
+  assert.deepEqual([failed.board.tracker?.state, failed.board.tracker?.message],
     ["failed", "Linear is unavailable. Try again shortly."]);
   assert.deepEqual(failed.board.openIssues.map((row) => row.id), ["FIX-4"], "the last good copy stays on the board");
 });

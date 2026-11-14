@@ -1,6 +1,6 @@
 # Linear is the record; the plugin retains links and delivery state
 
-Status: partly superseded by ADR-0006. Linear stays the record; the plugin keeps only bindings and settings.
+Status: partly superseded by ADR-0006 and SIZE-947. The detected Tracker is the record; the plugin keeps only bindings, settings and the remembered project pick.
 
 On 13 Nov 2026 we decided Linear holds every delivered status, comment and blocker. The plugin's database retains which thread, worktree, branch and PR belong to which issue, and the live state of each run. The Helper can rebuild links from thread metadata and branch names on start. This does not make all local state disposable.
 
@@ -18,3 +18,7 @@ Spec A also requires persistent state that a Linear catch-up cannot rebuild:
 - Receipts retain pending, blocked and delivered results and the minimum delivery evidence needed for dedupe and recovery. A pending receipt does not establish a change in Linear.
 
 These are the state required to deliver and prove a write, not a second tracker or custody ledger. Linear remains authoritative for delivered work. The board derives its rows and Needs you from the mirror and delivery health rather than storing another set of decisions. See [Linear writes](../linear-outbox.md) for the outbox, grants, receipts and recovery boundaries.
+
+## Connect clarification
+
+SIZE-947 explicitly replaces this ADR's Linear-only record with each repo's detected planning Tracker: Linear, GitHub Issues or Local markdown. For Local markdown, the main checkout supplies Open issues, Shaping and Ready; a Flying lane reads ticket Status lines from its integration branch. This contradicts the original Linear-only decision above. Branch commits supply file content and merge evidence, never inferred ticket status. The plugin writes to no tracker and stores no lane state.

@@ -35,5 +35,14 @@ export function detectTracker(issueTrackerMarkdown: string | null, settingsMarkd
   ];
   const candidates = declarations.filter(([, declaration]) => declaration.test(text)).map(([kind]) => kind);
   if (candidates.length === 1) return { kind: candidates[0], reason: `docs/agents/issue-tracker.md declares ${trackerName(candidates[0])} as the issue tracker.` };
+  if (candidates.length === 0) {
+    const mentions: [TrackerKind, RegExp][] = [
+      ["local-markdown", /\.scratch\//i],
+      ["github", /\bgh\s+issue\b|\bGitHub\b/i],
+      ["linear", /\bLinear\b/i],
+    ];
+    const found = mentions.filter(([, mention]) => mention.test(text)).map(([kind]) => kind);
+    if (found.length === 1) return { kind: found[0], reason: `docs/agents/issue-tracker.md mentions only ${trackerName(found[0])} as a tracker.` };
+  }
   return { kind: null, reason: "Couldn't determine the tracker from docs/agents/issue-tracker.md. Set ## Tracker in docs/agents/squadron.md to Linear, GitHub or Local markdown." };
 }

@@ -104,6 +104,19 @@ test("Start uses the first matching spec label rather than a ticket's route", as
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel], ["claude-code", "claude-opus-5-5", "high"]);
 });
 
+test("a ready-marked spec with open planning is Shaping in the board and picker and cannot Start through RPC", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.shaping.map((row) => row.id), ["FIX-5"]);
+  assert.deepEqual(board.ready.map((row) => row.id), ["FIX-1"]);
+  const counts = await harness.behavior.callRpc("board.projectCounts", null) as { projects: { ready: number }[] };
+  assert.equal(counts.projects[0].ready, 1);
+  await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), /isn't a ready spec/);
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 1, "only the planning thread was spawned");
+});
+
 test("blocked specs and failing fresh Doctor checks refuse Start without spawning", async (t) => {
   const { harness } = await setup(t);
   await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-1" }), /Waits on OUT-10/);
@@ -141,7 +154,7 @@ test("reload and fresh plugin storage reconstruct Flying from BB metadata, witho
   t.after(() => fresh.harness.lifecycle.dispose());
   await plugin(fresh.bb);
   const unbound = await fresh.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(unbound.linear?.state, "unbound", "wiping plugin storage loses the binding");
+  assert.equal(unbound.tracker?.state, "unbound", "wiping plugin storage loses the binding");
   await fresh.harness.behavior.callRpc("linear.bind", binding);
   const restored = await fresh.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(restored.lanes, board.lanes);

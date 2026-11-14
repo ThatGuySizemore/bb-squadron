@@ -14,7 +14,7 @@ test("Linear data reaches the board through the tracker snapshot with closed and
   assert.equal(tracker.kind, "linear");
   assert.equal(tracker.issues.find((row) => row.id === "fix-8")?.inProject, true);
   const { board } = deriveBoard({ snapshot: tracker, connection: connected, settings, now: SYNCED_AT });
-  assert.equal(board.linear?.project, "Fixture team · Fixture project");
+  assert.equal(board.tracker?.project, "Fixture team · Fixture project");
   // Its only ticket waits on the open outside blocker, not the closed one, so the spec is Shaping.
   assert.deepEqual(board.ready, []);
   assert.equal(board.shaping[0].ticketCount, 1);

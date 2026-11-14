@@ -12,7 +12,7 @@ Squadron reads the planning tracker from `docs/agents/issue-tracker.md`: Linear,
 Local markdown
 ```
 
-The entire section value must be `Linear`, `GitHub` or `Local markdown`. The override takes precedence over `issue-tracker.md`; omit the section to use detection. An invalid value leaves the tracker undetermined and Doctor explains how to fix it.
+The entire section value must be `Linear`, `GitHub` or `Local markdown`, matched without regard to case. `local-markdown` is also accepted. The override takes precedence over `issue-tracker.md`; omit the section to use detection. An invalid value leaves the tracker undetermined and Doctor explains how to fix it.
 
 Only Linear projects need a Linear connection and binding. GitHub reads issues through `gh` under the owner's existing login. Local markdown reads the repo's `.scratch/` files. Squadron's code never writes to a tracker; agents follow the repo's `issue-tracker.md` when publishing work.
 

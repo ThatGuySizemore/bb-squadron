@@ -59,21 +59,20 @@ test("non-Linear board and Doctor RPCs use the declared tracker without requesti
     } });
     try {
       await plugin(bb);
-      const detected = await harness.behavior.callRpc("tracker.detect", { bbProjectId: "project" }) as { kind: string; reason: string };
-      assert.equal(detected.kind, name === "local" ? "local-markdown" : "github");
       const board = await harness.behavior.callRpc("board", { projectId: "project" }) as Board;
+      assert.match(board.doctor?.checks.find((check) => check.id === "tracker")?.message ?? "", name === "local" ? /Local markdown/i : /GitHub/);
       assert.equal(board.doctor?.checks.some((check) => check.id === "linear"), false);
       assert.equal(board.doctor?.checks.find((check) => check.id === "settings")?.status, "pass");
       assert.match(board.doctor?.checks.find((check) => check.id === "tracker")?.message ?? "", /issue-tracker\.md/);
-      assert.notEqual(board.linear?.state, "disconnected");
-      assert.notEqual(board.linear?.state, "unbound");
+      assert.notEqual(board.tracker?.state, "disconnected");
+      assert.notEqual(board.tracker?.state, "unbound");
       assert.equal(await harness.behavior.callRpc("linear.suggestBinding", { bbProjectId: "project" }), null);
     } finally { await harness.lifecycle.dispose(); }
   }
   assert.equal(fetch.mock.calls.length, 0);
 });
 
-test("recorded Linear assignees, parent links and URLs are available through tracker.snapshot", async (t) => {
+test("recorded Linear assignees, parent links and URLs are available through the tracker reader", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" }, sdk: {
     threads: { list: async () => [] },
     projects: { get: async () => ({ id: "proj-one", name: "Example", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
@@ -85,10 +84,10 @@ test("recorded Linear assignees, parent links and URLs are available through tra
     nodes: workspaceIssues.data.issues.nodes.map((node) => ({ ...node, assignee: { id: "agent", name: "Fixture agent" } })),
   } } }) });
   const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: recording.fetch }));
-  registerTracker(bb, mirror);
+  const tracker = registerTracker(bb, mirror);
   await mirror.bind(binding);
   await mirror.sync("proj-one");
-  const snap = await harness.behavior.callRpc("tracker.snapshot", { bbProjectId: "proj-one" }) as TrackerSnapshot;
+  const snap: TrackerSnapshot = await tracker.getSnapshot("proj-one");
   const ticket = snap.issues.find((issue) => issue.id === "fix-2")!;
   assert.deepEqual(ticket.assignees, [{ id: "agent", name: "Fixture agent" }]);
   assert.equal(ticket.parentId, "fix-1");

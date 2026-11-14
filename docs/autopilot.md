@@ -12,9 +12,9 @@ A returning Start creates a new Lead in a new managed worktree based on the defa
 
 ## Functions for follow-on tickets
 
-`registerAutopilot` in `lib/autopilot.ts` returns `get`, `set`, `update`, `pause`, `resume`, `observe`, `isOn` and `enabledProjectIds`. `update` serializes read/modify/write per project and validates the resulting state. Public state contains `status` (`off`, `on`, `paused`), `laneLimit`, `consecutiveStops` and `pauseReason`. `resume` clears the reason and consecutive-stop count. Private outcome markers prevent repeated counting, as described below.
+`registerAutopilot` in `lib/autopilot.ts` returns `get`, `set`, `update`, `pause`, `resume`, `observe`, `isOn` and `enabledProjectIds`. `update` serializes read/modify/write per project and validates the resulting state. Public state contains `status` (`off`, `on`, `paused`), `laneLimit`, `consecutiveStops` and `pauseReason`. `resume` refuses unless paused, then clears the reason, failure log and consecutive-stop count. Private outcome markers prevent repeated counting, as described below.
 
-The board calls `autopilot.get` and the client-only `autopilot.set` RPC. Trusted server controls are reusable by the later CLI and brakes, which must establish their own owner-action checks. They are not exposed as agent tools.
+The board calls `autopilot.get` and the client-only `autopilot.set` RPC. The CLI and brakes reuse the trusted server controls. Board RPCs remain client-only; no agent RPC tools are added. The CLI follows SQD-196's owner/Helper contract: the Helper acts only on the owner's own words, and neither a command nor a notification grants approval.
 
 `registerLaneStart` returns `start(projectId, specId, startedBy, allowed?)`. Both the board and watcher use it. It deduplicates concurrent starts of the same spec and accepts a final guard checked immediately before spawning. New Lead metadata includes `startedBy: owner | autopilot`, alongside `role` and `specId`.
 
@@ -34,7 +34,7 @@ Before scheduling, the board observes derived outcomes for Squadron lanes while 
 
 `observe(projectId, board)` shares the controls' serialized write queue. Private `observedOutcomes` markers, keyed by Lead thread ID, are saved atomically with the count under the existing per-project KV key. They aren't lane state or a public RPC field. Existing settings migrate with an empty marker map. Reads, reloads and Resume retain these markers; the same historical stopped lane counts once, and a later landing resets once. New outcomes use `outcomeAt` (merge time or latest lane-thread update) then Lead ID for deterministic ordering within one read.
 
-The client-only `autopilot.resume` RPC uses the trusted `resume(projectId)` control, clearing the reason and stop count. `needsYou(board)` emits one `autopilot-paused` item with key `autopilot-paused`, no spec or thread target, and the pause reason as text. The board's Resume calls that RPC and refreshes. SQD-220 connects the CLI to trusted controls; SQD-196's notifier consumes the Needs you item after Lead reconciles the branches. Neither is implemented here.
+The client-only `autopilot.resume` RPC uses the trusted `resume(projectId)` control, clearing the reason and stop count. `needsYou(board)` emits one `autopilot-paused` item with key `autopilot-paused`, no spec or thread target, and the pause reason as text. The board's Resume calls that RPC and refreshes. The CLI uses the same trusted Resume control and refusal. SQD-196's notifier consumes the same Needs you item.
 
 [ADR-0011](adr/0011-autopilot-brakes-and-local-lifetime.md) records the brakes and local BB lifetime.
 
@@ -45,3 +45,9 @@ While Autopilot is On or Paused, any merged lane PR triggers the project's quick
 The host retains stdout and stderr in `quick-check.log` under its own temporary root, removes its scratch worktree and repository, and returns the log's host path. Failure pauses with `Main fails its quick check`; Needs you links the log beside Resume. Passing checks clear neither another pause nor the stop count. A host/setup read that cannot complete blocks scheduling rather than treating unknown main as passing.
 
 Private `checkedMerges` receipts, keyed by PR URL, share the controls' serialized queue and KV key with the stop markers. The queue awaits each host result and saves the receipt together with any pause, so concurrent refreshes and reloads don't recheck a completed merge. Resume retains receipts and clears the failure log. An interrupted check without a saved result is retried. Paused projects remain watched; Off projects run no check. Outside merges also affect shared main and trigger its check without changing their threads or the stop brake. Local-only lanes don't trigger the remote-main check.
+
+## Command line (SQD-220)
+
+`bb squadron autopilot on|off|pause|resume|lanes <n>` uses the shared controls. Each command accepts `--project <id-or-unique-name>`, otherwise uses the caller's project, or the only project when unambiguous. Success and action refusals print one short line; refusals exit nonzero.
+
+Parent SQD-197 story 23 explicitly includes Pause, although its implementation command list omits it. `pause` calls the existing shared pause control with `Paused at your request`. It preserves the stop count, leaves flying lanes alone, and produces the existing Autopilot-paused Needs you item for the Helper. `resume` refuses from Off or On with `Autopilot isn't paused.` and resets the count only from Paused. `lanes` accepts whole counts from 1 to 10 without changing the current pause or count. On and Off retain the board switch's existing semantics.

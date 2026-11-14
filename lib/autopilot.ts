@@ -50,7 +50,10 @@ export async function registerAutopilot(bb: BbPluginApi) {
     ...state, ...patch, ...(patch.status ? { pauseReason: null, pauseLog: undefined } : {}),
   }));
   const pause = (projectId: string, reason: string) => update(projectId, (state) => ({ ...state, status: "paused", pauseReason: reason }));
-  const resume = (projectId: string) => update(projectId, (state) => ({ ...state, status: "on", pauseReason: null, ...(state.pauseLog ? { pauseLog: undefined } : {}), consecutiveStops: 0 }));
+  const resume = (projectId: string) => update(projectId, (state) => {
+    if (state.status !== "paused") throw new Error("Autopilot isn't paused.");
+    return { ...state, status: "on", pauseReason: null, pauseLog: undefined, consecutiveStops: 0 };
+  });
   /** Hold the same project queue through the host result, before a scheduler can see a free slot. */
   const checkMain = (projectId: string, merges: { number: number; url: string }[], check: (prNumber: number) => Promise<z.infer<typeof mainCheckResultSchema> & { hostId: string }>) =>
     changeStored(projectId, async (state) => {

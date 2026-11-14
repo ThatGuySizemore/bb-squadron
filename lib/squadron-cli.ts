@@ -3,12 +3,13 @@ import type { LaneActions } from "./lane-start.js";
 import type { Board } from "./board-model.js";
 import { helperCommands } from "./helper-cli.js";
 import type { registerHelper } from "./helper.js";
+import type { AutopilotControls } from "./autopilot.js";
 import { oneLine, openNeeds, needLine, boardLink, unreadableProject as unreadable } from "./project-observation.js";
 
 const incomplete = (board: Board | null) => !board || board.tracker?.state !== "current";
 
-/** One command table for board reads, shared lane actions and Helper selection. */
-export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>) {
+/** Board reads, shared lane and Autopilot controls, and Helper selection. */
+export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>, autopilot: AutopilotControls) {
   const options = { project: { type: "string", description: "Narrow to a project ID or unique name; otherwise show all projects." } } as const;
   async function projects(selected?: string) {
     const all = await bb.sdk.projects.list();
@@ -56,10 +57,52 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
       },
     });
   }
+  function autopilotCommand(action: "on" | "off" | "lanes" | "resume" | "pause") {
+    return cliCommand({
+      summary: {
+        on: "Turn Autopilot on at the owner's request.",
+        off: "Turn Autopilot off at the owner's request.",
+        pause: "Pause Autopilot at the owner's request.",
+        resume: "Resume paused Autopilot at the owner's request.",
+        lanes: "Set Autopilot's lane limit at the owner's request.",
+      }[action],
+      options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." } },
+      positionals: action === "lanes" ? [{ name: "count", description: "Whole lane count from 1 to 10." }] : [],
+      async run({ options, positionals }, context) {
+        try {
+          const projectId = await actionProject(options.project, context.projectId);
+          if (action === "pause") {
+            await autopilot.pause(projectId, "Paused at your request");
+            return { exitCode: 0, stdout: "Autopilot paused.\n" };
+          }
+          if (action === "resume") {
+            await autopilot.resume(projectId);
+            return { exitCode: 0, stdout: "Autopilot resumed.\n" };
+          }
+          if (action === "lanes") {
+            const laneLimit = Number(positionals.count);
+            if (!Number.isInteger(laneLimit) || laneLimit < 1 || laneLimit > 10)
+              throw new Error("Choose a whole lane count from 1 to 10.");
+            await autopilot.set(projectId, { laneLimit });
+            return { exitCode: 0, stdout: `Autopilot lane limit: ${laneLimit}.\n` };
+          }
+          await autopilot.set(projectId, { status: action });
+          return { exitCode: 0, stdout: `Autopilot ${action}.\n` };
+        } catch (error) {
+          return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
+        }
+      },
+    });
+  }
   bb.cli.register(defineCli({
     name: "squadron", summary: "See your projects and act on their specs.",
     commands: {
       ...helperCommands(helper),
+      "autopilot on": autopilotCommand("on"),
+      "autopilot off": autopilotCommand("off"),
+      "autopilot lanes": autopilotCommand("lanes"),
+      "autopilot resume": autopilotCommand("resume"),
+      "autopilot pause": autopilotCommand("pause"),
       start: actionCommand("start", "Start a spec's Lead."),
       stop: actionCommand("stop", "Ask a spec's Lead to wind down."),
       resume: actionCommand("resume", "Ask a spec's Lead to carry on."),

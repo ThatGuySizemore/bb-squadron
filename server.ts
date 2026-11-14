@@ -35,6 +35,6 @@ export default async function plugin(bb: BbPluginApi) {
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   summary.register(board.read);
   registerPlanning(bb, { tracker, doctor: doctor.read });
-  registerSquadronCli(bb, board, lanes, helper);
+  registerSquadronCli(bb, board, lanes, helper, autopilot);
   bb.log.info("loaded");
 }

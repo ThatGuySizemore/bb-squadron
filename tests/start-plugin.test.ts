@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
 import type { Board } from "../lib/board-model.js";
-import { binding, workspace, workspaceIssues } from "./fixtures/board-workspace.js";
+import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 const skillNames = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
@@ -62,7 +62,7 @@ async function setup(t: import("node:test").TestContext, issues?: () => Response
   const { bb, harness, native } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
-  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   return { harness, native };
 }
 
@@ -143,7 +143,7 @@ test("reload and fresh plugin storage reconstruct Flying from BB metadata, witho
   native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, title: "Renamed Lead" });
   const { harness: reloaded } = await first.lifecycle.reload(plugin);
   t.after(() => reloaded.lifecycle.dispose());
-  await reloaded.behavior.callRpc("linear.bind", binding);
+  await reloaded.behavior.callRpc("board", { projectId: "proj-one" });
   const board = await reloaded.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.lanes[0].leadThreadId, "thr_lead_1");
   assert.deepEqual(await reloaded.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
@@ -153,10 +153,9 @@ test("reload and fresh plugin storage reconstruct Flying from BB metadata, witho
   const fresh = host(native);
   t.after(() => fresh.harness.lifecycle.dispose());
   await plugin(fresh.bb);
-  const unbound = await fresh.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(unbound.tracker?.state, "unbound", "wiping plugin storage loses the binding");
-  await fresh.harness.behavior.callRpc("linear.bind", binding);
+  // The Scope lives in the repo, so empty plugin storage loses nothing.
   const restored = await fresh.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(restored.tracker?.state, "current");
   assert.deepEqual(restored.lanes, board.lanes);
   assert.deepEqual(await fresh.harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
   assert.equal(fresh.harness.inspection.sdk.callsTo("threads.spawn").length, 0);
@@ -256,7 +255,7 @@ test("Stop and Resume send their fixed message to the spec's own Lead and store 
   const { bb, harness, native } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
-  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   // Another spec's Lead must not receive this lane's messages.
   native.threads.set("thr_other", makeThreadResponse({ id: "thr_other", projectId: "proj-one", providerId: "codex", status: "active" }));
   native.metadata.set("thr_other", { role: "lead", specId: "fix-1" });
@@ -393,7 +392,7 @@ test("a lane whose Lead closed its spec and tickets after the merge stays on the
   const { bb, harness } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
-  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
     number: 7, title: "FIX-5", state: "merged", url: "https://github.com/fixture/repo/pull/7", baseRefName: "main",
@@ -404,7 +403,12 @@ test("a lane whose Lead closed its spec and tickets after the merge stays on the
   } } }));
 
   closed = true;
-  await harness.behavior.callRpc("linear.bind", binding);
+  // The poller reads the shown project again on its next pass.
+  const changes = () => harness.inspection.realtimeSignals.filter((signal) => signal.channel === "linear-mirror-changed").length;
+  const before = changes();
+  const poll = harness.behavior.runService("linear-reader");
+  t.after(() => poll.controller.abort());
+  for (let i = 0; i < 200 && changes() === before; i++) await new Promise((resolve) => setTimeout(resolve, 5));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.state, lane.tickets.map((ticket) => [ticket.id, ticket.state])]),
     [["FIX-5", "landed", [["FIX-6", "done"]]]]);

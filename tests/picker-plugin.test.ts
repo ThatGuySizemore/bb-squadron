@@ -12,7 +12,7 @@ import { registerBoard } from "../lib/board-service.js";
 import { registerTracker } from "../lib/tracker-service.js";
 import { readLeadThreads } from "../lib/lead-threads.js";
 import type { TrackerReader, TrackerSnapshot } from "../lib/tracker-contract.js";
-import { binding, workspace } from "./fixtures/board-workspace.js";
+import { workspace } from "./fixtures/board-workspace.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 const projects = [
@@ -94,8 +94,8 @@ test("the picker lists BB Squadron, WordWell and bb-bot, each with its tracker k
   const { bb, harness } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   compose(bb);
-  await harness.behavior.callRpc("linear.bind", { ...binding, bbProjectId: "proj-squadron" });
-  await harness.behavior.callRpc("linear.bind", { ...binding, bbProjectId: "proj-wordwell" });
+  await harness.behavior.callRpc("board", { projectId: "proj-squadron" });
+  await harness.behavior.callRpc("board", { projectId: "proj-wordwell" });
 
   const listed = await harness.behavior.callRpc("board.projects", null) as Listed;
   assert.deepEqual(listed.projects, [
@@ -111,15 +111,14 @@ test("the picker lists BB Squadron, WordWell and bb-bot, each with its tracker k
 });
 
 test("a project whose tracker can't be read yet still lists, with its kind and a reason instead of counts", async (t) => {
-  const linear = workspace();
-  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const fetch = mock.method(globalThis, "fetch", async () => { throw new Error("offline"); });
   const { bb, harness } = host();
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   const counts = await harness.behavior.callRpc("board.projectCounts", null) as Counts;
   const wordwell = counts.projects.find((row) => row.id === "proj-wordwell");
-  assert.deepEqual([wordwell?.tracker, wordwell?.ready, wordwell?.flying], ["linear", null, null], "an unbound Linear project has no counts");
-  assert.ok(wordwell?.note, "and says why");
+  assert.deepEqual([wordwell?.tracker, wordwell?.ready, wordwell?.flying], ["linear", null, null], "an unreadable Linear project has no counts");
+  assert.equal(wordwell?.note, "Linear is unavailable. Try again shortly.", "and says why");
   assert.equal(counts.projects.find((row) => row.id === "proj-bbbot")?.tracker, "local-markdown");
 });
 
@@ -140,8 +139,8 @@ test("the Linear poller reads only the project a board is showing", async (t) =>
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const first = host();
   await plugin(first.bb);
-  await first.harness.behavior.callRpc("linear.bind", { ...binding, bbProjectId: "proj-squadron" });
-  await first.harness.behavior.callRpc("linear.bind", { ...binding, bbProjectId: "proj-wordwell" });
+  await first.harness.behavior.callRpc("board", { projectId: "proj-squadron" });
+  await first.harness.behavior.callRpc("board", { projectId: "proj-wordwell" });
   const { harness } = await first.harness.lifecycle.reload((api) => plugin(api));
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   const synced = async (id: string) => (await harness.behavior.callRpc("linear.snapshot", { bbProjectId: id }) as { syncedAt: number | null }).syncedAt;

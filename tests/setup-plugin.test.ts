@@ -6,10 +6,10 @@ import { readFileSync } from "node:fs";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import plugin from "../server.js";
-import type { Board } from "../lib/board-model.js";
-import { parseSquadronSettings } from "../lib/squadron-settings.js";
+import { needsYou, type Board } from "../lib/board-model.js";
+import { parseSquadronSettings, SETTINGS_UNREADABLE } from "../lib/squadron-settings.js";
 import { DEFAULT_SQUADRON_TEMPLATE } from "../lib/squadron-template.js";
-import { binding, workspace } from "./fixtures/board-workspace.js";
+import { workspace } from "./fixtures/board-workspace.js";
 
 const skillNames = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
 const allSetupFiles = ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"];
@@ -65,20 +65,20 @@ async function setup(t: import("node:test").TestContext, options: { setupFiles: 
   const found = host(options);
   t.after(async () => { fetch.mock.restore(); await found.harness.lifecycle.dispose(); });
   await plugin(found.bb);
-  await found.harness.behavior.callRpc("linear.bind", binding);
+  await found.harness.behavior.callRpc("board", { projectId: "proj-one" });
   return found;
 }
 
-test("a project without squadron.md still shows its board, and Start explains what's missing", async (t) => {
+test("a Linear project without squadron.md has no Scope, so the board offers Set up instead of issues", async (t) => {
   const { harness, spawned } = await setup(t, { setupFiles: allSetupFiles });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(board.tracker?.state, "current");
-  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1", "FIX-5"], "Ready shows without project settings");
-  assert.deepEqual(board.openIssues.map((issue) => issue.id), ["FIX-9"]);
-  const reason = board.ready.find((spec) => spec.id === "FIX-5")?.startReason;
-  assert.match(reason ?? "", /docs\/agents\/squadron\.md/, "Start names the missing file");
-  assert.match(reason ?? "", /Set up/, "and the button that fixes it");
-  await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), (error: Error) => error.message === reason);
+  assert.equal(board.tracker?.state, "unscoped");
+  assert.equal(board.tracker?.message, SETTINGS_UNREADABLE);
+  assert.deepEqual([board.ready, board.openIssues], [[], []], "no Scope, no Linear issues");
+  assert.deepEqual(needsYou(board).filter((item) => item.kind === "setup").map((item) => [item.key, item.text]),
+    [["setup:settings", SETTINGS_UNREADABLE]], "one row, the one that carries the Set up button");
+  assert.equal(board.doctor?.configurationFiles.find((file) => file.id === "project-settings")?.exists, false, "so the Set up button shows");
+  await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }));
   assert.equal(spawned.length, 0, "no Lead starts");
 });
 

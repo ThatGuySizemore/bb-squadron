@@ -1,5 +1,10 @@
 # Squadron settings
 
+## Scope
+
+Team: FIX
+Project: Fixture project
+
 ## Quick check
 
 ```sh

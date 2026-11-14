@@ -214,7 +214,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     if (usesLinear && input.connection.status !== "connected") {
       startReason = input.connection.message;
     } else if (usesLinear && !project) {
-      startReason = "Choose this project's Linear team and project before Start.";
+      startReason = snapshot.error ?? "Wait for Linear to read this project's Scope.";
     } else if (snapshot.error || snapshot.syncedAt === null) {
       startReason = snapshot.error ?? `Wait for ${tracker} to finish reading this project's issues.`;
     } else if (doctorFix) {
@@ -239,7 +239,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     };
   }
   // Anything open that isn't a spec or one of its tickets waits here,
-  // so no issue in the bound project drops off the board.
+  // so no issue in the project's scope drops off the board.
   const under = (issue: TrackerIssue): string | undefined => {
     if (issue.parentId === null) return undefined;
     const parent = byId.get(issue.parentId);
@@ -258,8 +258,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   let message: string;
   if (usesLinear && input.connection.status !== "connected") {
     status = "disconnected"; message = input.connection.message;
-  } else if (usesLinear && !project) {
-    status = "unbound"; message = "Choose the Linear team and project for this BB project.";
+  } else if (usesLinear && !project && snapshot.error) {
+    // The Scope in docs/agents/squadron.md is missing or matches nothing; the error says which key.
+    status = "unscoped"; message = snapshot.error;
   } else if (snapshot.error) {
     // The mirror's own poller retries; the last good copy stays on the board.
     status = "failed"; message = snapshot.error;

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
-import { binding, workspace, workspaceIssues } from "./fixtures/board-workspace.js";
+import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { end, ready } from "./fixtures/linear-mirror.js";
 import type { Board } from "../lib/board-model.js";
 
@@ -70,7 +70,6 @@ async function setup(t: import("node:test").TestContext, issues?: () => Response
   const { bb, harness } = host(options);
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
-  if (!options.tracker) await harness.behavior.callRpc("linear.bind", binding);
   return { harness, linear };
 }
 
@@ -140,8 +139,7 @@ test("after a plugin reload, Plan finds the same renamed thread through BB metad
 
   const { harness } = await first.lifecycle.reload((api) => plugin(api));
   t.after(() => harness.lifecycle.dispose());
-  // Re-read the recorded Linear project after the in-memory snapshot was lost.
-  await harness.behavior.callRpc("linear.bind", binding);
+  // Plan re-reads the recorded Linear project after the in-memory snapshot was lost.
   const again = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" });
   assert.deepEqual(again, { threadId: "thr_plan_1" });
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);

@@ -41,3 +41,31 @@ test("machine Doctor checks setup and owner-file existence and rejects a symlink
     });
   } finally { await host.experimental_dispose(); }
 });
+
+test("machine Doctor finds Matt's skills that Codex enables as a plugin, as regular files in its newest cache", async () => {
+  const { mkdtemp, mkdir, writeFile, symlink, realpath } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await realpath(await mkdtemp(join(tmpdir(), "squadron-codex-")));
+  const codex = join(root, ".codex");
+  const cache = join(codex, "plugins/cache/mattpocock/mattpocock-skills");
+  const skill = async (version: string, path: string) => {
+    await mkdir(join(cache, version, "skills", path), { recursive: true });
+    await writeFile(join(cache, version, "skills", path, "SKILL.md"), "Skill");
+  };
+  await skill("1.3.2", "engineering/tdd");
+  await skill("1.3.2", "engineering/to-spec");
+  await skill("1.2.0", "engineering/code-review");
+  await mkdir(join(root, "elsewhere/grill-with-docs"), { recursive: true });
+  await writeFile(join(root, "elsewhere/grill-with-docs/SKILL.md"), "Copied skill");
+  await symlink(join(root, "elsewhere/grill-with-docs"), join(cache, "1.3.2/skills/engineering/grill-with-docs"), "dir");
+  await writeFile(join(codex, "config.toml"), '[plugins."mattpocock-skills@mattpocock"]\nenabled = true\n');
+  const names = ["grill-with-docs", "to-spec", "tdd", "code-review"];
+  const host = experimental_createHostEntryHarness(createDoctorHost(async () => ({ authenticated: true }), () => root, undefined, () => codex));
+  try {
+    assert.deepEqual(await host.experimental_call("codexMattSkills", { names }), { skills: ["to-spec", "tdd"] },
+      "symlinked and older-version skills don't count");
+    await writeFile(join(codex, "config.toml"), '[plugins."mattpocock-skills@mattpocock"]\nenabled = false\n');
+    assert.deepEqual(await host.experimental_call("codexMattSkills", { names }), { skills: [] }, "a disabled plugin doesn't count");
+  } finally { await host.experimental_dispose(); }
+});

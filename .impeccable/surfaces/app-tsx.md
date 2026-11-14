@@ -2,18 +2,18 @@
 version: 1
 slug: "app-tsx"
 primary_target: "app.tsx"
-related_targets: ["board/Board.tsx", "board/board.css", "board/live.css", "board/BindProject.tsx", "board/Doctor.tsx", "board/doctor.css", "board/ConnectionSettings.tsx", "board/connection.css"]
+related_targets: ["board/Board.tsx", "board/board.css", "board/Doctor.tsx", "board/doctor.css", "board/ConnectionSettings.tsx", "board/connection.css"]
 ---
 
 # Surface brief: Squadron board
 
 Scope: the Squadron nav page in BB (`app.tsx`, route `/plugins/squadron/board`). Visitor mode: Operate.
 
-Audience and job: the owner, glancing between other work. First answer: what needs me, then what is flying. Current live actions: connect and bind Linear, open an issue or planning thread, Plan an open issue, retry a blocked write and check Doctor. Start stays disabled with its reason in Spec A. The demo retains simulated Start / Stop / Resume / Merge controls.
+Audience and job: the owner, glancing between other work. First answer: what needs me, then what is flying. Current live actions: connect Linear, open an issue or planning thread, Plan an open issue, retry a blocked write and check Doctor. Start stays disabled with its reason in Spec A. The demo retains simulated Start / Stop / Resume / Merge controls.
 
-Content: the bound project's real open issues from the Linear mirror, grouped as Ready specs with their tickets' open blockers and Open issues with any parent context. Live is the default. The optional demo is synthetic and labelled "Synthetic data". The existing 3-10 tickets per spec, 0-3 flying lanes, 0-6 needs-you items and 0-30 open issues describe the demo, not live data limits.
+Content: the real open issues in the repo's Linear Scope (docs/agents/squadron.md) from the Linear mirror, grouped as Ready specs with their tickets' open blockers and Open issues with any parent context. Live is the default. The optional demo is synthetic and labelled "Synthetic data". The existing 3-10 tickets per spec, 0-3 flying lanes, 0-6 needs-you items and 0-30 open issues describe the demo, not live data limits.
 
-Live states: disconnected, unbound, catching up, current and failed. Setup and blocked writes join questions, stopped lanes and owner merges in Needs you. Linear status sits below the header; binding uses native selects. Issue-title links and receipts follow DESIGN.md's live-board controls. Doctor stays in the header and expands into a flat region after Needs you. Connection settings use the same tokens, native disclosure and Mono callback URL.
+Live states: disconnected, unscoped, catching up, current and failed. Setup and blocked writes join questions, stopped lanes and owner merges in Needs you. Linear status sits below the header; the scope is set in the repo, not on the board. Issue-title links and receipts follow DESIGN.md's live-board controls. Doctor stays in the header and expands into a flat region after Needs you. Connection settings use the same tokens, native disclosure and Mono callback URL.
 
 States: ticket — waiting (blocked), ready, working, needs you, in review, merged into branch, done, failed. Lane — ready, flying, stopped, PR open, waiting on owner merge, merged.
 

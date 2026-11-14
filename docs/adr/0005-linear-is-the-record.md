@@ -1,6 +1,6 @@
 # Linear is the record; the plugin retains links and delivery state
 
-Status: partly superseded by ADR-0006 and SIZE-947. The detected Tracker is the record; the plugin keeps only bindings, settings and the remembered project pick.
+Status: partly superseded by ADR-0006, ADR-0009 and SIZE-947. The detected Tracker is the record; the plugin keeps only settings and the remembered project pick, and the Linear scope lives in the repo (ADR-0009).
 
 On 13 Nov 2026 we decided Linear holds every delivered status, comment and blocker. The plugin's database retains which thread, worktree, branch and PR belong to which issue, and the live state of each run. The Helper can rebuild links from thread metadata and branch names on start. This does not make all local state disposable.
 

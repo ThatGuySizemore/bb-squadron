@@ -19,9 +19,18 @@ export interface SquadronSettings {
     lane: { ready: string; flying: string; inReview: string; landed: string };
     ticket: { waiting: string; working: string; inBranch: string; done: string };
   };
+  /** Which Linear issues the board reads. null for GitHub and Local markdown. */
+  scope: LinearScope | null;
 }
 
-export type SettingsSection = "Quick check" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping";
+/** A Linear Scope as written: names, keys, URLs or ids, resolved through Linear at read time. */
+export interface LinearScope { team?: string; project?: string; initiative?: string; label?: string; view?: string }
+export const SCOPE_KEYS = ["Team", "Project", "Initiative", "Label", "View"] as const;
+export type ScopeKey = typeof SCOPE_KEYS[number];
+export const SETTINGS_UNREADABLE = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
+export const SCOPE_MISSING = "Add the Scope section to docs/agents/squadron.md, naming at least one of Team, Project, Initiative, Label or View.";
+
+export type SettingsSection = "Quick check" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope";
 export interface SettingsIssue { section: SettingsSection; message: string }
 export type SettingsResult =
   | { ok: true; settings: SquadronSettings }
@@ -47,13 +56,32 @@ function table(body: string): string[][] {
     .slice(2);
 }
 
+/** The Linear Scope section: one `Key: value` per line. Other prose lines are ignored. */
+export function parseLinearScope(markdown: string): { ok: true; scope: LinearScope } | { ok: false; message: string } {
+  const body = sections(markdown).get("Scope");
+  if (body === undefined) return { ok: false, message: SCOPE_MISSING };
+  const scope: LinearScope = {};
+  for (const line of body.split("\n")) {
+    const match = /^\s*(?:[-*+]\s+)?([A-Za-z]+)\s*:(.*)$/.exec(line);
+    if (!match) continue;
+    const key = SCOPE_KEYS.find((name) => name.toLowerCase() === match[1].toLowerCase());
+    if (!key) return { ok: false, message: `Scope has an unknown key, ${match[1]}. Use Team, Project, Initiative, Label or View in docs/agents/squadron.md.` };
+    const field = key.toLowerCase() as keyof LinearScope;
+    if (scope[field] !== undefined) return { ok: false, message: `Scope sets ${key} twice. Set each key once in docs/agents/squadron.md.` };
+    const value = match[2].trim().replace(/^`(.*)`$/, "$1").trim();
+    if (!value) return { ok: false, message: `Scope ${key} has no value. Name it in docs/agents/squadron.md.` };
+    scope[field] = value;
+  }
+  return Object.keys(scope).length ? { ok: true, scope } : { ok: false, message: SCOPE_MISSING };
+}
+
 /** Read the repo-owned Markdown without executing its quick check. */
 export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind = detectTracker(null, markdown).kind ?? "linear"): SettingsResult {
   const parts = sections(markdown);
   const issues: SettingsIssue[] = [];
-  for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping"] as const) {
-    if (section === "Status mapping" && trackerKind !== "linear") continue;
-    if (!parts.has(section)) issues.push({ section, message: `Add the ${section} section to docs/agents/squadron.md.` });
+  for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping", "Scope"] as const) {
+    if ((section === "Status mapping" || section === "Scope") && trackerKind !== "linear") continue;
+    if (!parts.has(section)) issues.push({ section, message: section === "Scope" ? SCOPE_MISSING : `Add the ${section} section to docs/agents/squadron.md.` });
   }
   if (issues.length) return { ok: false, issues };
   const quickCheck = /(?:```|~~~)[^\n]*\n([\s\S]*?)(?:```|~~~)/.exec(parts.get("Quick check") ?? "")?.[1].trim() ?? "";
@@ -80,6 +108,7 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
         lane: { ready: "Todo", flying: "In Progress", inReview: "In Review", landed: "Done" },
         ticket: { waiting: "Todo", working: "In Progress", inBranch: "In Review", done: "Done" },
       },
+      scope: null,
   };
   if (!quickCheck) issues.push({ section: "Quick check", message: "Put the quick check command in a fenced code block under Quick check." });
   if (!stopList.length) issues.push({ section: "Stop list", message: "List the problems that stop a merge under Stop list." });
@@ -109,6 +138,11 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
         ticket: { waiting: names.get("Waiting")!, working: names.get("Working")!, inBranch: names.get("In branch")!, done: names.get("Done")! },
       };
     }
+  }
+  if (trackerKind === "linear") {
+    const scope = parseLinearScope(markdown);
+    if (scope.ok) settings.scope = scope.scope;
+    else issues.push({ section: "Scope", message: scope.message });
   }
   return issues.length ? { ok: false, issues } : { ok: true, settings };
 }

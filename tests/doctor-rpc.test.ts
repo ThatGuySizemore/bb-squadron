@@ -14,7 +14,9 @@ function skills(provider: string, root = `/owner/.${provider === "codex" ? "code
     pluginId, provider, registrySkillId: null, scope,
   }));
 }
-function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; unavailable?: boolean; gh?: boolean; ownerFiles?: boolean; expectedCheckout?: string } = {}) {
+function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; unavailable?: boolean; gh?: boolean; ownerFiles?: boolean; expectedCheckout?: string;
+  /** What the machine finds for Codex when the catalogue lists no Codex Matt skills. */
+  codex?: string[] } = {}) {
   const available = options.skills ?? [...skills("claude-code"), ...skills("codex")];
   return createFakePluginHost({
     experimental_hostEntry: true,
@@ -45,6 +47,7 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
         if (options.expectedCheckout) assert.equal((input as { checkoutPath?: string }).checkoutPath, options.expectedCheckout);
         return { authenticated: options.gh ?? true };
       }
+      if (method === "codexMattSkills") return { skills: options.codex ?? [] };
       assert.equal(method, "inspectFiles");
       assert.equal((input as { checkoutPath: string }).checkoutPath, "/repo");
       return {
@@ -81,6 +84,9 @@ test("Doctor requires Matt's installed plugin in each provider and rejects copie
     { options: { skills: [...skills("claude-code"), ...skills("codex", "/owner/.agents/skills", "provider-user", null)] }, expected: "fix" },
     { options: { skills: [...skills("claude-code"), ...skills("codex", "/plugins/unrelated", "plugin", "unrelated")] }, expected: "fix" },
     { options: { linked: true }, expected: "fix" },
+    // BB's catalogue lists no Codex plugin skills; the machine finds them enabled in Codex's own plugin cache.
+    { options: { skills: skills("claude-code"), codex: names }, expected: "pass" },
+    { options: { skills: skills("claude-code"), codex: names.slice(1) }, expected: "fix" },
     // BB can list the shared Claude plugin path under an ACP provider.
     { options: { skills: [...skills("acp-grok", "/owner/.claude/plugins/cache/mattpocock/mattpocock-skills/1"), ...skills("codex")] }, expected: "pass" },
   ];

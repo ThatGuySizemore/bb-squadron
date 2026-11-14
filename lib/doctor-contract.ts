@@ -28,6 +28,12 @@ export const doctorHostContract = {
     }),
     experimental_retryable: true,
   },
+  /** Matt's skills Codex has enabled as a plugin, found as regular files in Codex's plugin cache. */
+  codexMattSkills: {
+    input: z.object({ names: z.array(z.string()) }),
+    output: z.object({ skills: z.array(z.string()) }),
+    experimental_retryable: true,
+  },
   githubLogin: {
     input: z.object({ checkoutPath: z.string().optional() }),
     output: z.object({ authenticated: z.boolean(), hostname: z.string().optional() }),

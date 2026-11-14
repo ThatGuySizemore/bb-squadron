@@ -19,22 +19,30 @@ export function registerTracker(bb: BbPluginApi, mirror: {
       kind: null, reason: "Choose a checkout with docs/agents/issue-tracker.md for this project.",
     };
   }
+  /** Linear projects read at least once by this plugin run. */
+  const read = new Set<string>();
   async function getSnapshot(bbProjectId: string): Promise<TrackerSnapshot> {
     const found = await detect(bbProjectId);
-    if (found.kind === "linear") return linearTrackerSnapshot(bbProjectId, mirror.getSnapshot(bbProjectId));
+    if (found.kind === "linear") {
+      // A project nothing has read yet (Plan or Start before any board) reads once first.
+      if (!read.has(bbProjectId) && mirror.sync) await syncLinear(bbProjectId);
+      return linearTrackerSnapshot(bbProjectId, mirror.getSnapshot(bbProjectId));
+    }
     if (found.kind === "github") return github.getSnapshot(bbProjectId);
     if (found.kind === "local-markdown") return local.getSnapshot(bbProjectId);
     // Unknown trackers expose a configuration error without requesting Linear setup.
     return { kind: found.kind, bbProjectId, project: null, issues: [], relations: [], labels: [], states: [],
       syncedAt: null, error: found.reason };
   }
-  /** A fresh read: a bound Linear project syncs once; other readers read on getSnapshot. */
+  /** A fresh read: a Linear project syncs once with its Scope; other readers read on getSnapshot. */
   async function refresh(bbProjectId: string): Promise<TrackerSnapshot> {
     const found = await detect(bbProjectId);
-    if (found.kind === "linear" && mirror.sync && mirror.getSnapshot(bbProjectId).binding) {
-      await mirror.sync(bbProjectId).catch(() => undefined); // The snapshot carries the safe error.
-    }
+    if (found.kind === "linear" && mirror.sync) await syncLinear(bbProjectId);
     return getSnapshot(bbProjectId);
+  }
+  async function syncLinear(bbProjectId: string) {
+    read.add(bbProjectId);
+    await mirror.sync!(bbProjectId).catch(() => undefined); // The snapshot carries the safe error.
   }
   return { getSnapshot, refresh, onChange(listener) {
     const unsubscribes = [mirror.onChange(listener), github.onChange(listener), local.onChange(listener)];

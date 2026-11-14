@@ -83,3 +83,21 @@ test("unloading the plugin cancels an in-flight adapter request", async () => {
   assert.ok(signal && (signal as AbortSignal).aborted);
   await rejected;
 });
+
+test("Linear's GraphQL errors are logged with their code, while the user sees the same safe message", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-private-key" } });
+  t.after(() => harness.lifecycle.dispose());
+  const linear = registerLinearAuth(bb, { fetch: async () => Response.json({ errors: [
+    { message: "Query too complex", extensions: { code: "QUERY_TOO_COMPLEX" } },
+    { message: "Second\nproblem" },
+  ] }) });
+  await assert.rejects(linear.graphql("query Fake($secret: String) { viewer { id } }", { secret: "fake-private-variable" }), {
+    name: "LinearRequestError", code: "graphql", message: "Linear could not complete the request.",
+  });
+  const warnings = harness.inspection.logEntries.filter((entry) => entry.level === "warn").map((entry) => entry.message);
+  assert.deepEqual(warnings, [
+    "Linear GraphQL error: Query too complex [QUERY_TOO_COMPLEX]",
+    "Linear GraphQL error: Second problem [no code]",
+  ]);
+  assert.ok(!JSON.stringify(harness.inspection.logEntries).includes("fake-private"), "no key or variables in the log");
+});

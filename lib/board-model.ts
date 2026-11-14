@@ -61,7 +61,7 @@ const boardSchema = z.object({
   })),
   tracker: z.object({
     kind: trackerKindSchema.nullable().optional(),
-    state: z.enum(["disconnected", "unbound", "catching-up", "current", "failed"]), message: z.string(),
+    state: z.enum(["disconnected", "unscoped", "catching-up", "current", "failed"]), message: z.string(),
     syncedAt: z.number().nullable(), project: z.string().nullable(),
   }).optional(),
 });
@@ -96,7 +96,10 @@ export interface NeedsYouItem {
 /** What waits on the owner, derived from lane and ticket state, never stored. */
 export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
-  if (board.tracker?.state === "disconnected" || board.tracker?.state === "unbound") {
+  const fixes = (board.doctor?.checks ?? []).filter((check) => check.status === "fix");
+  // A Scope problem Doctor already names needs one row, not two.
+  if ((board.tracker?.state === "disconnected" || board.tracker?.state === "unscoped")
+    && !fixes.some((check) => check.message.includes(board.tracker!.message))) {
     items.push({ key: "setup", kind: "setup", specId: "", text: board.tracker.message, threadId: null });
   }
   for (const check of board.doctor?.checks ?? []) {

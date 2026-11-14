@@ -20,7 +20,7 @@ export const trackerRelationSchema = z.object({
 export const trackerSnapshotSchema = z.object({
   kind: trackerKindSchema.nullable(),
   bbProjectId: z.string(),
-  /** null until a required tracker binding is confirmed. */
+  /** null while a Linear Scope is missing, invalid or not yet read. */
   project: z.object({ name: z.string() }).nullable(),
   issues: z.array(trackerIssueSchema), relations: z.array(trackerRelationSchema),
   labels: z.array(trackerLabelSchema), states: z.array(trackerStateSchema),

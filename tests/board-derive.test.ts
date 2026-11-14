@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deriveBoard } from "../lib/board-derive.js";
 import { needsYou } from "../lib/board-model.js";
+import { SCOPE_MISSING } from "../lib/squadron-settings.js";
 import { blocks, input, issue, snapshot } from "./fixtures/board-snapshots.js";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
@@ -221,15 +222,19 @@ test("a Ready row lists which tickets wait on which blockers when only part of i
   assert.equal(board.ready[0].startReason, "Check Doctor before starting a lane.", "FIX-3 is available, so Start isn't held");
 });
 
-test("disconnected, unbound and failed reads say what happened without asking for a sync", () => {
+test("disconnected, unscoped and failed reads say what happened without asking for a sync", () => {
   const disconnected = deriveBoard(input(snapshot([issue("FIX-4")], [], { syncedAt: null }), {
     connection: { status: "disconnected", message: "Connect Linear in Squadron settings." },
   }));
   assert.deepEqual([disconnected.board.tracker?.state, disconnected.board.tracker?.message],
     ["disconnected", "Connect Linear in Squadron settings."]);
 
-  const unbound = deriveBoard(input(snapshot([], [], { binding: null, syncedAt: null })));
-  assert.deepEqual([unbound.board.tracker?.state, unbound.board.tracker?.project], ["unbound", null]);
+  const unscoped = deriveBoard(input(snapshot([], [], { scope: null, syncedAt: null, error: SCOPE_MISSING })));
+  assert.deepEqual([unscoped.board.tracker?.state, unscoped.board.tracker?.project, unscoped.board.tracker?.message],
+    ["unscoped", null, SCOPE_MISSING]);
+
+  const unread = deriveBoard(input(snapshot([], [], { scope: null, syncedAt: null })));
+  assert.equal(unread.board.tracker?.state, "catching-up", "a Scope not yet read is not a setup problem");
 
   const failed = deriveBoard(input(snapshot([issue("FIX-4")], [], { error: "Linear is unavailable. Try again shortly." })));
   assert.deepEqual([failed.board.tracker?.state, failed.board.tracker?.message],
@@ -237,11 +242,16 @@ test("disconnected, unbound and failed reads say what happened without asking fo
   assert.deepEqual(failed.board.openIssues.map((row) => row.id), ["FIX-4"], "the last good copy stays on the board");
 });
 
-test("connecting Linear and choosing a project wait on the owner before anything else", () => {
-  const { board } = deriveBoard(input(snapshot([], [], { binding: null, syncedAt: null })));
-  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [
-    { kind: "setup", text: "Choose the Linear team and project for this BB project." },
-  ]);
+test("a missing or unmatched Scope waits on the owner before anything else, once", () => {
+  const unmatched = "Scope Project \"Nope\" matches no Linear project. Fix it in docs/agents/squadron.md.";
+  const { board } = deriveBoard(input(snapshot([], [], { scope: null, syncedAt: null, error: unmatched })));
+  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [{ kind: "setup", text: unmatched }]);
+  // Doctor names the same problem; the owner sees one row, not two.
+  const doctor = { ready: false, configurationFiles: [], checks: [
+    { id: "settings" as const, name: "Project settings", status: "fix" as const, message: unmatched },
+  ] };
+  const both = deriveBoard(input(snapshot([], [], { scope: null, syncedAt: null, error: unmatched }), { doctor })).board;
+  assert.deepEqual(needsYou(both).map(({ key, text }) => ({ key, text })), [{ key: "setup:settings", text: unmatched }]);
 });
 
 test("Start uses the Doctor's first failing fix and owner-file warnings don't block it", () => {
@@ -269,7 +279,8 @@ test("Start waits for a current bound Linear snapshot and a ready Doctor", () =>
   for (const overrides of [
     { snapshot: { ...snap, error: "Linear is unavailable." } },
     { snapshot: { ...snap, syncedAt: null } },
-    { snapshot: { ...snap, binding: null } },
+    { snapshot: { ...snap, scope: null, error: SCOPE_MISSING } },
+    { snapshot: { ...snap, scope: null } },
     { connection: { status: "disconnected", message: "Connect Linear." } },
     { doctor: { ready: false, checks: [], configurationFiles: [] } },
   ]) {

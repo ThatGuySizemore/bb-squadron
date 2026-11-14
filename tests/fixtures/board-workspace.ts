@@ -29,7 +29,31 @@ export const workspaceIssues = { data: { issues: { nodes: [
   node("FIX-9", "Linear webhooks"),
 ], pageInfo: end } } };
 
-export const binding = { bbProjectId: "proj-one", teamId: "team-one", projectId: "linear-one" };
+/** The Scope in tests/fixtures/squadron.md: Team FIX, Project Fixture project. */
+export const scopeResponse = { data: {
+  teams: { nodes: [{ id: "team-one", name: "Fixture team", key: "FIX" }] },
+  projects: { nodes: [{ id: "linear-one", name: "Fixture project" }] },
+} };
+
+/** Answers SquadronScopeMembers as Linear would: the asked-for ids whose issue is in team-one's linear-one. */
+export function scopeMembers(seen: Map<string, { team?: { id: string }; project?: { id: string } | null }>, variables: Record<string, unknown> | undefined) {
+  const filter = variables?.filter as { id: { in: string[] } };
+  return Response.json({ data: { issues: { nodes: filter.id.in
+    .filter((id) => seen.get(id)?.team?.id === "team-one" && seen.get(id)?.project?.id === "linear-one").map((id) => ({ id })) } } });
+}
+
+/** Records every issue-shaped object in a response, so membership answers match the recorded data. */
+export async function remember(seen: Map<string, { team?: { id: string }; project?: { id: string } | null }>, response: Response) {
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const record = value as Record<string, unknown>;
+    if (typeof record.id === "string" && "team" in record) seen.set(record.id, record as never);
+    Object.values(record).forEach(visit);
+  };
+  visit(await response.clone().json().catch(() => null));
+  return response;
+}
 
 /** Answers Squadron's read-only queries. Every mutation fails the test. */
 export function workspace(options: {
@@ -38,7 +62,9 @@ export function workspace(options: {
   laneSpec?: (id: string) => Response;
 } = {}) {
   const operations: string[] = [];
-  const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
+  const seen = new Map<string, { team?: { id: string }; project?: { id: string } | null }>();
+  const fetch = async (_url: string | URL | Request, init?: RequestInit) => remember(seen, await answer(init));
+  const answer = async (init?: RequestInit) => {
     const { query, variables } = JSON.parse(String(init?.body)) as { query: string; variables?: Record<string, unknown> };
     if (!query.trimStart().startsWith("query ")) throw new Error("The board must not write to Linear.");
     const name = /^query\s+(\w+)/.exec(query.trimStart())?.[1] ?? "unknown";
@@ -47,10 +73,8 @@ export function workspace(options: {
       case "SquadronIdentity": return Response.json({ data: {
         viewer: { id: "fixture-user", name: "Fixture user" }, organization: { id: "fixture-workspace", name: "Fixture workspace" },
       } });
-      case "SquadronBinding": return Response.json({ data: {
-        team: { id: "team-one", name: "Fixture team", key: "FIX" },
-        project: { id: "linear-one", name: "Fixture project", teams: { nodes: [{ id: "team-one" }], pageInfo: end } },
-      } });
+      case "SquadronScope": return Response.json(scopeResponse);
+      case "SquadronScopeMembers": return scopeMembers(seen, variables);
       case "SquadronIssues": return options.issues ? options.issues() : Response.json(workspaceIssues);
       case "SquadronLaneSpec": {
         const id = String(variables?.id);

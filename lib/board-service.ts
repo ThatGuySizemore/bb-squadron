@@ -159,8 +159,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   async function counts(projectId: string): Promise<ProjectCounts["projects"][number]> {
     try {
       const snapshot = await (sources.tracker.refresh ?? sources.tracker.getSnapshot)(projectId);
-      const note = snapshot.error ?? (snapshot.kind === "linear" && !snapshot.project ? "Choose its Linear project on its board."
-        : snapshot.syncedAt === null ? "Not read yet." : null);
+      const note = snapshot.error ?? (snapshot.syncedAt === null ? "Not read yet." : null);
       if (note) return { id: projectId, tracker: snapshot.kind, ready: null, flying: null, note };
       const planning = await sources.planning?.(projectId);
       const leads = await lanesOf(projectId, snapshot, planning);

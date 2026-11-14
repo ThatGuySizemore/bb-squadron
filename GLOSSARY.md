@@ -1,61 +1,100 @@
 # Glossary
 
-The words BB Squadron uses. Use these, and only these, in code, tickets, comments and the UI. Squadron shows and starts work. Matt Pocock's skills and the agents do the work.
+BB Squadron uses two vocabularies. Use Owner words on the board, in the Doctor's messages and whenever you write for the owner. Factory words explain the machinery to agents and contributors. Squadron shows and starts work. Matt Pocock's skills and the agents do the work.
 
-## Work
+## Owner words
 
-**Spec**: An issue holding a feature's `to-spec` write-up. Its child issues are its tickets. A spec can be Shaping or Ready before it becomes a lane.
-_Avoid_: epic, feature issue, PRD
+These one-line definitions are also exported by `lib/owner-words.ts` for the board's hover text. A test keeps the two copies identical.
 
-**Ticket**: A sub-issue of a spec: one tracer-bullet slice that one worker can finish in one sitting.
-_Avoid_: task, story
+**Board**: The Squadron page where you plan work, start it and see how it is going.
 
-**Blocker**: An issue that must be Done before another may start, as recorded in the repo's tracker.
-_Avoid_: dependency (in UI copy), prerequisite
+**Spec**: A plan for one feature, split into tickets.
+_Avoid_: epic, feature issue, PRD → Spec
 
-**Frontier**: The tickets of a spec whose blockers are all done and that nobody is working on yet.
+**Ticket**: One piece of a spec that a worker can finish in one sitting.
+_Avoid_: story → Ticket; task for a piece of a spec → Ticket
 
-**Held ticket**: An open ticket carrying a hold label: `hold`, `needs-triage`, `needs-info`, `ready-for-human`, `wontfix`, or one the repo's settings add. In trackers without labels, a `Status:` line naming one. The Lead skips it, the board shows it as Held, and the lane ends delivered with held tickets, leaving them and the spec open.
-_Avoid_: blocked, paused, skipped ticket
+**Ready**: A spec with at least one ticket that can start now.
 
-**Open issue**: An open issue that is neither a spec nor one of its tickets. It waits in the board's Open issues section until planning turns it into a spec.
+**Shaping**: A spec that still needs planning or has no ticket that can start now.
 
-**Shaping**: A spec not yet Ready. It has an open planning thread, has tickets without the ready label, has the ready label without tickets, or has only held tickets.
+**Lane**: Work on one spec, from Start to a merged pull request.
 
-**Ready**: A spec carrying `ready-for-agent` with at least one open, unblocked ticket that isn't held.
+**Flying**: A spec whose lane is underway.
 
-## Roles
+**Landed**: A spec whose work has merged into the main branch.
 
-**Owner**: The person the factory works for. Only the owner answers questions and changes settings, and an `accept:owner` spec merges only on the owner's click or the owner's order to the Chief.
+**Held**: A ticket set aside until its hold is cleared.
+_Avoid_: paused, skipped ticket → Held; blocked for a hold → Held
 
-**Chief**: An optional, long-running thread for one BB project that the owner talks to, running Matt's `chief-of-staff`. It can plan and press the board's buttons for the owner, but no lane depends on it.
-_Avoid_: Helper, orchestrator, dispatcher
+**Needs you**: Questions, setup problems and work that needs your approval.
 
-**Lead**: The agent thread that owns one spec until its PR merges. It runs `implement-spec`, with its workers as BB child threads.
-_Avoid_: supervisor, manager
+**Helper**: The optional agent thread you talk to about your project and ask to act for you.
+_Avoid_: Chief → Helper; Helper for plugin code → Squadron
+
+**House rules**: Your private rules for how work is done across all your projects.
+_Avoid_: Playbook, global rules, harness rules → House rules
+
+**Scope**: The Linear issues a project's board reads, as chosen in its settings.
+_Avoid_: binding, filter → Scope
+
+**Autopilot**: The option for starting ready lanes automatically.
+
+## Factory words
+
+These terms describe how the factory works. Owner definitions above stay short; the details below do not change them.
+
+**Squadron**: The plugin, acting as the orchestrator: it reads the ticket tracker, shows the board and starts agent threads. It is never the conversational Helper.
+_Avoid_: Helper for the orchestrator or plugin code → Squadron
+
+**Task**: A repeatable procedure a runner carries out, such as Matt Pocock's `implement-spec`, `tdd` or `code-review`. A task is not a ticket.
+
+**Trigger**: An event or owner action that starts a task, such as pressing Plan or Start on the board.
+
+**Run**: One execution of a task. A lane is a run of the `implement-spec` task, carried out by a Lead with workers, on one integration branch with one pull request.
+
+**Runner**: What executes a task. For an `implement-spec` run, this is the Lead's agent thread in BB.
+
+**Orchestrator**: The code that shows and starts runs. In this project, it is Squadron; the agents and Matt's skills do the work.
+
+**Ticket tracker**: Where a repo's issues live: Linear, GitHub Issues or Local markdown. A BB project reads one planning tracker.
+_Avoid_: issue store → Ticket tracker
+
+**Tracker**: The short name for the ticket tracker, also used by the `Tracker` override in project settings.
+
+**Git host**: The service hosting the repo and its pull requests, currently GitHub.
+
+**Owner**: The person the factory works for. Only the owner answers owner questions and approves changes to their settings. An `accept:owner` spec merges only on the owner's click or the owner's order to the Helper.
+
+**Lead**: The agent thread that owns one spec until its pull request merges. It runs `implement-spec`, with its workers as BB child threads.
+_Avoid_: supervisor, manager → Lead
 
 **Worker**: A child thread of a Lead that builds one ticket with `tdd`, in its own worktree, on a branch cut from the integration branch.
-_Avoid_: builder, implementer, subagent
+_Avoid_: builder, implementer, subagent → Worker
 
-**Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its PR merges.
+**Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its pull request merges.
 
 **Planning thread**: A thread started from the Plan button that runs `grill-with-docs`, then `to-spec` and `to-tickets`, with the owner.
 
-## Running
+**Blocker**: An issue that must be Done before another may start, as recorded in the repo's ticket tracker.
+_Avoid_: dependency in owner-facing copy, prerequisite → Blocker
 
-**Lane**: One spec being worked: its Lead, workers, reviewer, integration branch and PR.
+**Frontier**: The tickets of a spec whose blockers are all done and that nobody is working on yet. Factory-only; describe tickets that can start when writing for the owner.
 
-**Outside lane**: A lane started outside Squadron and shown read-only, with a link to its thread. Squadron offers no Stop, Resume or Merge for it.
+**Held ticket**: An open ticket carrying `hold`, `needs-triage`, `needs-info`, `ready-for-human`, `wontfix`, or a hold label the repo adds. In trackers without labels, a `Status:` line can name a hold. The Lead skips it and the board shows Held. A lane can finish delivered with held tickets, leaving them and the spec open.
 
-**Lane state**: Ready, Flying, In review or Landed. It is read from threads, the tracker and the PR or local merge, and never stored.
+**Open issue**: An open issue that is neither a spec nor one of its tickets. It waits in the board's Open issues section until planning turns it into a spec.
 
-**Ticket state**: Waiting, Held, Working, In branch or Done.
+**Outside lane**: Work started outside Squadron and shown read-only, with a link to its thread. Squadron offers no Stop, Resume or Merge for it.
 
-**Status mapping**: The table that names the Linear status for each lane state and ticket state. Only Linear repos need it.
+**States**: Specs are Shaping or Ready before a lane starts. Lane states include Flying, Stopped, In review and Landed, read from threads, the tracker and the pull request or local merge, never stored. Ticket states are Waiting, Held, Working, In branch and Done. Ready requires `ready-for-agent` and at least one open, unblocked ticket that is not held. A spec stays Shaping while planning is open or no ticket can start.
+_Avoid_: Lane state, Ticket state as separate entries → States
 
-**Integration branch**: The one branch a lane builds on. Workers branch from it and merge back into it, and its PR goes to `main`.
+**Status mapping**: The table naming the Linear statuses for spec and ticket states. Only Linear repos need it; Held comes from hold labels rather than a mapped status.
 
-**Family**: Which company's models a thread runs on: Claude (Claude Code) or GPT (Codex).
+**Integration branch**: The one branch a lane builds on. Workers branch from it and merge back into it, and its pull request goes to `main`.
+
+**Family**: Which company's models a thread runs on: Claude through Claude Code or GPT through Codex.
 
 **Route**: A row that maps a ticket label to a family, model and effort.
 
@@ -64,37 +103,21 @@ _Avoid_: builder, implementer, subagent
 **Two strikes**: Work reported done that then fails its quick check or review, or a worker that is truly stuck, is a strike. After two strikes on one ticket the Lead stops the lane and asks the owner.
 
 **Stop**: The owner's request that a Lead wind down. Its workers save their work in progress to their branches and tickets, and the Lead posts a summary on the spec.
-_Avoid_: cancel, kill
+_Avoid_: cancel, kill → Stop
 
 **Resume**: The owner's request that a stopped Lead carry on from its last summary.
 
 **Stop list**: The project's list of problems that block a merge.
 
-**Quick check**: The project's fast test command, run before every merge into the integration branch and before the PR merges.
+**Quick check**: The project's fast test command, run before every merge into the integration branch and before the pull request merges.
 
 **Doctor**: The check that must pass before Start. It checks Matt's plugin and setup, Squadron's settings and the detected tracker's requirements. Reading the board needs no Doctor pass.
 
-## Configuration
-
 **Repo rules**: How to work on a repo's code: its `AGENTS.md` and Matt's `docs/agents/` setup. Checked in, and not Squadron's.
 
-**Tracker**: Where a repo's issues live: Linear, GitHub or Local markdown. A BB project reads one planning tracker.
+**Project settings**: How Squadron works in one repo: quick check, stop list, routes, final-review family, time limits, an optional Tracker override and Linear-only status mapping. Checked in as `docs/agents/squadron.md`.
 
-**Project settings**: How the fleet flies one repo: quick check, stop list, routes, final-review family, time limits, an optional Tracker override and Linear-only status mapping. Checked in as `docs/agents/squadron.md`.
-
-**Playbook**: How the owner likes work done in every project, read by both families. Private to the owner. Its Never and Held entries beat every other rule.
-_Avoid_: global rules, harness rules
-
-**Machine profile**: What one machine has: devices and how to use them, tools for each family, identities, and notes for each project. Private to the owner, one per machine.
-_Avoid_: personal settings, local config
+**This machine**: What one machine has: devices and how to use them, tools for each family, identities and notes for each project. Private to the owner, in `~/.bb-squadron/machine.md`.
+_Avoid_: Machine profile, personal settings, local config → This machine
 
 **Secret**: A credential, kept only in BB's secret settings and never in a file.
-
-## Board
-
-**Board**: The Squadron page in BB's sidebar and the owner's front door for every action: Plan, Start, Stop, Resume and Merge.
-
-**Needs you**: The board's first section: threads waiting on the owner, `accept:owner` PRs ready to merge, and setup problems.
-
-**Scope**: Which Linear issues a BB project's board reads, set in the `## Scope` section of the repo's `docs/agents/squadron.md`. Any of Team, Project, Initiative, Label and View; every key set narrows. An issue matching it is in scope. Only Linear uses a scope.
-_Avoid_: binding, filter

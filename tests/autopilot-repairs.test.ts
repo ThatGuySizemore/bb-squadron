@@ -33,7 +33,8 @@ test('Autopilot refuses the selected spec held while Doctor awaits', async t => 
 
 test('a main check holds only its project while observation and discovery continue', async t => {
   const f = await helperFixture(t, epoch);
-  f.lead('one', 'Lead');
+  const completed = f.lead('one', 'Lead');
+  f.threads.set(completed.id, {...completed,status:'idle'});
   f.harness.sdk.stub('plugins.callRpc', async () => ({'env-one': {outcome:'available', pullRequest:{number:12, state:'merged', url:'https://example.invalid/pr/12', updatedAt:new Date(epoch).toISOString(), checks:{state:'passing'}}}}));
   let release!: () => void, enter!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });

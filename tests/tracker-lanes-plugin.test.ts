@@ -205,6 +205,7 @@ test("returning local work reads the new lane branch and leaves the landed branc
   git(root, "checkout", "main");
   await harness.behavior.callRpc("lane.start", { projectId: "project", specId: "flight" });
   git(root, "merge", "--ff-only", "integration/flight");
+  threads.set("lead", { ...threads.get("lead")!, status: "idle" });
   const oldTip = git(root, "rev-parse", "integration/flight");
   clock += 31_000; // Let the tracker's public read cache expire.
   assert.equal((await board()).lanes[0].state, "landed");

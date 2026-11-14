@@ -902,6 +902,7 @@ test("a landed spec with remaining un-held tickets returns Ready and starts a fr
   native.threads.set("old-worker", makeThreadResponse({ id: "old-worker", title: "Worker FIX-6", projectId: "proj-one",
     parentThreadId: "thr_lead_1", status: "error" }));
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
   const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(before.ready.map((spec) => spec.id), ["FIX-1", "FIX-5"]);
   assert.equal(before.lanes[0].state, "landed");
@@ -1059,6 +1060,7 @@ test("a returning Lead cannot hide the previous lane's unchecked merge from the 
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   assert.equal(native.count, 2);
   await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });

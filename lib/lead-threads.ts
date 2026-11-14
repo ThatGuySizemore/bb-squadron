@@ -13,6 +13,8 @@ export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status
 /** BB owns these records. Squadron reads them afresh rather than storing lanes. */
 export interface LeadThread {
   specId: string;
+  /** A returning Lead must establish its own PR or local branch landing. */
+  previousLeadId?: string;
   /** Epoch milliseconds of a normal terminal turn, never a generic row update. */
   idleSince?: number;
   thread: Pick<BbThread,
@@ -66,7 +68,7 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       if (metadata.role !== "lead" || typeof metadata.specId !== "string" || !metadata.specId) continue;
       const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
       const idleSince = await readIdleSince(bb, thread);
-      leads.push({ ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
+      leads.push({ ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
         workers: await readWorkers(bb, projectId, thread.id),
         route: threadRoute(thread.providerId, execution) });
     }

@@ -1,7 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
-import { latestLeads, readLeadThreads } from "./lead-threads.js";
+import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { resolveLeadRoute } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
@@ -46,7 +46,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
       connection: { status: "connected", message: "" }, now: Date.now() }).board;
     const returning = existing && previous.lanes.some((lane) => lane.leadThreadId === existing.thread.id && lane.state === "landed")
       && previous.ready.some((row) => row.id === specId);
-    if (existing && !returning) return { threadId: existing.thread.id };
+    if (existing && (isRunningThread(existing.thread) || !returning)) return { threadId: existing.thread.id };
     const doctor = await sources.doctor(projectId);
     const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], planning, settings: checkout.settings, doctor, ...progress, pullRequests,
       connection: { status: "connected", message: "" }, now: Date.now() });
@@ -61,7 +61,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const thread = await bb.sdk.threads.spawn({
       projectId, title: `Lead ${spec.identifier}`, visibility: "visible",
       providerId: route.family === "claude" ? "claude-code" : "codex", model: route.model, reasoningLevel: route.effort, serviceTier: "default",
-      pluginMetadata: { role: "lead", specId: spec.id, startedBy },
+      pluginMetadata: { role: "lead", specId: spec.id, startedBy, ...(returning ? { previousLeadId: existing.thread.id } : {}) },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
       prompt: ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
         ...(returning ? [

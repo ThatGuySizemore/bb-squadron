@@ -134,7 +134,12 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // A fresh branch at main has no lane work. Ancestry alone cannot prove a landing.
     const mergedLaneWork = input.repository?.mergedBranches.includes(branch) &&
       (input.repository.mergedBranchUpdatedAt[branch] ?? 0) > lead.thread.createdAt;
-    const localLanded = noRemote && (mergedLaneWork || spec.state.type === "completed");
+    // A completed parent can return with remaining tickets. Its old completion
+    // belongs to the previous Lead, never to one started after that evidence.
+    const returningLead = lead.previousLeadId !== undefined || (input.leads ?? []).some((previous) =>
+      previous.specId === spec.id && previous.thread.id !== lead.thread.id && previous.thread.createdAt <= lead.thread.createdAt);
+    const specLanded = !returningLead && spec.state.type === "completed";
+    const localLanded = noRemote && (mergedLaneWork || specLanded);
     const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
     const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue));
     const laneById = new Map(laneSnapshot.issues.map((issue) => [issue.id, issue]));
@@ -167,8 +172,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
     const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt)
-      : spec.state.type === "completed" ? Date.parse(spec.updatedAt)
-      : localLanded ? (spec.state.type === "completed" ? Date.parse(spec.updatedAt) : input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt)) : undefined;
+      : specLanded ? Date.parse(spec.updatedAt)
+      : localLanded ? input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt) : undefined;
     const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
     const acceptOwner = labels(spec).includes(ACCEPT_OWNER);
     const outside = lead.outside === true;

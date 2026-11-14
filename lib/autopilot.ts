@@ -98,7 +98,8 @@ export async function registerAutopilot(bb: BbPluginApi) {
       || a.leadThreadId.localeCompare(b.leadThreadId))) {
       if (lane.outside) continue;
       const outcome = lane.state === "landed" ? "landed"
-        : lane.state === "stopped" && !lane.needs?.some((need) => need.kind === "waiting") ? "stopped" : null;
+        : lane.state !== "merge-waits" && (lane.stopped ?? lane.state === "stopped")
+          && !lane.needs?.some((need) => need.kind === "waiting") ? "stopped" : null;
       const previous = observedOutcomes[lane.leadThreadId];
       if (!outcome || previous === outcome || previous === "landed") continue;
       observedOutcomes[lane.leadThreadId] = outcome;

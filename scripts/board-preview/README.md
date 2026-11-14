@@ -15,7 +15,7 @@ python3 -m http.server 4178 --directory "$out"
 Then open `http://localhost:4178/?fixture=squadron&theme=dark&width=wide`.
 
 - `fixture`: `squadron` (SIZE-947 flying as an outside lane), `squadron-ready`, `squadron-published`, `bb-bot` (local markdown, outside lane), `empty` (no tracker, Set up), `states` (synthetic live states the comp doesn't show).
-- `theme`: `dark` or `light`. `width`: `wide` (the full page) or `narrow` (a 400px side panel).
+- `theme`: `dark` or `light`. `width`: `wide` (the full page) or `narrow` (a 400px side panel, rendered with `placement="panel"` as the thread tab renders it).
 - `picker=open` opens the project picker. `land=SIZE-947` lands that lane after two seconds, to show the burst and the row arriving in Landed.
 
 Reduced motion follows the browser's `prefers-reduced-motion` setting.

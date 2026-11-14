@@ -1170,6 +1170,87 @@ button.sq-peg:hover {
   margin-left: auto;
 }
 
+/* ---------- the side panel: the comp's narrow sortie line ---------- */
+
+.sq[data-layout="narrow"] .sq-line {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 12px 0;
+}
+.sq[data-layout="narrow"] .sq-tail {
+  gap: 5px;
+}
+/* The airstream on its pixel rule, without the pegs a side panel has no room for. */
+.sq-air-band {
+  position: relative;
+  height: 26px;
+}
+.sq-air-band::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--sq-pixel-rule);
+}
+.sq-active {
+  display: grid;
+  gap: 6px;
+}
+.sq-active .sq-peg {
+  width: 100%;
+}
+.sq-all summary {
+  width: fit-content;
+  padding: 2px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sq-muted);
+  cursor: pointer;
+}
+.sq-all summary:hover {
+  color: var(--foreground);
+}
+.sq-all ol {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+.sq-all li {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--sq-rule);
+}
+.sq-all li > span:nth-child(2) {
+  overflow-wrap: anywhere;
+}
+.sq-all .sq-id {
+  font-family: var(--sq-mono);
+  font-size: 11px;
+}
+.sq-all li[data-state="blocked"] {
+  color: var(--sq-muted);
+}
+.sq-all [data-st="branch"],
+.sq-all [data-st="done"] {
+  color: var(--sq-green-ink);
+}
+.sq-all [data-st="working"],
+.sq-all [data-st="review"] {
+  color: var(--sq-sky-ink);
+}
+.sq-all [data-st="question"] {
+  color: var(--sq-amber-ink);
+}
+.sq-all [data-st="failed"] {
+  color: var(--sq-red-ink);
+}
+
 /* ---------- the board in a narrow box ---------- */
 
 @container (max-width: 900px) {

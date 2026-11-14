@@ -47,6 +47,8 @@ function Preview() {
   const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
   return React.createElement(BoardView, {
     board, demo: false, modeSwitch: null, projectId: fixture.name, tracker: fixture.tracker, fleet: fixture.fleet,
+    // The narrow width is the side panel: the comp's narrow layout, thread links opening in the main view.
+    placement: width === "narrow" ? "panel" : "page",
     dispatch: (action: unknown) => console.log("dispatch", action), onPlan: (...args: unknown[]) => console.log("plan", ...args), onSetUp: () => console.log("set up"),
     projectButton: React.createElement(ProjectButton, { name: fixture.projectName, meta: pickerMeta(fixture.tracker?.kind, { ready: board.ready.length, flying }),
       open: pickerOpen, controls: "picker", onToggle: () => setPickerOpen((o) => !o) }),

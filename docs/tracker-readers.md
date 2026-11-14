@@ -31,6 +31,28 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 `tests/tracker-detection.test.ts` uses checked-in copies of Matt's local and GitHub templates and BB Squadron's and WordWell's Linear prose. `tests/tracker-plugin.test.ts` uses recorded GraphQL responses and the SDK testing host for binding suggestions, snapshot fields, and non-Linear configuration. Existing board derivation and plugin tests retain their behavioral expectations while receiving the new snapshot.
 
+## GitHub
+
+`registerGithubReader` reads the selected checkout on its host through `githubRead`.
+`gh repo view --json nameWithOwner,url` identifies the repo and hostname. The reader
+then uses read-only `gh api graphql --hostname … --paginate --slurp` queries under
+that host's existing CLI login. It never requests or stores a token. Native parent
+and blocked-by links take precedence over Matt's `Part of #n` and `Blocked by:`
+body lines. Hosts that report those native fields as unavailable use the body lines.
+Other errors, partial responses and unresolved body links leave the last complete
+snapshot visible with a safe error. The board watcher drives reads, with a 30-second
+cache per project and checkout, and no separate reader poller.
+
+A closed issue has completed state. An open issue with an assignee or linked branch
+has started state; other open issues wait. Board derivation uses those states for
+GitHub without a Linear Status mapping. Doctor passes the selected checkout to its
+host and checks `gh auth status --hostname` for that repo's hostname, discarding all
+authentication command output. A login for a different host does not pass.
+
+`tests/github-reader.test.ts` drives the host entry with recorded CLI response fixtures
+and the SDK testing host, then checks the snapshot and derived board. Live GitHub and
+Enterprise reads remain separate hand checks.
+
 ## Local markdown reader
 
 `registerLocalMarkdownReader` in `lib/local-markdown-reader.ts` reads the selected BB project's default checkout through the read-only `readLocalMarkdown` host method. It coalesces reads and reuses a complete snapshot for 30 seconds. It adds no background poller; the board watcher requests snapshots through `TrackerReader`. A failed read keeps the last complete data and timestamp and supplies a safe diagnostic.

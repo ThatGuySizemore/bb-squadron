@@ -34,7 +34,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     const [skills, linear, github] = await Promise.allSettled([
       bb.sdk.skills.list({ projectId, environmentId: environmentId ?? null, signal }),
       config.tracker.kind === "linear" ? getLinearState() : Promise.resolve({ status: "not-needed" }),
-      host.call("githubLogin", {}, { hostId, signal, timeoutMs: 15_000 }),
+      host.call("githubLogin", { checkoutPath: path }, { hostId, signal, timeoutMs: 15_000 }),
     ]);
     const candidates = skills.status === "fulfilled" ? skills.value.skills.flatMap((skill) => {
       const found = mattSkill(skill);
@@ -60,6 +60,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
       settingsMarkdown: config.settingsMarkdown, issueTrackerMarkdown: config.issueTrackerMarkdown,
       linearConnected: linear.status === "fulfilled" && linear.value.status === "connected",
       ghAuthenticated: github.status === "fulfilled" && github.value.authenticated,
+      ghHostname: github.status === "fulfilled" ? github.value.hostname : undefined,
     });
     if (skills.status === "rejected" || !inspection) report.checks[0].message = "Couldn't check this repo's installed plugins. Make sure its machine is online, then check again.";
     if (config.settingsMarkdown === null) report.checks[2].message = "Make sure docs/agents/squadron.md exists and this repo's machine is online, then check again.";

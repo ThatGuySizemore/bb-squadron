@@ -72,8 +72,12 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
-  /** Local statuses are fixed; Linear uses its configured status mapping. */
+  /** Tracker ticket states; only Linear uses the configured status mapping. */
   function ticketState(issue: TrackerIssue): Ticket["state"] {
+    if (snapshot.kind === "github") {
+      if (issue.state.type === "completed") return "done";
+      return issue.assignees.length > 0 || issue.state.type === "started" ? "working" : "blocked";
+    }
     if (snapshot.kind === "local-markdown") {
       if (issue.state.type === "completed") return "done";
       return ["in-progress", "claimed"].includes(issue.state.name.toLowerCase()) ? "working" : "blocked";

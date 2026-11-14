@@ -28,7 +28,7 @@ Once the branch is ready, a refusal to queue a status or comment keeps the lane 
 
 The shared signed-comment avatar module provides public origin-only URLs and constant role assets. The Lead has its own mark; planning retains its existing mark. Diagnostics retain the lane, operation and safe error class or known code. Raw provider messages and credentials never enter the log.
 
-Full reconstruction of an interrupted or ambiguous spawn and later lane controls remain in subsequent Spec B tickets.
+Full reconstruction of an interrupted or ambiguous spawn remains in a subsequent Spec B ticket. The owner's Stop, Resume and Cancel are described below.
 
 ## Auto-start
 
@@ -39,6 +39,23 @@ When enabled, trusted `lanes.reconcile(projectId)` fills the available slots. Th
 Each candidate then shares manual Start's project queue, Doctor check, fresh mirror and settings reads, reservation, spawn and write path. The cached screen grants no dispatch by itself. The service repeats the decision with updated reservations before starting another spec. Disabling the setting while preflight is pending prevents that automatic launch.
 
 Mirror changes and trusted lane `save` calls schedule a coalesced reconcile. A landed lane frees capacity; starting, flying and stopped lanes keep their slots. Disabling auto-start prevents future automatic launches and leaves current lanes running. The `lane-starts` service also periodically reconciles enabled projects after restart with no board open. Projects and provisioning continuations run concurrently, so one slow project does not delay another project's refill in the same pass. Provisioning continues to use `reconcileStart`, which never spawns a replacement Lead. The `autoStart(projectId)` read and `reconcile(projectId)` service methods add no agent tool or owner approval.
+
+## Stop, Resume, Re-plan and Cancel
+
+The board's `lanes.stop`, `lanes.resume` and `lanes.cancel` RPCs are client-only, like Start. `registerLifecycle` runs each in the lane's existing command queue (`workers.withLane`), so a worker spawn, report or review can't interleave with it. Lifecycle saves rebase only lifecycle fields onto the latest record; worker, review, recovery and start fields written elsewhere survive. A start pass still in flight can't overwrite the owner's Stop or Cancel.
+
+- **Stop** saves the stopped state, its reason and `stoppedAt` first, so the dispatch hook refuses anything Squadron sends to the lane's threads. Then it stops the turns of the Lead and every worker not yet integrated. Threads, worktrees, branches and worker records stay. Trusted code inside the lane queue, such as B5's strikes and time limits, calls `stopInLane(run, reason)`; code outside it calls `stop(projectId, laneId, reason)`.
+- **Resume** needs a stopped lane with a confirmed Lead. It returns the lane to flying, or to starting while no branch exists, and wakes the Lead: a still-queued first prompt is released, otherwise the Lead gets a quoted notice that grants no other approval. Working workers get the same treatment; reported workers wait for review, and failed worker records stay reserved for recovery. If the Lead can't be reached, the lane stops again with that reason.
+- **Re-plan** opens the existing `planning.start` thread on the spec. The lane stays stopped until the owner resumes or cancels it.
+- **Cancel** saves `canceled` and `canceledAt`, stops the lane's turns and keeps its threads, worktrees, branch and records. The spec returns to Ready with its kept branch, and the lane's slot is free. If the lane had moved the spec to In Progress, the Helper queues it back to the team's unambiguous unstarted state, plus a signed Lead comment naming the kept branch. A refused write keeps the cancel and appears in Needs you. Auto-start never relaunches a spec whose latest lane the owner canceled; the owner's Start can.
+
+Canceled and landed lanes grant no tools. Only the owner's board controls change lane state; no agent tool can stop, resume or cancel a lane, or answer a question.
+
+## Needs-you pushes
+
+`registerNeedsYouNotifications` sees every board the board service computes and sends one BB push through the push-notifications plugin for each new Needs-you item: setup, questions, stopped lanes, blocked or refused writes and, later, merges that wait on the owner. Each item has a `notifyKey`: its board key, plus the question ID for a question and `stoppedAt` for a stopped lane. A durable claim taken before sending keeps repeated reads, concurrent reads and restarts from pushing it twice. When an item leaves Needs you, its claim is released, so a recurrence is a new item. Without an outbox health read, blocked-write claims are kept rather than released. A push that fails is logged with its safe class and is not retried; the item stays on the board.
+
+Nothing else pushes from Squadron. After each Lead is bound, its BB notification level is set once to `input-only`. Ancestors cap their children, so routine finished turns of the Lead and its workers no longer push, while BB's own approval and error prompts still do.
 
 ## Current conventions and open questions
 

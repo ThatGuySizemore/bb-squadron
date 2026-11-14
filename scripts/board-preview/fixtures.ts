@@ -61,8 +61,6 @@ export interface Fixture {
   board: Board;
   tracker?: TrackerInfo;
   projectName: string;
-  /** Lanes flying across every project in the comp's snapshot. */
-  fleet: number;
 }
 
 const counts: ProjectCounts = { projects: [
@@ -76,7 +74,7 @@ export const pickerProjects = { counts, projects: [
 ] };
 
 const squadronFlying: Fixture = {
-  name: "squadron", projectName: "BB Squadron", tracker: { kind: "linear" }, fleet: 2,
+  name: "squadron", projectName: "BB Squadron", tracker: { kind: "linear" },
   board: { ...base, doctor: doctorPass, tracker: linear("Sizemore · BB Squadron"), ready: [], shaping: [], openIssues: [], lanes: [
     { specId: SPEC_947.id, title: SPEC_947.title, url: SPEC_947.url, outside: true, lead: codex, leadThreadId: "thr_3r2xjejz9k", branch: "connect",
       state: "flying", minutes: 7, acceptOwner: false,
@@ -87,14 +85,14 @@ const squadronFlying: Fixture = {
 };
 
 const squadronReady: Fixture = {
-  name: "squadron-ready", projectName: "BB Squadron", tracker: { kind: "linear" }, fleet: 1,
+  name: "squadron-ready", projectName: "BB Squadron", tracker: { kind: "linear" },
   board: { ...base, doctor: doctorPass, tracker: linear("Sizemore · BB Squadron"), shaping: [], openIssues: [], lanes: landed,
     ready: [{ ...SPEC_947, ticketCount: 12, routes: [claude, codex], blockedBy: [], acceptOwner: false, startReason: null,
       waiting: connect({}).filter((t) => t.blockedBy.length).map(({ id, title, blockedBy }) => ({ id, title, blockedBy })) }] },
 };
 
 const squadronPublished: Fixture = {
-  name: "squadron-published", projectName: "BB Squadron", tracker: { kind: "linear" }, fleet: 1,
+  name: "squadron-published", projectName: "BB Squadron", tracker: { kind: "linear" },
   board: { ...base, doctor: doctorPass, tracker: linear("Sizemore · BB Squadron"), ready: [], lanes: landed,
     shaping: [{ ...SPEC_947, ticketCount: 0, missing: "Ready label, but no tickets yet", action: "tickets" }],
     openIssues: [
@@ -107,7 +105,7 @@ const bbBotTicket = (n: number, title: string, blockedBy: number[], state: Ticke
   ticket(String(n).padStart(2, "0"), title, blockedBy.map((b) => String(b).padStart(2, "0")), claude, state,
     state === "working" ? { minutes: 23, threadId: `thr_bbbot_${n}` } : {});
 const bbBot: Fixture = {
-  name: "bb-bot", projectName: "bb-bot", tracker: { kind: "local-markdown" }, fleet: 2,
+  name: "bb-bot", projectName: "bb-bot", tracker: { kind: "local-markdown" },
   board: { ...base, ready: [], shaping: [], openIssues: [],
     doctor: { ready: false, configurationFiles: [file(false)], checks: [
       check("tracker", "Tracker: Local markdown", "pass", "docs/agents/issue-tracker.md declares Local markdown as the issue tracker."),
@@ -142,7 +140,7 @@ const bbBot: Fixture = {
 };
 
 const empty: Fixture = {
-  name: "empty", projectName: "bb Bot", tracker: { kind: null, note: "No docs/agents/issue-tracker.md." }, fleet: 2,
+  name: "empty", projectName: "bb Bot", tracker: { kind: null, note: "No docs/agents/issue-tracker.md." },
   board: { ...base, ready: [], shaping: [], openIssues: [], lanes: [],
     doctor: { ready: false, configurationFiles: [file(false)], checks: [
       check("tracker", "Tracker", "fix", "Couldn't determine the tracker from docs/agents/issue-tracker.md. Set ## Tracker in docs/agents/squadron.md to Linear, GitHub or Local markdown."),
@@ -153,7 +151,7 @@ const empty: Fixture = {
 
 /** The live states the comp's snapshots don't show: stopped, owner merge, a question, review, a failure, a PR, held tickets. Synthetic. */
 const states: Fixture = {
-  name: "states", projectName: "Fixture project", tracker: { kind: "github" }, fleet: 3,
+  name: "states", projectName: "Fixture project", tracker: { kind: "github" },
   board: { ...base, doctor: { ...doctorPass, checks: doctorPass.checks.map((c) => c.id === "github" ? { ...c, status: "fix" as const, message: "Run gh auth login for github.com." } : c), ready: false },
     lanes: [
       { specId: "FIX-10", title: "A lane with an open PR and a question", lead: claude, leadThreadId: "thr_a", branch: "fix-10", state: "pr-open", minutes: 64, acceptOwner: false,

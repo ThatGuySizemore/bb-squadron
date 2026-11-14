@@ -70,6 +70,14 @@ test("a red failure during the fix round is not another failed done deliverable"
 test("another failed deliverable after the owner resumes a two-strike ticket stops again without resetting its count", () => {
   let run = lane(); run.workers![0].state = "reported"; run.workers![0].commit = commit;
   for (const eventId of ["first", "second"]) run = evaluateStrike(run, { ticketId: "FIX-2", eventId, kind: "review", commit, summary: "Lead: review failed." }, 10).run;
+  run.workers![0].state = "working";
   const result = evaluateStrike({ ...run, stoppedAt: 20 }, { ticketId: "FIX-2", eventId: "after-resume", kind: "stuck", summary: "Lead: resumed ticket has no way forward." }, 30);
   assert.equal(result.count, 3); assert.ok(result.stopReason);
+});
+test("integrated work is never a stuck worker, and stale stopped reports do not consume strikes", () => {
+  const run = lane(); run.workers![0].state = "integrated";
+  const event = { ticketId: "FIX-2", eventId: "late-stuck", kind: "stuck" as const, summary: "Stale worker message." };
+  assert.equal(evaluateStrike(run, event, 10).count, 0);
+  run.workers![0].state = "working"; run.state = "stopped";
+  assert.equal(evaluateStrike(run, event, 20).count, 0);
 });

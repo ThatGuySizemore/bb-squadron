@@ -8,6 +8,7 @@ export const strikeEventSchema = z.object({
 }).strict();
 export type StrikeEvent = z.infer<typeof strikeEventSchema>;
 export const laneSafetySchema = z.object({
+  pendingStuck: z.array(z.object({ ticketId: z.string(), eventId: z.string(), summary: z.string(), at: z.number(), notified: z.boolean() })).optional(),
   strikes: z.array(strikeEventSchema.extend({ at: z.number() })).default([]),
   /** Monotonic action counts, never thread.updatedAt or Helper-origin messages. */
   actions: z.record(z.string(), z.number()).default({}),

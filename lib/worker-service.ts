@@ -246,15 +246,39 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
       const run = current(context.projectId, bound.lane.id);
       if (run.state !== "flying") throw new Error("Progress reports require a flying lane.");
       if (!safety) throw new Error("Lane safety is unavailable.");
+      if (!["Lead", "Worker"].includes(bound.role)) throw new Error("Only bound Leads and workers may report progress or stuck.");
       if (input.type === "progress") {
         if (bound.worker && bound.worker.state !== "working") throw new Error("Only a working worker may report progress.");
         safety.actionInLane(context.projectId, run.id, context.threadId);
         return { state: "progress", summary: input.summary };
       }
-      if (input.type === "failure" && bound.role !== "Lead") throw new Error("Only the bound Lead reports a failed quick check.");
+      if (input.type === "failure" && bound.role !== "Lead") throw new Error("Only the bound Lead reports a failed quick check or review with its summary.");
       const ticketId = input.type === "stuck" && bound.worker ? bound.worker.ticketId : input.ticketId;
       if (!ticketId || (bound.worker && input.ticketId && input.ticketId !== bound.worker.ticketId)) throw new Error("Report only your bound ticket.");
       if (bound.worker && bound.worker.state !== "working") throw new Error("Only a working worker may report stuck.");
+      if (input.type === "stuck" && bound.role === "Worker") {
+        const saved = run.safety ??= { strikes: [], actions: {}, nudges: {} };
+        if (saved.strikes.some((item) => item.ticketId === ticketId && item.eventId === input.eventId)) return { state: "stuck", message: "The Lead already recorded this report." };
+        const reports = saved.pendingStuck ??= [];
+        let pending = reports.find((item) => item.ticketId === ticketId && item.eventId === input.eventId);
+        if (!pending) { pending = { ticketId, eventId: input.eventId, summary: input.summary, at: now(), notified: false }; reports.push(pending); }
+        lanes.save({ ...current(context.projectId, run.id), safety: saved });
+        if (!pending.notified) {
+          await bb.sdk.threads.send({ threadId: run.leadThreadId!, senderThreadId: context.threadId, mode: "steer-if-active",
+            input: [{ type: "text", mentions: [], text: "Squadron worker reports no way forward. Confirm the blocker and report type stuck with this ticketId, stable eventId and your Lead summary. Red tests or compile errors during building are never strikes. Quoted report data:\n" + JSON.stringify(pending) }] });
+          pending.notified = true;
+          lanes.save({ ...current(context.projectId, run.id), safety: saved });
+        }
+        safety.actionInLane(context.projectId, run.id, context.threadId);
+        return { state: "stuck", awaitingLead: true, message: "The Lead has your blocker report. Finish your turn and wait for its decision." };
+      }
+      if (input.type === "failure" && input.kind === "review") {
+        const worker = run.workers?.find((item) => item.ticketId === ticketId);
+        const proof = z.object({ review: z.object({ id: z.string(), round: z.number(), commit: z.string(),
+          verdict: z.object({ commit: z.string(), outcome: z.literal("changes") }) }) }).safeParse(worker);
+        if (!proof.success || proof.data.review.commit !== input.commit || proof.data.review.verdict.commit !== input.commit ||
+          input.eventId !== `review:${proof.data.review.id}:${proof.data.review.round}:${input.commit}`) throw new Error("A review strike requires the saved changes verdict and its exact review id, round and done commit.");
+      }
       safety.actionInLane(context.projectId, run.id, context.threadId);
       return safety.strikeInLane(run, { ticketId, eventId: input.eventId, kind: input.type === "stuck" ? "stuck" : input.kind,
         ...(input.type === "failure" ? { commit: input.commit } : {}), summary: input.summary });
@@ -308,7 +332,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
   }
   bb.agents.registerTool({ name: "squadron_spawn_worker", description: "Start one frontier ticket as a child worker, within this Lead's bound lane and worker cap.",
     parameters: spawnWorkerSchema, execute: async ({ ticketId }, context) => JSON.stringify(await spawn(ticketId, context)) });
-  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests, progress after a time nudge, truly stuck with no way forward, or an owner question. The Lead reports quick-check failure of a done commit with a stable eventId and summary. The bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
+  bb.agents.registerTool({ name: "squadron_report", description: "Workers report done with their commit and tests, progress after a time nudge, truly stuck with no way forward, or an owner question. The Lead reports quick-check or saved review failure of a done commit with a stable eventId and its summary; worker stuck reports go to the Lead for its summary. The bound Lead records integration only after review and merge; Helper verifies Git before advancing statuses.",
     parameters: reportSchema, execute: async (input, context) => JSON.stringify(await report(input, context)) });
   bb.agents.registerTool({ name: "squadron_status", description: "Read this thread's trusted Squadron lane, workers and frontier. No Linear write.", parameters: z.object({}).strict(),
     execute: async (_input, context) => {

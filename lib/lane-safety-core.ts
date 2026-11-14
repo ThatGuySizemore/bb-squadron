@@ -11,7 +11,8 @@ export function evaluateStrike(lane: LaneRun, event: StrikeEvent, now: number): 
   const count = () => safety.strikes.filter((item) => item.ticketId === event.ticketId).length;
   const duplicate = safety.strikes.some((item) => item.ticketId === event.ticketId && item.eventId === event.eventId);
   // Working red tests and compilation errors have no reported deliverable.
-  const eligible = event.kind === "stuck" || !!event.commit && worker.commit === event.commit && worker.state === "reported";
+  const eligible = event.kind === "stuck" ? ["working", "spawning", "failed"].includes(worker.state)
+    : !!event.commit && worker.commit === event.commit && worker.state === "reported";
   if (run.state !== "flying" || duplicate || !eligible) return { run, count: count() };
   safety.strikes.push({ ...event, at: now });
   return { run, count: count(), ...(count() >= 2 ? { stopReason: `${event.ticketId} has two strikes. ${event.summary}` } : {}) };

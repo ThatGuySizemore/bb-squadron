@@ -36,9 +36,11 @@ test("worker reports truly stuck; unrelated ticket and ordinary red progress do 
   const worker = await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
   const context = { projectId: "proj-one", threadId: worker.threadId };
   await host.call("squadron_report", { type: "progress", summary: "Red compile failure; fixing the missing export." }, context);
-  assert.equal((await host.call("squadron_report", { type: "stuck", eventId: "stuck-a", summary: "No way forward: required input cannot be obtained." }, context)).count, 1);
+  assert.equal((await host.call("squadron_report", { type: "stuck", eventId: "stuck-a", summary: "No way forward: required input cannot be obtained." }, context)).awaitingLead, true);
+  assert.equal((await host.call("squadron_report", { type: "stuck", ticketId: "FIX-6", eventId: "stuck-a", summary: "Lead: required input is unavailable and there is no way forward." })).count, 1);
   const second = await host.call("squadron_spawn_worker", { ticketId: "FIX-7" });
-  assert.equal((await host.call("squadron_report", { type: "stuck", eventId: "stuck-a", summary: "No way forward: different blocker." }, { ...context, threadId: second.threadId })).count, 1);
+  assert.equal((await host.call("squadron_report", { type: "stuck", eventId: "stuck-a", summary: "No way forward: different blocker." }, { ...context, threadId: second.threadId })).awaitingLead, true);
+  assert.equal((await host.call("squadron_report", { type: "stuck", ticketId: "FIX-7", eventId: "stuck-a", summary: "Lead: this worker also has no way forward." })).count, 1);
   assert.equal((await host.board()).lanes[0].state, "flying");
 });
 
@@ -90,4 +92,12 @@ test("queued nudges wait for observed dispatch before the next-check stop, inclu
   await recovered.safety.check("proj-one");
   const board = await next.harness.behavior.callRpc("board", { projectId: "proj-one" }) as import("../lib/board-model.js").Board;
   assert.equal(board.lanes[0].state, "stopped");
+});
+
+test("a Lead cannot invent a review strike without the saved changes verdict", async (t) => {
+  const host = await laneHost(t); await host.rpc("lanes.start");
+  const worker = await host.call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  await host.call("squadron_report", { type: "done", commit, summary: "Built." }, { projectId: "proj-one", threadId: worker.threadId });
+  await assert.rejects(host.call("squadron_report", { type: "failure", ticketId: "FIX-6", kind: "review", commit, eventId: "invented", summary: "Invented review failure." }), /saved changes verdict/);
+  assert.equal((await host.call("squadron_status", {})).safety?.strikes?.length ?? 0, 0);
 });

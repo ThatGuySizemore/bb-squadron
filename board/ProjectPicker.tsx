@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRpc } from "@get-bb/plugin-sdk/app";
 import type { boardContract, PickerProjects, ProjectCounts } from "../lib/board-contract.js";
-import { trackerName } from "../lib/tracker-detection.js";
+import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
 import "./picker.css";
 
 /** BB's sidebar filter isn't readable by plugins, so the board opens on the
@@ -30,14 +30,22 @@ function Chevron({ open }: { open: boolean }) {
   );
 }
 
-export function ProjectButton({ name, open, controls, onToggle }: { name: string | null; open: boolean; controls: string; onToggle: () => void }) {
+export function ProjectButton({ name, meta, open, controls, onToggle }: { name: string | null; meta?: string | null; open: boolean; controls: string; onToggle: () => void }) {
   return (
     <button type="button" className="sq-picker-button" aria-expanded={open} aria-controls={controls} onClick={onToggle}>
       <span className="sq-sr">Project: </span>
       <span className="sq-picker-name">{name ?? "Choose a project"}</span>
+      {meta ? <span className="sq-picker-meta sq-num">{meta}</span> : null}
       <Chevron open={open} />
     </button>
   );
+}
+
+/** The shown project's facts on the picker button: its tracker kind, then its Ready and Flying counts. */
+export function pickerMeta(tracker: TrackerKind | null | undefined, counts: { ready: number; flying: number } | null): string | null {
+  const parts = [tracker === undefined ? null : tracker === null ? "No tracker" : trackerName(tracker),
+    counts ? `${counts.ready} ready · ${counts.flying} flying` : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 function countsText(row: ProjectCounts["projects"][number] | undefined, loading: boolean): string {
@@ -47,7 +55,7 @@ function countsText(row: ProjectCounts["projects"][number] | undefined, loading:
   return `${row.ready} ready · ${row.flying} flying`;
 }
 
-/** The open picker: a flat list in the page flow, like Doctor's checks. */
+/** The open picker: a list of every BB project, dropping from the header button. */
 export function ProjectList({ id, projects, counts, current, onPick }: {
   id: string;
   projects: PickerProjects["projects"];
@@ -68,8 +76,9 @@ export function ProjectList({ id, projects, counts, current, onPick }: {
             return (
               <li key={project.id}>
                 <button type="button" className="sq-picker-row" aria-current={project.id === current} onClick={() => onPick(project.id)}>
+                  <i className="sq-picker-mark" aria-hidden="true" />
                   <span className="sq-picker-row-name">{project.name}</span>
-                  {tracker ? <span className="sq-tag">{tracker}</span> : <span />}
+                  {tracker ? <span className="sq-picker-kind">{tracker}</span> : <span />}
                   <span className="sq-picker-counts sq-num" data-unknown={unknown}>{countsText(row, counts === null)}</span>
                 </button>
               </li>

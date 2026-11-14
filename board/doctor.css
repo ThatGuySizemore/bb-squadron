@@ -1,12 +1,13 @@
+/* Doctor's open checks: a flat region inside Needs you, under its rows. */
 .sq-doctor-body {
-  margin-top: 30px;
+  margin-top: 16px;
   padding: 12px;
   border: 1px solid var(--sq-rule);
   background: var(--background);
   font-size: 13px;
 }
 .sq-doctor-summary {
-  margin: 0 0 12px;
+  margin: 0 0 8px;
   font-weight: 620;
 }
 .sq-doctor-body > .sq-btn {
@@ -19,11 +20,14 @@
 }
 .sq-doctor-check {
   display: grid;
-  grid-template-columns: 148px 70px minmax(0, 1fr);
+  grid-template-columns: 150px 70px minmax(0, 1fr);
   align-items: baseline;
-  gap: 12px;
-  padding: 10px 0;
+  gap: 10px;
+  padding: 6px 0;
   border-top: 1px solid var(--sq-rule);
+}
+.sq-doctor-check:first-child {
+  border-top: 0;
 }
 .sq-doctor-name {
   font-weight: 620;
@@ -31,6 +35,7 @@
 .sq-doctor-check p {
   margin: 0;
   max-width: 75ch;
+  color: var(--sq-muted);
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
@@ -41,9 +46,10 @@
 .sq-doctor-check[data-status="fix"] .sq-tag,
 .sq-doctor-check[data-status="warning"] .sq-tag {
   border-style: dashed;
+  border-color: var(--sq-amber);
 }
 .sq-doctor-files-title {
-  margin: 20px 0 8px;
+  margin: 16px 0 6px;
   font-weight: 620;
 }
 .sq-doctor-files {
@@ -53,10 +59,10 @@
 }
 .sq-doctor-files li {
   display: grid;
-  grid-template-columns: 148px 70px minmax(0, 1fr);
+  grid-template-columns: 150px 70px minmax(0, 1fr);
   align-items: baseline;
-  gap: 12px;
-  padding: 10px 0;
+  gap: 10px;
+  padding: 6px 0;
   border-top: 1px solid var(--sq-rule);
 }
 .sq-doctor-files a {
@@ -65,7 +71,7 @@
   text-underline-offset: 3px;
 }
 .sq-doctor-files .sq-tag { justify-self: start; }
-.sq-doctor-path { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.sq-doctor-path { font-family: var(--sq-mono); font-size: 11px; color: var(--sq-muted); overflow-wrap: anywhere; }
 @container (max-width: 650px) {
   .sq-doctor-check, .sq-doctor-files li {
     grid-template-columns: minmax(0, 1fr) auto;

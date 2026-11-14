@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { ReactNode } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
@@ -11,12 +11,13 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { DITHER_VARS, layoutPixels } from "../lib/pixels.js";
+import { layoutPixels } from "../lib/pixels.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { BindProject } from "./BindProject.js";
 import { DoctorPanel } from "./Doctor.js";
-import { currentProject, fleetFlying, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
+import { currentProject, fleetFlying, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 import type { ProjectCounts } from "../lib/board-contract.js";
+import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
 
 // ---------- pixel primitives ----------
 
@@ -40,6 +41,15 @@ function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: nu
       </svg>
       <span className="sq-sr">{text}</span>
     </span>
+  );
+}
+
+/** A 6x10 pixel chevron on 2px cells, pointing along the path. */
+function Chevron({ className }: { className: string }) {
+  return (
+    <svg className={className} aria-hidden="true" width={6} height={10} viewBox="0 0 6 10" shapeRendering="crispEdges">
+      {[[0, 0], [2, 2], [4, 4], [2, 6], [0, 8]].map(([x, y]) => <rect key={y} x={x} y={y} width={2} height={2} />)}
+    </svg>
   );
 }
 
@@ -178,14 +188,18 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       {fill}
       <span className="sq-peg-top">
         <span className="sq-peg-id">{ticket.id}</span>
-        <span className="sq-peg-state">{sub}</span>
+        {/* A waiting peg names its open blockers in the state's place. */}
+        {state === "blocked" && waitsOn.length > 0
+          ? <span className="sq-peg-after" title={`Waiting after ${waitsOn.join(", ")}`}>after {waitsOn.join(", ")}</span>
+          : <span className="sq-peg-state">{sub}</span>}
       </span>
-      {state === "blocked" && waitsOn.length > 0 ? <span className="sq-peg-after sq-num">after {waitsOn.join(", ")}</span> : null}
       <span className="sq-peg-title">{ticket.title}</span>
-      <span className="sq-peg-foot">
-        <AiChip route={state === "review" ? reviewer : ticket.route} />
-        {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
-      </span>
+      {size === "full" ? (
+        <span className="sq-peg-foot">
+          <AiChip route={state === "review" ? reviewer : ticket.route} />
+          {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
+        </span>
+      ) : null}
     </>
   );
   return clickable ? (
@@ -243,7 +257,7 @@ function LaneActionButton({ type, specId, acting, tone, dispatch, localMerge = f
   const mine = acting?.specId === specId;
   return (
     <>
-      {mine && acting.type === type ? <span className="sq-plan-why" role="status">{type === "merge" && localMerge ? "Asking the Lead to merge locally" : LANE_ACTION_STATUS[type]}</span> : null}
+      {mine && acting.type === type ? <span className="sq-why" role="status">{type === "merge" && localMerge ? "Asking the Lead to merge locally" : LANE_ACTION_STATUS[type]}</span> : null}
       <Btn tone={tone} disabled={acting !== null} onClick={() => dispatch({ type, specId })}>
         {mine && acting.type === type ? LANE_ACTION_PENDING[type] : LANE_ACTION_LABEL[type]}
       </Btn>
@@ -324,19 +338,13 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           </span>
           {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working</span> : null}
         </div>
-        <div className="sq-rail" data-overflow={overflow}>
-          {overflow ? (
-            <span className="sq-fade" aria-hidden="true">
-              <i />
-              <i />
-              <i />
-            </span>
-          ) : null}
-          <div className="sq-columns" ref={railRef}>
+        {/* The rail scrolls; the columns inside it are as wide as the pegs, so the airstream runs under all of them. */}
+        <div className="sq-rail" data-overflow={overflow} ref={railRef}>
+          <div className="sq-columns">
             {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
             {columns.map((col, i) => (
               <div key={i} className="sq-column">
-                {i > 0 ? <span className="sq-chevron" aria-hidden="true" /> : null}
+                {i > 0 ? <Chevron className="sq-chevron" /> : null}
                 <div className="sq-column-stack">
                   {col.map((t) => (
                     <Peg key={t.id} ticket={t} lane={lane} />
@@ -366,7 +374,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
 }
 
 const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
-  setup: "Setup", waiting: "Waiting", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
+  setup: "Setup", waiting: "Question", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
 };
 
 export function NeedsYouStrip({ items, dispatch, setup, setUp, demo = false, acting = null }: {
@@ -445,36 +453,56 @@ function IssueTitle({ title, url, className }: { title: string; url?: string; cl
   );
 }
 
+/** A spec number on the band plate that list rows share; landed plates carry the renderer's green grain. */
+function Plate({ id, landed = false }: { id: string; landed?: boolean }) {
+  return (
+    <span className="sq-plate" data-landed={landed}>
+      {landed ? <DitherCanvas fx={{ kind: "plate" }} className="sq-fx" /> : null}
+      <PixelText text={id} cell={2} className="sq-plate-id" />
+    </span>
+  );
+}
+
 function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
   // Real specs carry the board model's reason; the demo computes its own.
   const blocked = (spec.startReason !== undefined ? spec.startReason : canStart(board, spec))
     ?? (startBusy ? "Wait for the Lead thread to open." : null);
+  const waiting = spec.waiting ?? [];
+  const canStartNow = Math.max(0, spec.ticketCount - waiting.length);
   return (
-    <li className="sq-ready" data-blocked={blocked !== null}>
-      <PixelText text={spec.id} cell={2} className="sq-ready-id" />
-      <IssueTitle title={spec.title} url={spec.url} className="sq-ready-title" />
-      <span className="sq-ready-meta sq-num">
-        {spec.ticketCount} {spec.ticketCount === 1 ? "ticket" : "tickets"}
-      </span>
-      <span className="sq-ready-routes">
-        {spec.routes.map((r, i) => (
-          <AiChip key={i} route={r} />
-        ))}
-      </span>
-      {spec.acceptOwner ? <span className="sq-tag">accept:owner</span> : <span />}
-      <span className="sq-ready-why" role={opening ? "status" : undefined}>{opening ? "Opening its Lead thread" : blocked ?? ""}</span>
-      <Btn tone="primary" disabled={opening || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
-        {opening ? "Opening…" : "Start"}
-      </Btn>
-      {spec.waiting?.length ? (
-        <ul className="sq-ready-waiting" aria-label={`Tickets of ${spec.id} that wait on blockers`}>
-          {spec.waiting.map((ticket) => (
-            <li key={ticket.id} title={ticket.title}>
-              <span className="sq-mono">{ticket.id}</span> waits on {list(ticket.blockedBy)}
-            </li>
-          ))}
-        </ul>
-      ) : null}
+    <li className="sq-row sq-ready" data-blocked={blocked !== null}>
+      <Plate id={spec.id} />
+      <div className="sq-row-main">
+        <IssueTitle title={spec.title} url={spec.url} className="sq-row-title" />
+        <div className="sq-row-meta">
+          <span className="sq-num"><b>{spec.ticketCount}</b> {spec.ticketCount === 1 ? "ticket" : "tickets"}</span>
+          {waiting.length ? <span className="sq-frontier sq-num">{canStartNow} can start</span> : null}
+          {spec.routes.length ? (
+            <span className="sq-ready-routes">
+              {spec.routes.map((r, i) => <AiChip key={i} route={r} />)}
+            </span>
+          ) : null}
+          {spec.acceptOwner ? <span className="sq-tag">accept:owner</span> : null}
+        </div>
+        {waiting.length ? (
+          <details className="sq-waits">
+            <summary>{waiting.length} {waiting.length === 1 ? "waits" : "wait"} on blockers</summary>
+            <ul className="sq-ready-waiting" aria-label={`Tickets of ${spec.id} that wait on blockers`}>
+              {waiting.map((ticket) => (
+                <li key={ticket.id} title={ticket.title}>
+                  <span className="sq-mono">{ticket.id}</span> waits on {list(ticket.blockedBy)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+      </div>
+      <div className="sq-row-actions">
+        {opening || blocked ? <span className="sq-why" role={opening ? "status" : undefined}>{opening ? "Opening its Lead thread" : blocked}</span> : null}
+        <Btn tone="primary" disabled={opening || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
+          {opening ? "Opening…" : "Start"}
+        </Btn>
+      </div>
     </li>
   );
 }
@@ -487,25 +515,29 @@ function list(ids: readonly string[]): string {
 function ShapingRow({ spec, onPlan, opening }: { spec: ShapingSpec; onPlan: Plan; opening: boolean }) {
   const label = spec.action === "resume" ? "Resume planning" : "Plan tickets";
   return (
-    <li className="sq-shaping">
-      <PixelText text={spec.id} cell={2} className="sq-ready-id" />
-      <IssueTitle title={spec.title} url={spec.url} className="sq-shaping-title" />
-      <span className="sq-ready-meta sq-num">
-        {spec.ticketCount} {spec.ticketCount === 1 ? "ticket" : "tickets"}
-      </span>
-      <span className="sq-shaping-missing" role={opening ? "status" : undefined}>
-        {opening ? (spec.action === "resume" ? "Opening its planning thread" : "Starting a planning thread for its tickets") : spec.missing}
-      </span>
-      <Btn disabled={opening} title={opening ? undefined : `${label} for ${spec.id}`}
-        onClick={() => (spec.action === "resume" ? onPlan(spec.id) : onPlan(spec.id, "tickets"))}>
-        {opening ? "Opening…" : label}
-      </Btn>
+    <li className="sq-row sq-shaping">
+      <Plate id={spec.id} />
+      <div className="sq-row-main">
+        <IssueTitle title={spec.title} url={spec.url} className="sq-row-title" />
+        <div className="sq-row-meta">
+          <span className="sq-missing" role={opening ? "status" : undefined}>
+            {opening ? (spec.action === "resume" ? "Opening its planning thread" : "Starting a planning thread for its tickets") : spec.missing}
+          </span>
+          <span className="sq-num">{spec.ticketCount} {spec.ticketCount === 1 ? "ticket" : "tickets"}</span>
+        </div>
+      </div>
+      <div className="sq-row-actions">
+        <Btn tone="primary" disabled={opening} title={opening ? undefined : `${label} for ${spec.id}`}
+          onClick={() => (spec.action === "resume" ? onPlan(spec.id) : onPlan(spec.id, "tickets"))}>
+          {opening ? "Opening…" : label}
+        </Btn>
+      </div>
     </li>
   );
 }
 
 /** An empty section: how work gets into it, and the button that does it. */
-function EmptySection({ text, action }: { text: string; action: ReactNode }) {
+function EmptySection({ text, action }: { text: string; action?: ReactNode }) {
   return (
     <div className="sq-empty">
       <p className="sq-clear">{text}</p>
@@ -515,25 +547,52 @@ function EmptySection({ text, action }: { text: string; action: ReactNode }) {
 }
 
 function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: Plan; opening: boolean }) {
+  const meta = issue.priority || issue.labels.length || issue.under || opening;
   return (
-    <li>
-      {issue.priority !== undefined ? <PriorityDot priority={issue.priority} /> : <span />}
+    <li className="sq-row sq-open-issue">
       <span className="sq-open-issues-id sq-num">{issue.id}</span>
-      <span className="sq-open-issues-main">
-        <IssueTitle title={issue.title} url={issue.url} className="sq-open-issues-title" />
-        {issue.under ? <span className="sq-open-issues-under">{issue.under}</span> : null}
-      </span>
-      <span className="sq-open-issues-labels">
-        {issue.labels.map((l) => (
-          <span key={l} className="sq-tag">
-            {l}
-          </span>
-        ))}
-        {opening ? <span className="sq-plan-why" role="status">Starting its planning thread</span> : null}
-      </span>
-      <Btn disabled={opening} title={opening ? `Opening the planning thread for ${issue.id}` : undefined} onClick={() => onPlan(issue.id)}>
-        {opening ? "Opening…" : "Plan"}
-      </Btn>
+      <div className="sq-row-main">
+        <IssueTitle title={issue.title} url={issue.url} className="sq-row-title" />
+        {meta ? (
+          <div className="sq-row-meta">
+            {issue.priority ? <PriorityDot priority={issue.priority} /> : null}
+            {issue.labels.map((l) => <span key={l} className="sq-tag">{l}</span>)}
+            {issue.under ? <span className="sq-open-issues-under">{issue.under}</span> : null}
+            {opening ? <span className="sq-why" role="status">Starting its planning thread</span> : null}
+          </div>
+        ) : null}
+      </div>
+      <div className="sq-row-actions">
+        <Btn disabled={opening} title={opening ? `Opening the planning thread for ${issue.id}` : undefined} onClick={() => onPlan(issue.id)}>
+          {opening ? "Opening…" : "Plan"}
+        </Btn>
+      </div>
+    </li>
+  );
+}
+
+/** When a landed lane landed, in the owner's local time. */
+function landedWhen(at: number | undefined, now: number): string | null {
+  if (at === undefined) return null;
+  const date = new Date(at);
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return new Date(now).toDateString() === date.toDateString() ? time : `${date.toLocaleDateString([], { day: "numeric", month: "short" })}, ${time}`;
+}
+
+function LandedRow({ lane, fresh }: { lane: Lane; fresh: boolean }) {
+  const when = landedWhen(lane.landedAt, Date.now());
+  const proof = lane.pr ? `PR #${lane.pr.number} merged` : `${lane.branch} merged`;
+  return (
+    <li className="sq-row sq-landed-row" data-fresh={fresh}>
+      <Plate id={lane.specId} landed />
+      <div className="sq-row-main">
+        <IssueTitle title={lane.title} url={lane.url} className="sq-row-title" />
+        <div className="sq-row-meta sq-num">
+          <span>{proof}</span>
+          {when ? <span>landed {when}</span> : null}
+          <span>flew {formatMinutes(lane.minutes)}</span>
+        </div>
+      </div>
     </li>
   );
 }
@@ -571,31 +630,78 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
+/** How long a landed line takes to fold away at the end of its burst, and how long its Landed row arrives for. */
+const LEAVE_MS = 420;
+const ARRIVE_MS = 900;
+
+interface LandingPhase {
+  /** The burst is playing on the lane's sortie line. */
+  landing(lane: Lane): boolean;
+  /** The burst's line is folding away. */
+  leaving(lane: Lane): boolean;
+  /** The lane has just arrived in Landed. */
+  fresh(lane: Lane): boolean;
+}
+
 /** Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed. */
-function useLandings(lanes: Lane[]): (lane: Lane) => boolean {
+function useLandings(lanes: Lane[]): LandingPhase {
   const seen = useRef<Landings | null>(null);
   // Folded in as each board arrives, so a lane never flashes into Landed before its burst.
   const landings = useMemo(() => (seen.current = nextLandings(seen.current, lanes, Date.now())), [lanes]);
   const [now, setNow] = useState(() => Date.now());
-  const pending = Object.values(landings.until).filter((until) => until > now);
+  const marks = Object.values(landings.until).flatMap((until) => [until - LEAVE_MS, until, until + ARRIVE_MS]).filter((at) => at > now);
   useEffect(() => {
-    if (pending.length === 0) return;
-    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, Math.min(...pending) - Date.now()) + 20);
+    if (marks.length === 0) return;
+    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, Math.min(...marks) - Date.now()) + 20);
     return () => window.clearTimeout(t);
   });
-  return (lane) => lane.state === "landed" && (landings.until[lane.specId] ?? 0) > now;
+  const until = (lane: Lane) => (lane.state === "landed" ? landings.until[lane.specId] ?? 0 : 0);
+  return {
+    landing: (lane) => until(lane) > now,
+    leaving: (lane) => until(lane) > now && now >= until(lane) - LEAVE_MS,
+    fresh: (lane) => until(lane) > 0 && until(lane) <= now && now < until(lane) + ARRIVE_MS,
+  };
 }
 
-/** Where the board's copy of Linear stands, in one muted line under the header. */
-function LinearLine({ board, now }: { board: Board; now: number }) {
+/** Where this project's issues come from: the tracker-kind tag, then the source, in one muted line under the header. */
+export interface TrackerInfo {
+  kind: TrackerKind | null;
+  /** Why the tracker is unknown, when it is. */
+  note?: string | null;
+}
+
+function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerInfo; now: number }) {
   const linear = board.linear;
-  if (!linear || linear.state === "disconnected" || linear.state === "unbound") return null;
-  const age = linear.syncedAt === null ? null : Math.max(0, Math.round((now - linear.syncedAt) / 60_000));
-  const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
+  const kind = tracker ? tracker.kind : linear ? "linear" : undefined;
+  if (kind === undefined) return null;
+  if (kind === "linear") {
+    if (!linear || linear.state === "disconnected" || linear.state === "unbound") return null;
+    const age = linear.syncedAt === null ? null : Math.max(0, Math.round((now - linear.syncedAt) / 60_000));
+    const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
+    return (
+      <p className="sq-trackerline sq-linear" data-state={linear.state} role="status" aria-live="polite">
+        <span className="sq-kind">Linear</span>
+        {linear.project ? <strong className="sq-linear-project">{linear.project}</strong> : null}
+        <span>{linear.state === "current" ? read : linear.state === "failed" ? `${linear.message} ${read}` : linear.message}</span>
+      </p>
+    );
+  }
+  if (kind === null) {
+    // Doctor's full reason sits in Needs you; the line only says what's missing.
+    return (
+      <p className="sq-trackerline">
+        <span className="sq-kind">No tracker</span>
+        <strong>No tracker found</strong>
+        {tracker?.note ? <span>{tracker.note}</span> : null}
+      </p>
+    );
+  }
   return (
-    <p className="sq-linear" data-state={linear.state} role="status" aria-live="polite">
-      <span className="sq-linear-project">{linear.project}</span>
-      <span>{linear.state === "current" ? read : linear.state === "failed" ? `${linear.message} ${read}` : linear.message}</span>
+    <p className="sq-trackerline">
+      <span className="sq-kind">{trackerName(kind)}</span>
+      {kind === "local-markdown"
+        ? <><strong>.scratch/</strong><span>on main · Flying lanes read from their integration branch</span></>
+        : <><strong>GitHub Issues</strong><span>read through gh</span></>}
     </p>
   );
 }
@@ -612,11 +718,45 @@ export function needsSetup(board: Board): boolean {
     || doctor.configurationFiles.some((file) => file.id === "project-settings" && !file.exists);
 }
 
-/** Doctor's verdict in a word or two, for the header. */
-function doctorStatus(board: Board): { text: string; tone: "pass" | "fix" } | null {
+/** Doctor's verdict in a few words, for the header: what it means for Start. */
+function doctorStatus(board: Board): { text: string; tone: "pass" | "fix" | "setup" } | null {
   if (!board.doctor) return null;
+  if (needsSetup(board)) return { text: "Needs Set up", tone: "setup" };
   const fixes = board.doctor.checks.filter((check) => check.status === "fix").length;
-  return fixes ? { text: `${fixes} to fix`, tone: "fix" } : { text: "Ready", tone: "pass" };
+  return fixes ? { text: `${fixes} to fix before Start`, tone: "fix" } : { text: "Start ready", tone: "pass" };
+}
+
+type Station = "open" | "shaping" | "ready" | "flying" | "landed";
+const STATIONS: [Station, string][] = [["open", "Open issues"], ["shaping", "Shaping"], ["ready", "Ready"], ["flying", "Flying"], ["landed", "Landed"]];
+
+/** The path in one strip: each station's count, in path order, jumping to its section. */
+function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>; onJump: (station: Station) => void }) {
+  return (
+    <nav className="sq-path" aria-label="The path">
+      {STATIONS.map(([key, label]) => {
+        const n = counts[key];
+        return (
+          <button key={key} type="button" className="sq-station" data-zero={!n} data-hot={key === "flying" && !!n} onClick={() => onJump(key)}>
+            <span className="sq-station-label">
+              {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : label}
+            </span>
+            <span className="sq-station-count sq-num">{n ?? "–"}</span>
+            {key !== "landed" ? <Chevron className="sq-station-chev" /> : null}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** A section's label on its pixel rule, with its count. Needs you counts in amber. */
+function SectionHead({ id, title, count, amber = false }: { id: string; title: string; count: number; amber?: boolean }) {
+  return (
+    <div className="sq-label">
+      <h2 id={id}>{title}</h2>
+      {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
+    </div>
+  );
 }
 
 interface BoardViewProps {
@@ -644,60 +784,65 @@ interface BoardViewProps {
   projectList?: ReactNode;
   /** The project Doctor checks; defaults to BB's context project. */
   projectId?: string | null;
+  /** The shown project's tracker, for the tracker line; undefined while unknown. */
+  tracker?: TrackerInfo;
   /** Lanes flying across every project, for the formation mark; null while unknown. */
   fleet?: number | null;
   footer?: ReactNode;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, fleet = null, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
-  const isLanding = useLandings(board.lanes);
+  const phase = useLandings(board.lanes);
   const flying = board.lanes.filter((l) => l.state !== "landed");
-  const onLine = board.lanes.filter((l) => l.state !== "landed" || isLanding(l));
-  const landed = board.lanes.filter((l) => l.state === "landed" && !isLanding(l));
+  const onLine = board.lanes.filter((l) => l.state !== "landed" || phase.landing(l));
+  const landed = board.lanes.filter((l) => l.state === "landed" && !phase.landing(l));
   const startable = board.ready.find((spec) => (spec.startReason !== undefined ? spec.startReason : canStart(board, spec)) === null);
+  const sections = useRef<Partial<Record<Station, HTMLElement | null>>>({});
+  const jump = (station: Station) => sections.current[station]?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
   // New spec starts the path from nothing; one planning thread opens at a time.
   const newSpec = (tone: "primary" | "plain" = "plain") => (
     <Btn tone={tone} disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : "Plan a new spec from nothing"} onClick={() => onPlan()}>
       {planning === "" ? "Opening…" : "New spec"}
     </Btn>
   );
-  const openTickets = flying.reduce((n, l) => n + l.tickets.filter((t) => t.state !== "branch" && t.state !== "done").length, 0);
   const doctor = doctorStatus(board);
   const setUpButton = onSetUp && needsSetup(board) ? (
     <>
-      {settingUp ? <span className="sq-plan-why" role="status">Starting the setup thread</span> : null}
+      {settingUp ? <span className="sq-why" role="status">Starting the setup thread</span> : null}
       <Btn tone="amber" disabled={settingUp} title={settingUp ? "Opening the setup thread" : "Start a thread that sets this project up for Squadron"} onClick={onSetUp}>
         {settingUp ? "Opening…" : "Set up"}
       </Btn>
     </>
   ) : null;
+  // While the board can't show Ready, Shaping and Open issues, their stations show a dash, not a false zero.
+  const counts: Record<Station, number | null> = {
+    open: notice ? null : board.openIssues.length, shaping: notice ? null : board.shaping.length, ready: notice ? null : board.ready.length,
+    flying: flying.length, landed: landed.length,
+  };
 
   return (
-    <div className="sq" style={DITHER_VARS as CSSProperties} data-reduced={reduced}>
+    <div className="sq" data-reduced={reduced}>
       <div className="sq-page">
         <header className="sq-head">
-          <div className="sq-head-title">
+          <div className="sq-brand">
             {demo ? (
               <FormationMark flying={flying.length} label={`${flying.length} of ${board.laneCapacity} lanes flying`} />
             ) : fleet !== null ? (
               <FormationMark flying={fleet} label={`${fleet} ${fleet === 1 ? "lane" : "lanes"} flying across your projects`} />
             ) : null}
             <h1>Squadron</h1>
-            {projectButton}
-            {demo ? (
-              <span className="sq-tag" data-tone="amber">
-                Synthetic data
-              </span>
-            ) : null}
           </div>
-          <p className="sq-head-counts sq-num">
-            {demo ? `${flying.length} of ${board.laneCapacity} lanes flying` : `${flying.length} ${flying.length === 1 ? "lane" : "lanes"} on the board`} · {openTickets} tickets open · {items.length} {items.length === 1 ? "needs" : "need"} you
-          </p>
+          {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
+          {demo ? (
+            <span className="sq-tag" data-tone="amber">
+              Synthetic data
+            </span>
+          ) : null}
           <div className="sq-head-actions">
             {demo ? (
               <button
@@ -714,28 +859,27 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
               </button>
             ) : null}
             {modeSwitch}
-            {planning === "" ? <span className="sq-plan-why" role="status">Starting a planning thread</span> : null}
-            {newSpec("primary")}
-            <button type="button" className="sq-btn sq-doctor-button" aria-expanded={doctorOpen} aria-controls={doctorId} onClick={() => setDoctorOpen((open) => !open)}>
+            {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
+            <button type="button" className="sq-doctor" data-status={doctor?.tone ?? "unknown"} aria-expanded={doctorOpen} aria-controls={doctorId}
+              title={doctor ? `Doctor: ${doctor.text}` : "Check this repo's setup"} onClick={() => setDoctorOpen((open) => !open)}>
               Doctor{doctor ? <span className="sq-sr">: </span> : null}
-              {doctor ? <span className="sq-doctor-status" data-status={doctor.tone}>{doctor.text}</span> : null}
+              {doctor ? <span className="sq-doctor-word">{doctor.text}</span> : null}
             </button>
+            {newSpec("primary")}
           </div>
         </header>
-        {projectList}
-        <LinearLine board={board} now={Date.now()} />
+        <TrackerLine board={board} tracker={tracker} now={Date.now()} />
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
+        <PathStrip counts={counts} onJump={jump} />
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
-          <h2 id="sq-needs-h">
-            Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
-          </h2>
+          <SectionHead id="sq-needs-h" title="Needs you" count={items.length} amber />
           <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} setUp={setUpButton} demo={demo} acting={acting} />
+          <DoctorPanel open={doctorOpen} id={doctorId} projectId={projectId} />
         </section>
-        <DoctorPanel open={doctorOpen} id={doctorId} projectId={projectId} />
 
-        <section className="sq-section" aria-labelledby="sq-flying-h">
-          <h2 id="sq-flying-h">Flying</h2>
+        <section className="sq-section" aria-labelledby="sq-flying-h" ref={(el) => { sections.current.flying = el; }}>
+          <SectionHead id="sq-flying-h" title="Flying" count={flying.length} />
           {onLine.length === 0 ? (
             <EmptySection text="Nothing is flying. Start a Ready spec to launch its lane." action={startable ? (
               <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
@@ -743,19 +887,23 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
               </Btn>
             ) : newSpec()} />
           ) : (
-            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} demo={demo} acting={acting} />)
+            onLine.map((lane) => (
+              <div key={lane.specId} className="sq-line-wrap" data-leaving={phase.leaving(lane)}>
+                <SortieLine lane={lane} dispatch={dispatch} landing={phase.landing(lane)} demo={demo} acting={acting} />
+              </div>
+            ))
           )}
         </section>
 
-        <section className="sq-section" aria-labelledby="sq-ready-h">
-          <h2 id="sq-ready-h">Ready</h2>
+        <section className="sq-section" aria-labelledby="sq-ready-h" ref={(el) => { sections.current.ready = el; }}>
+          <SectionHead id="sq-ready-h" title="Ready" count={notice ? 0 : board.ready.length} />
           {notice ? (
             <p className="sq-clear">{notice}</p>
           ) : board.ready.length === 0 ? (
             <EmptySection text="No spec is Ready. A spec is Ready once it has the ready-for-agent label and an open ticket nothing blocks."
               action={newSpec()} />
           ) : (
-            <ul className="sq-ready-list">
+            <ul className="sq-list">
               {board.ready.map((spec) => (
                 <ReadyRow key={spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
               ))}
@@ -763,12 +911,12 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           )}
         </section>
 
-        <section className="sq-section" aria-labelledby="sq-shaping-h">
-          <h2 id="sq-shaping-h">Shaping</h2>
+        <section className="sq-section" aria-labelledby="sq-shaping-h" ref={(el) => { sections.current.shaping = el; }}>
+          <SectionHead id="sq-shaping-h" title="Shaping" count={notice ? 0 : board.shaping.length} />
           {notice ? null : board.shaping.length === 0 ? (
             <EmptySection text="No spec is being shaped. Plan an open issue, or start a new spec from nothing." action={newSpec()} />
           ) : (
-            <ul className="sq-shaping-list">
+            <ul className="sq-list">
               {board.shaping.map((spec) => (
                 <ShapingRow key={spec.id} spec={spec} onPlan={onPlan} opening={planning === spec.id} />
               ))}
@@ -776,12 +924,12 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           )}
         </section>
 
-        <section className="sq-section" aria-labelledby="sq-open-issues-h">
-          <h2 id="sq-open-issues-h">Open issues</h2>
+        <section className="sq-section sq-open" aria-labelledby="sq-open-issues-h" ref={(el) => { sections.current.open = el; }}>
+          <SectionHead id="sq-open-issues-h" title="Open issues" count={notice ? 0 : board.openIssues.length} />
           {notice ? null : board.openIssues.length === 0 ? (
             <EmptySection text="No open issues. Issues in this project that aren't specs or tickets wait here for Plan." action={newSpec()} />
           ) : (
-            <ul className="sq-open-issues">
+            <ul className="sq-list">
               {board.openIssues.map((issue) => (
                 <OpenIssueRow key={issue.id} issue={issue} onPlan={onPlan} opening={planning === issue.id} />
               ))}
@@ -789,21 +937,16 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           )}
         </section>
 
-        {landed.length > 0 ? (
-          <section className="sq-section" aria-labelledby="sq-landed-h">
-            <h2 id="sq-landed-h">Landed</h2>
-            <ul className="sq-landed">
-              {landed.map((lane) => (
-                <li key={lane.specId}>
-                  <PixelText text={lane.specId} cell={2} className="sq-landed-id" />
-                  <span>{lane.title}</span>
-                  <span className="sq-num">PR #{lane.pr?.number ?? "—"}</span>
-                  <span className="sq-num">{formatMinutes(lane.minutes)}</span>
-                </li>
-              ))}
+        <section className="sq-section sq-landed" aria-labelledby="sq-landed-h" ref={(el) => { sections.current.landed = el; }}>
+          <SectionHead id="sq-landed-h" title="Landed" count={landed.length} />
+          {landed.length === 0 ? (
+            <EmptySection text="Nothing has landed yet. A lane lands when its PR merges or, in a repo with no remote, when its integration branch merges into main." />
+          ) : (
+            <ul className="sq-list">
+              {landed.map((lane) => <LandedRow key={lane.specId} lane={lane} fresh={phase.fresh(lane)} />)}
             </ul>
-          </section>
-        ) : null}
+          )}
+        </section>
 
         {footer}
       </div>
@@ -1057,12 +1200,24 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       }
     } finally { setActing(null); }
   }, [rpc, projectId, acting, load]);
+  // The open picker closes on Escape or a click outside it, unless it's asking for a project.
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const away = (event: PointerEvent) => { if (!(event.target instanceof Element && event.target.closest(".sq-pick"))) setPickerOpen(false); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setPickerOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", escape); };
+  }, [pickerOpen]);
   const notice = liveNotice({ projectId, board, failed });
   const projectName = listed?.projects.find((item) => item.id === projectId)?.name ?? null;
+  const row = counts?.projects.find((item) => item.id === projectId);
+  const shownCounts = board ? { ready: board.ready.length, flying: board.lanes.filter((lane) => lane.state !== "landed").length } : null;
   return (
     <BoardView
       projectId={projectId}
-      projectButton={listed ? <ProjectButton name={projectName} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
+      tracker={row ? { kind: row.tracker, note: row.note } : undefined}
+      projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(row ? row.tracker : undefined, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
       projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} onCounts={setCounts} /> : null}
       fleet={board ? fleetFlying(counts, projectId, board.lanes.filter((lane) => lane.state !== "landed").length) : null}
       onSetUp={() => void setUp()}

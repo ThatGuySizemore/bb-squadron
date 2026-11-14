@@ -6,6 +6,7 @@ import { formationCells } from "./pixels.js";
 export const LINEAR_AVATAR_PATHS = {
   "Planning thread": "/avatars/planning-thread.svg",
   Lead: "/avatars/lead-thread.svg",
+  Worker: "/avatars/worker-thread.svg",
 } as const;
 
 /** Keep credentials, paths, query strings and fragments out of public avatars. */
@@ -20,7 +21,7 @@ export function signedCommentAvatarUrl(appUrl: string | null | undefined, plugin
 export function registerSignedCommentAvatars(bb: BbPluginApi) {
   for (const role of Object.keys(LINEAR_AVATAR_PATHS) as Array<keyof typeof LINEAR_AVATAR_PATHS>) {
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -6 21 21" width="84" height="84" shape-rendering="crispEdges">${
-      formationCells(role === "Lead" ? 1 : 3).map(([, x, y]) => `<rect x="${x}" y="${y}" width="1" height="1" fill="#3fa7d6"/>`).join("")}</svg>`;
+      formationCells(role === "Lead" ? 1 : role === "Worker" ? 2 : 3).map(([, x, y]) => `<rect x="${x}" y="${y}" width="1" height="1" fill="#3fa7d6"/>`).join("")}</svg>`;
     bb.http.route("GET", LINEAR_AVATAR_PATHS[role], (context) => {
       context.header("Cache-Control", "public, max-age=86400");
       context.header("X-Content-Type-Options", "nosniff");

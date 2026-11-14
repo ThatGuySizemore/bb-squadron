@@ -3,7 +3,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeQueueEntry, makeThreadResponse, makePluginAgentConfigurationContext } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
 import { binding, workspace } from "./fixtures/board-workspace.js";
 import { end, ready } from "./fixtures/linear-mirror.js";
@@ -24,7 +24,7 @@ type HostOptions = { appUrl?: string | null; settings?: Record<string, string> }
 function host(options: HostOptions = {}) {
   let spawned = 0;
   return createFakePluginHost({
-    pluginId: "squadron",
+    pluginId: "squadron", agentSkillIds: ["squadron-planner"],
     appUrl: options.appUrl === undefined ? "https://bb.example.test" : options.appUrl,
     settings: options.settings ?? { linearApiKey: "fake-planning-key" },
     sdk: {
@@ -37,6 +37,10 @@ function host(options: HostOptions = {}) {
         return { content: settingsFile, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: settingsFile.length };
       } },
       threads: {
+        queuedMessages: {
+          list: async ({ threadId }) => [makeQueueEntry({ id: `queued-${threadId}`, threadId })],
+          send: async () => ({ ok: true as const, delivery: "sent" as const }),
+        },
         spawn: async (args) => makeThreadResponse({ id: `thr_plan_${++spawned}`, projectId: args.projectId }),
         get: async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "proj-one" }),
         defaultExecutionOptions: async () => ({ model: "claude-opus-5-5", permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/start" }),
@@ -400,4 +404,14 @@ test("Plan reopens a thread only while its seed still matches: changed label IDs
   assert.equal(await plan(), "thr_plan_3");
   assert.deepEqual(harness.inspection.sdk.calls.map((call) => call.path).filter((path) => /^threads\.(archive|stop|delete|send|update)$/.test(path)), [],
     "older planning threads and their work are left as they are");
+});
+
+test("trusted first-prompt binding preserves planning skill and write tools under selective agent configuration", async (t) => {
+  const { harness } = await setup(t);
+  const result = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string };
+  const config = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({
+    thread: { id: result.threadId }, project: { id: "proj-one" }, pluginMetadata: { role: "forged" },
+  }));
+  assert.deepEqual(config.skills, ["squadron-planner"]);
+  assert.deepEqual(config.tools.map((tool) => tool.name).sort(), ["squadron_linear_receipt", "squadron_linear_write"]);
 });

@@ -9,6 +9,7 @@ import { boardChanged, linearOutboxChanged, linearConnectionChanged } from "../l
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
 import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
+import type { workerContract } from "../lib/worker-contract.js";
 import type { LaneStarted, laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
@@ -171,7 +172,29 @@ function useOpen() {
 
 // ---------- the board ----------
 
-function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
+type RouteChange = (specId: string, ticketId: string, route: Route) => Promise<void>;
+
+function TicketRoute({ ticket, specId, onRoute }: { ticket: Ticket; specId: string; onRoute: RouteChange }) {
+  const [saving, setSaving] = useState(false);
+  const choices = ticket.routeChoices ?? [];
+  const key = (route: Route) => JSON.stringify([route.family, route.model, route.effort]);
+  return <span className="sq-ticket-route">
+    <select className="sq-select" aria-label={`Route for ${ticket.id}`} disabled={saving}
+      value={key(ticket.route)} onChange={async (event) => {
+        const route = choices.find((choice) => key(choice) === event.target.value);
+        if (!route || saving) return;
+        setSaving(true);
+        try { await onRoute(specId, ticket.id, route); }
+        catch (error) { toast(error instanceof Error ? error.message : "Couldn't save this route. Try again."); }
+        finally { setSaving(false); }
+      }}>
+      {choices.map((route) => <option key={key(route)} value={key(route)}>{route.model} · {route.effort}</option>)}
+    </select>
+    <span className="sq-route-status" role="status">{saving ? "Saving route…" : ""}</span>
+  </span>;
+}
+
+function Peg({ ticket, lane, onRoute }: { ticket: Ticket; lane: Lane; onRoute?: RouteChange }) {
   const open = useOpen();
   const reviewer = reviewerFor(ticket.route);
   const state = ticket.state;
@@ -185,7 +208,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
     state === "blocked"
       ? "Waiting"
       : state === "review"
-        ? `Review · ${reviewer.model}`
+        ? ticket.reportPending ? "Reported done" : `Review · ${reviewer.model}`
         : TICKET_LABEL[state];
   const clickable = Boolean(ticket.threadId);
   const size = state === "branch" || state === "done" ? "compact" : state === "blocked" ? "slim" : "full";
@@ -218,7 +241,9 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       {state === "blocked" ? <span className="sq-peg-after sq-num">after {waitsOn.join(", ") || "blockers"}</span> : null}
       <span className="sq-peg-title">{ticket.title}</span>
       <span className="sq-peg-foot">
-        <AiChip route={state === "review" ? reviewer : ticket.route} />
+        {onRoute && ticket.routeChoices?.length && !ticket.threadId && (state === "ready" || state === "blocked")
+          ? <TicketRoute ticket={ticket} specId={lane.specId} onRoute={onRoute} />
+          : <AiChip route={state === "review" && !ticket.reportPending ? reviewer : ticket.route} />}
         {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
       </span>
     </>
@@ -229,7 +254,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       className="sq-peg"
       data-size={size}
       data-state={state}
-      onClick={() => open.thread(ticket.threadId!, `the ${state === "review" ? "reviewer" : "worker"} thread for ${ticket.id}`)}
+      onClick={() => open.thread(ticket.threadId!, `the ${state === "review" && !ticket.reportPending ? "reviewer" : "worker"} thread for ${ticket.id}`)}
       aria-label={`${ticket.id}, ${ticket.title}: ${sub}. Open thread.`}
     >
       {body}
@@ -260,7 +285,7 @@ function useOverflow<T extends HTMLElement>() {
   return [ref, overflow] as const;
 }
 
-function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean }) {
+function SortieLine({ lane, dispatch, landing, onRoute }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; onRoute?: RouteChange }) {
   const open = useOpen();
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
@@ -333,7 +358,7 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
                 {i > 0 ? <span className="sq-chevron" aria-hidden="true" /> : null}
                 <div className="sq-column-stack">
                   {col.map((t) => (
-                    <Peg key={t.id} ticket={t} lane={lane} />
+                    <Peg key={t.id} ticket={t} lane={lane} onRoute={onRoute} />
                   ))}
                 </div>
               </div>
@@ -560,13 +585,14 @@ interface BoardViewProps {
   starting?: string | null;
   setup?: ReactNode;
   onRetry?: (writeId: string) => Promise<void>;
+  onRoute?: RouteChange;
   /** Replaces Ready and Unplanned while the board can't show them. */
   notice?: ReactNode;
   footer?: ReactNode;
 }
 
 /** The board page, fed by the live Helper or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, setup, onRetry, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, setup, onRetry, onRoute, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -634,7 +660,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           {onLine.length === 0 ? (
             <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
           ) : (
-            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} />)
+            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} onRoute={onRoute} />)
           )}
         </section>
 
@@ -781,7 +807,7 @@ export async function startLaneFromBoard(deps: {
 /** The real board for the BB project in view, read from the Helper. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract & typeof laneContract>();
+  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract & typeof laneContract & typeof workerContract>();
   const open = useOpen();
   const [planning, setPlanning] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
@@ -854,6 +880,11 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         openThread: (threadId) => open.thread(threadId, "the Lead thread"), refresh: load, notify: (text) => { toast(text); } }, projectId, specId);
     } finally { startingRequest.current = false; setStarting(null); }
   }, [rpc, projectId, open, load]);
+  const changeRoute = useCallback<RouteChange>(async (specId, ticketId, route) => {
+    if (!projectId) return;
+    try { await rpc.call("workers.route", { projectId, specId, ticketId, route }); }
+    finally { await load(); }
+  }, [rpc, projectId, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
@@ -872,6 +903,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       ) : undefined}
       setup={board?.linear?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
       onRetry={retry}
+      onRoute={changeRoute}
     />
   );
 }

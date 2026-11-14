@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Route } from "./board-model.js";
+import { workerRunSchema } from "./worker-contract.js";
 import { routeSchema } from "./board-model.js";
 
 /** Durable links and execution state. Linear remains authoritative for issues. */
@@ -14,6 +15,8 @@ export const laneRunSchema = z.object({
   /** Receipt IDs prove queuing only; current delivery state belongs to outbox. */
   startWrites: z.object({ status: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
+  workers: z.array(workerRunSchema).optional(),
+  routeOverrides: z.record(z.string(), routeSchema).optional(),
 });
 export type LaneRun = z.infer<typeof laneRunSchema>;
 export type StartLeadCommand = { type: "start-lead"; specIssueId: string; specId: string; route: Route };

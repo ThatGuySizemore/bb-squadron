@@ -63,3 +63,29 @@ test("a Start response that is still provisioning opens the Lead and explains it
     openThread: (id) => { calls.push(id); }, notify: (message) => { calls.push(message); }, refresh: async () => { calls.push("refresh"); } }, "proj-one", "FIX-5");
   assert.deepEqual(calls, ["thr_lead", "Still preparing; slot reserved.", "refresh"]);
 });
+
+test("live ticket cards link workers and offer named route controls only before work starts", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const route = { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const };
+  const choices = [route, { family: "claude" as const, model: "claude-opus-5-5", effort: "high" as const }];
+  const board: Board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, ready: [], unplanned: [], lanes: [{
+    specId: "FIX-5", title: "A lane", lead: route, leadThreadId: "thr_lead", branch: "bb/integration", state: "flying", minutes: 1, acceptOwner: false,
+    tickets: [
+      { id: "FIX-6", title: "Worker's ticket", blockedBy: [], route, state: "working", minutes: 1, threadId: "thr_worker" },
+      { id: "FIX-7", title: "Next ticket", blockedBy: ["FIX-6"], route, routeChoices: choices, state: "blocked", minutes: 0 },
+      { id: "FIX-8", title: "Ready ticket", blockedBy: [], route, routeChoices: choices, state: "ready", minutes: 0 },
+      { id: "FIX-9", title: "Reported ticket", blockedBy: [], route, state: "review", reportPending: true, minutes: 1, threadId: "thr_reported" },
+    ],
+  }] };
+  const html = renderToStaticMarkup(createElement(BoardView, { board, demo: false, modeSwitch: null,
+    onPlan: () => undefined, dispatch: () => undefined, onRoute: async () => undefined }));
+  assert.match(html, /Worker&#x27;s ticket: Working\. Open thread/);
+  assert.equal((html.match(/<select/g) ?? []).length, 2);
+  assert.match(html, /aria-label="Route for FIX-7"/);
+  assert.match(html, /aria-label="Route for FIX-8"/);
+  assert.ok(!html.includes('aria-label="Route for FIX-6"'));
+  assert.ok(html.includes("Reported done"));
+});

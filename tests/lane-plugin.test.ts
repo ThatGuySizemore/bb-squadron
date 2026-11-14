@@ -1,7 +1,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeQueueEntry, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import plugin from "../server.js";
 import { needsYou, type Board } from "../lib/board-model.js";
@@ -49,6 +49,10 @@ async function setup(t: import("node:test").TestContext, options: {
       skills: { list: async () => ({ skills: skills.map((name) => ({ id: name, name, description: null, manageable: false,
         pluginId: null, provider: null, registrySkillId: null, scope: "shared-project" as const, filePath: `/repo/.agents/skills/${name}/SKILL.md` })) }) },
       threads: {
+        queuedMessages: {
+          list: async ({ threadId }) => [makeQueueEntry({ id: `queued-${threadId}`, threadId })],
+          send: async () => ({ ok: true as const, delivery: "sent" as const }),
+        },
         spawn: async ({ projectId }) => {
           if (options.spawnFails) throw new Error("fake-private-spawn-detail");
           return makeThreadResponse({ id: "thr_lead", projectId, environmentId: "env-lane" });

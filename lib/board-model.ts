@@ -7,6 +7,7 @@ const route = routeSchema;
 const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "ready", "working", "question", "review", "branch", "failed", "done"]),
+  routeChoices: z.array(routeSchema).optional(), reportPending: z.boolean().optional(), writeError: z.string().optional(),
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({
@@ -113,6 +114,8 @@ export function needsYou(board: Board): NeedsYouItem[] {
       });
     }
     for (const ticket of lane.tickets) {
+      if (ticket.writeError) items.push({ key: `worker-write:${ticket.id}`, kind: "write", specId: lane.specId,
+        ticketId: ticket.id, threadId: lane.leadThreadId, text: ticket.writeError });
       if (ticket.state === "question" && ticket.threadId) {
         items.push({
           key: `question:${ticket.id}`,

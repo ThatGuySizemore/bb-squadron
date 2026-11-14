@@ -367,5 +367,10 @@ export function registerLinearOutbox(bb: BbPluginApi, auth: LinearAuth, options:
     }
   } });
   bb.onDispose(async () => { lifetime.abort(); await draining; });
-  return { enqueue, flush, get, getHealth, resume, bindThread };
+  function toolsForThread(projectId: string, threadId: string): string[] {
+    const saved = db.prepare(`SELECT grant_json FROM outbox_thread_grants WHERE thread_id=?`).get(threadId) as { grant_json: string } | undefined;
+    const grant = saved ? grantSchema.safeParse(JSON.parse(saved.grant_json)) : null;
+    return grant?.success && grant.data.bbProjectId === projectId ? ["squadron_linear_write", "squadron_linear_receipt"] : [];
+  }
+  return { enqueue, flush, get, getHealth, resume, bindThread, toolsForThread };
 }

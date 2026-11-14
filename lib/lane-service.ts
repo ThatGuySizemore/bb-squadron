@@ -1,4 +1,5 @@
 // Executes the Helper's lane commands at the BB and Linear boundaries.
+import { bindingSchedule, releaseBoundPrompt } from "./bound-thread.js";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -70,6 +71,14 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     return laneRunSchema.parse(JSON.parse(row.run_json));
   }
 
+  // Worker fields can change while a start-write retry awaits the outbox.
+  // Start reconciliation owns the lane fields and preserves that progress.
+  function saveStart(run: LaneRun) {
+    const latest = list(run.bbProjectId).find((item) => item.id === run.id);
+    save({ ...run, ...(latest?.workers ? { workers: latest.workers } : {}),
+      ...(latest?.routeOverrides ? { routeOverrides: latest.routeOverrides } : {}) });
+  }
+
   async function queueStartWrites(run: LaneRun): Promise<LaneRun> {
     let phase = "queue-status";
     try {
@@ -79,7 +88,7 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       const status = await sources.outbox.enqueue({ bbProjectId: run.bbProjectId, expectedWorkspaceId: run.workspaceId, dedupeKey: `lane:${run.id}:started`,
         operation: { type: "status", issueId: run.specIssueId, stateId: run.startStateId } });
       run.startWrites = { ...run.startWrites, status: status.id };
-      save(run);
+      saveStart(run);
       phase = "queue-comment";
       const avatar = avatarUrl();
       const comment = await sources.outbox.enqueue({ bbProjectId: run.bbProjectId, expectedWorkspaceId: run.workspaceId, dedupeKey: `lane:${run.id}:started-comment`,
@@ -88,12 +97,12 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
           author: { role: "Lead", model: modelDisplayName(run.route.model), ...(avatar ? { avatarUrl: avatar } : {}) } } });
       run.startWrites.comment = comment.id;
       delete run.writeError;
-      save(run);
+      saveStart(run);
     } catch (error) {
       if (lifetime.signal.aborted) return run;
       warn(run, phase, error);
       run.writeError = `The Helper couldn't queue the ${phase === "queue-status" ? "spec status" : "signed Lead comment"}. The Lead remains active. Check the Linear connection and lane write receipts before retrying.`;
-      save(run);
+      saveStart(run);
     }
     return run;
   }
@@ -107,7 +116,7 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       if (!run.environmentId) {
         const thread = await bb.sdk.threads.get({ threadId: run.leadThreadId, signal });
         run.environmentId = thread.environmentId;
-        save(run);
+        saveStart(run);
       }
       if (!run.environmentId) return run;
       const environment = await bb.sdk.environments.get({ environmentId: run.environmentId, signal });
@@ -119,7 +128,7 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       }
       run.branch = environment.branchName;
       run.state = "flying";
-      save(run);
+      saveStart(run);
       return queueStartWrites(run);
     } catch (error) {
       if (lifetime.signal.aborted) return run;
@@ -133,7 +142,7 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       catch (stopError) { warn(run, "stop-after-environment-failure", stopError); }
       run.state = "stopped";
       run.stopReason = "Lane start didn't finish. Inspect the Lead and Linear writes before resuming.";
-      save(run);
+      saveStart(run);
       throw new Error(run.stopReason);
     }
   }
@@ -171,10 +180,10 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       specIssueId: spec.id, specId, title: spec.title, route: command.route, state: "starting", startedAt: now(),
       hostId: checkout.hostId, startStateId: progress.id,
       leadThreadId: null, environmentId: null, branch: null, acceptOwner: spec.labels.some((label) => label.name === ACCEPT_OWNER) };
-    save(run); // Reserve capacity before the first external effect.
+    saveStart(run); // Reserve capacity before the first external effect.
     try {
       const thread = await bb.sdk.threads.spawn({
-        projectId, title: `Lead ${specId}: ${spec.title}`.slice(0, 120),
+        projectId, sendAt: bindingSchedule(), title: `Lead ${specId}: ${spec.title}`.slice(0, 120),
         environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
         providerId: command.route.family === "claude" ? "claude-code" : "codex", model: command.route.model,
         reasoningLevel: command.route.effort, permissionMode: "auto", serviceTier: "default",
@@ -189,13 +198,15 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       });
       run.leadThreadId = thread.id;
       run.environmentId = thread.environmentId;
-      save(run); // Preserve the spawn link even if provisioning or queuing fails.
+      saveStart(run); // Bind before the first provider session resolves its tools.
+      await releaseBoundPrompt(bb, thread.id);
     } catch (error) {
       if (lifetime.signal.aborted) throw error;
       warn(run, "spawn", error);
       run.state = "stopped";
-      run.stopReason = "The Lead spawn result is unknown. Check BB threads before resuming; this lane's slot stays reserved.";
-      save(run);
+      run.stopReason = run.leadThreadId ? "The Lead is linked, but its first prompt couldn't be released. Check its queue before resuming; the lane's slot stays reserved."
+        : "The Lead spawn result is unknown. Check BB threads before resuming; this lane's slot stays reserved.";
+      saveStart(run);
       throw new Error(run.stopReason);
     }
     const current = await reconcileStart(run.id);

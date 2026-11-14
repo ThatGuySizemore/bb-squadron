@@ -1,6 +1,7 @@
 // The board's Plan buttons. Each starts an interactive planning thread in the
 // selected project's checkout, seeded with the issue and the bundled
 // squadron-planner skill.
+import { bindingSchedule, releaseBoundPrompt } from "./bound-thread.js";
 import { createHash } from "node:crypto";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { LinearConnectionState } from "./linear-contract.js";
@@ -103,6 +104,12 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
   db.exec(`CREATE TABLE IF NOT EXISTS planning_threads (
     bb_project_id TEXT NOT NULL, issue_id TEXT NOT NULL, thread_id TEXT NOT NULL, seed_sha256 TEXT NOT NULL,
     PRIMARY KEY (bb_project_id, issue_id))`);
+  db.exec(`CREATE TABLE IF NOT EXISTS planning_sessions (thread_id TEXT PRIMARY KEY, bb_project_id TEXT NOT NULL, active INTEGER NOT NULL)`);
+  function isBound(projectId: string, threadId: string): boolean {
+    const session = db.prepare(`SELECT active FROM planning_sessions WHERE thread_id=? AND bb_project_id=?`).get(threadId, projectId) as { active: number } | undefined;
+    if (session) return session.active === 1;
+    return !!db.prepare(`SELECT thread_id FROM planning_threads WHERE thread_id=? AND bb_project_id=?`).get(threadId, projectId);
+  }
   const starting = new Map<string, Promise<PlanningStarted>>();
 
   /** True while the saved thread still belongs to the project and isn't archived or deleted. */
@@ -138,25 +145,40 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     // A thread whose first message no longer matches its checkout, routes, label
     // IDs or write access is left as it is, and Plan starts a fresh one.
     let threadId = saved && saved.seed_sha256 === seedSha && await canReopenPlanningThread(projectId, saved.thread_id) ? saved.thread_id : null;
+    const pausedSession = threadId ? db.prepare(`SELECT active FROM planning_sessions WHERE thread_id=?`).get(threadId) as { active: number } | undefined : undefined;
+    let newlyQueued = pausedSession?.active === 0;
     if (!threadId) {
       const thread = await bb.sdk.threads.spawn({
-        projectId, environment, prompt,
+        projectId, environment, prompt, sendAt: bindingSchedule(),
         title: issue ? `Plan ${issue.identifier}: ${issue.title}`.slice(0, 120) : "Plan a spec",
       });
       threadId = thread.id;
+      newlyQueued = true;
+      db.prepare(`INSERT INTO planning_sessions (thread_id, bb_project_id, active) VALUES (?, ?, 0)`).run(threadId, projectId);
       if (issue) db.prepare(`INSERT INTO planning_threads (bb_project_id, issue_id, thread_id, seed_sha256) VALUES (?, ?, ?, ?)
         ON CONFLICT (bb_project_id, issue_id) DO UPDATE SET thread_id=excluded.thread_id, seed_sha256=excluded.seed_sha256`).run(projectId, issue.id, threadId, seedSha);
     }
-    if ("reason" in writes) return { threadId, writes: false, message: writes.reason };
+    async function release() {
+      db.prepare(`INSERT INTO planning_sessions (thread_id, bb_project_id, active) VALUES (?, ?, 1) ON CONFLICT(thread_id) DO UPDATE SET active=1`).run(threadId, projectId);
+      if (!newlyQueued) return;
+      try { await releaseBoundPrompt(bb, threadId!); }
+      catch {
+        db.prepare(`UPDATE planning_sessions SET active=0 WHERE thread_id=?`).run(threadId);
+        throw new Error("The planning thread is linked, but its first prompt couldn't be released. Check its queue before planning again.");
+      }
+    }
+    if ("reason" in writes) { await release(); return { threadId, writes: false, message: writes.reason }; }
     const currentCheckout = await readProjectCheckout(bb, projectId);
     const current = currentCheckout ? await scope(projectId, sources.mirror.getSnapshot(projectId), currentCheckout, issue) : null;
     if (!current || JSON.stringify(currentCheckout) !== JSON.stringify(checkout) ||
       JSON.stringify(fingerprint(current)) !== JSON.stringify(fingerprint(writes))) {
+      await release();
       return { threadId, writes: false, message: "The planning context changed while the thread opened. Plan again to use the current connection, binding and routes." };
     }
     // A reopened thread's seed matches this scope; same-scope rebinds keep the
     // issues it created and refresh its blocker references.
     await sources.outbox.bindThread({ threadId, ...writes.grant });
+    await release();
     return { threadId, writes: true, message: null };
   }
 
@@ -178,5 +200,5 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
       return startOnce(projectId, issueId);
     },
   });
-  return { start: startOnce };
+  return { start: startOnce, isBound };
 }

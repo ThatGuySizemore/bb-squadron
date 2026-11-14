@@ -6,4 +6,4 @@ The first message points at the bundled `squadron-planner` skill. It carries the
 
 A second Plan, Resume planning or Plan tickets on the same issue finds its active planning thread through BB's plugin metadata, even after the plugin reloads or the thread is renamed. Archived or deleted threads are left alone and a new one opens. New spec always starts a new thread.
 
-The board reads the same metadata: a top-level issue with an open planning thread is a Shaping spec until it is Ready. The plugin stores no planning records and has no Linear write tools.
+The board reads the same metadata: a top-level issue with an open (not archived) planning thread is a Shaping spec, offering Resume planning, even when its label and tickets would make it Ready. Archiving the thread ends planning. The plugin stores no planning records and has no Linear write tools.

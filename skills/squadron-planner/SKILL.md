@@ -21,4 +21,4 @@ With the owner, run these skills from Matt Pocock's installed plugin, in order a
 
 Invoke each skill when the provider allows it. Otherwise read its `SKILL.md` in the installed plugin and follow it. If the plugin or a skill is missing, ask the owner to install Matt's plugin.
 
-Publish with your own verified tracker tools as `docs/agents/issue-tracker.md` says. Report the spec and ticket links. A spec marked `ready-for-agent` with an open, unblocked ticket appears under Ready after the next tracker read. Until then the board shows it under Shaping.
+Publish with your own verified tracker tools as `docs/agents/issue-tracker.md` says. Report the spec and ticket links. While this planning thread is open, the board shows the spec under Shaping with Resume planning. Once you have published, tell the owner to archive this thread. The spec then appears under Ready if it is marked `ready-for-agent` and has an open, unblocked ticket.

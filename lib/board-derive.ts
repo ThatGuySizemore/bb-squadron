@@ -163,17 +163,19 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   for (const spec of specs.filter((spec) => !leads.has(spec.id))) {
     const tickets = ticketsOf(spec);
     const marked = readyMarked(spec);
-    const available = tickets.some((ticket) => openBlockers(ticket).length === 0);
+    const ticketBlockers = tickets.map(openBlockers);
     const row = { id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length };
-    // Ready wins, so a finished plan shows Start even while its planning thread stays open.
-    if (marked && available) ready.push(readyRow(spec, tickets));
-    else if (planning.has(spec.id)) {
+    // An open planning thread keeps a spec Shaping; Ready needs an open, unblocked ticket.
+    if (planning.has(spec.id)) {
       shaping.push({ ...row, missing: "Planning is still open in its thread.", action: "resume", threadId: planning.get(spec.id)! });
     } else if (!tickets.length) {
       shaping.push({ ...row, missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" });
     } else if (!marked) {
       shaping.push({ ...row, missing: `Has ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} but no ready-for-agent label.`, action: "tickets" });
-    } else ready.push(readyRow(spec, tickets)); // Every ticket waits; the row says on what.
+    } else if (ticketBlockers.every((found) => found.length > 0)) {
+      const ids = [...new Set(ticketBlockers.flat().map((blocker) => blocker.id))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+      shaping.push({ ...row, missing: `Every ticket waits on a blocker: ${ids.join(", ")}`, action: "tickets" });
+    } else ready.push(readyRow(spec, tickets));
   }
   function readyRow(spec: TrackerIssue, tickets: TrackerIssue[]): ReadySpec {
     const specBlockers = openBlockers(spec);
@@ -192,8 +194,6 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       startReason = doctorFix.message;
     } else if (specBlockers.length) {
       startReason = `Waits on ${list(specBlockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
-    } else if (ticketBlockers.every((found) => found.length > 0)) {
-      startReason = `Every ticket waits on a blocker: ${[...new Set(ticketBlockers.flat().map((blocker) => blocker.id))].join(", ")}`;
     } else if (!settings) {
       const sections = input.settings && !input.settings.ok ? input.settings.issues.map((issue) => issue.section) : [];
       startReason = sections.length

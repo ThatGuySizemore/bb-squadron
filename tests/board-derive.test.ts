@@ -82,12 +82,14 @@ test("a spec waits for Doctor, open tickets and an available frontier", () => {
   ], [blocks("FIX-2", "FIX-7")])));
   assert.deepEqual(board.ready.map((spec) => [spec.id, spec.startReason]), [
     ["FIX-1", "Check Doctor before starting a lane."],
-    ["FIX-6", "Every ticket waits on a blocker: FIX-2"],
   ]);
-  assert.deepEqual(board.shaping.map((spec) => spec.id), ["FIX-5"], "a ready label without tickets is still Shaping");
+  assert.deepEqual(board.shaping.map((spec) => [spec.id, spec.missing, spec.action]), [
+    ["FIX-5", "Has the ready-for-agent label but no open tickets.", "tickets"],
+    ["FIX-6", "Every ticket waits on a blocker: FIX-2", "tickets"],
+  ], "a ready label without an available frontier is still Shaping");
 });
 
-test("Ready shows open blockers of its tickets while preserving a partially available frontier", () => {
+test("a spec whose every ticket waits is Shaping with its blockers; a partial frontier stays Ready", () => {
   const { board } = deriveBoard(input(snapshot([
     issue("FIX-1", { labels: ["ready-for-agent"] }),
     issue("FIX-2", { parent: "FIX-1" }), issue("FIX-3", { parent: "FIX-1" }),
@@ -95,13 +97,10 @@ test("Ready shows open blockers of its tickets while preserving a partially avai
     issue("OUT-9", { outside: true }), issue("FIX-8", { done: true }),
   ], [blocks("FIX-11", "FIX-2"), blocks("OUT-9", "FIX-2"), blocks("FIX-8", "FIX-3"),
     blocks("FIX-11", "FIX-3")])));
-  const row = board.ready[0];
-  assert.deepEqual(row.blockedBy, ["FIX-11", "OUT-9"]);
-  assert.deepEqual(row.blockers, [
-    { id: "FIX-11", title: "Issue FIX-11", url: "https://linear.app/fixture/issue/FIX-11", outside: false },
-    { id: "OUT-9", title: "Issue OUT-9", url: "https://linear.app/fixture/issue/OUT-9", outside: true },
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-10"], "FIX-1 has no open, unblocked ticket, so it isn't Ready");
+  assert.deepEqual(board.shaping.map(({ id, ticketCount, missing, action }) => ({ id, ticketCount, missing, action })), [
+    { id: "FIX-1", ticketCount: 2, missing: "Every ticket waits on a blocker: FIX-11, OUT-9", action: "tickets" },
   ]);
-  assert.equal(row.startReason, "Every ticket waits on a blocker: FIX-11, OUT-9");
 
   const partial = deriveBoard(input(snapshot([
     issue("FIX-1", { labels: ["ready-for-agent"] }),
@@ -184,17 +183,28 @@ test("a spec is Shaping while its planning thread is open, it has tickets but no
   assert.deepEqual(board.ready, []);
 });
 
-test("Ready needs the ready label or Status: ready-for-agent and an open, unblocked ticket, even with planning open", () => {
+test("Ready needs the ready label or Status: ready-for-agent and an open, unblocked ticket", () => {
   const issues = [
     issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
     issue("FIX-5", { status: "ready-for-agent" }), issue("FIX-6", { parent: "FIX-5" }),
     issue("FIX-8", { status: "Ready-For-Agent" }), issue("FIX-9", { parent: "FIX-8" }),
   ];
   for (const kind of ["linear", "local-markdown", "github"] as const) {
-    const { board } = deriveBoard(input(snapshot(issues), { kind, planning: [{ issueId: "fix-1", threadId: "thr_plan" }] }));
+    const { board } = deriveBoard(input(snapshot(issues), { kind }));
     assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1", "FIX-5", "FIX-8"], kind);
     assert.deepEqual([board.shaping, board.openIssues], [[], []], kind);
   }
+});
+
+test("an open planning thread keeps a spec Shaping even when it would otherwise be Ready", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-5", { labels: ["ready-for-agent"] }), issue("FIX-6", { parent: "FIX-5" }),
+  ]), { planning: [{ issueId: "fix-1", threadId: "thr_plan" }] }));
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-5"]);
+  assert.deepEqual(board.shaping.map(({ id, action, threadId, missing }) => ({ id, action, threadId, missing })), [
+    { id: "FIX-1", action: "resume", threadId: "thr_plan", missing: "Planning is still open in its thread." },
+  ]);
 });
 
 test("a Ready row lists which tickets wait on which blockers when only part of its frontier is available", () => {

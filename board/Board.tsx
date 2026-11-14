@@ -215,6 +215,32 @@ export function LiveStepLine({ activity }: { activity?: LiveStep }) {
   </span>;
 }
 
+/** A narrow lane keeps each active ticket to a title line and a quiet activity line. */
+function SlimTicketRow({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
+  const open = useOpen();
+  const clickable = Boolean(ticket.threadId);
+  const state = TICKET_LABEL[ticket.state];
+  const label = `${ticket.id}, ${ticket.title}: ${state}.`;
+  const activity = lane.state === "flying"
+    ? ticket.liveStep ? `${ticket.liveStep.status}. ${ticket.liveStep.step}. ` : "No recent activity. "
+    : "";
+  const body = <>
+    <span className="sq-ticket-main">
+      <span className="sq-peg-id">{ticket.id}</span>
+      <span className="sq-ticket-title" title={ticket.title}>{ticket.title}</span>
+    </span>
+    <span className="sq-ticket-state"><Term text={state} nested={clickable} /></span>
+    {lane.state === "flying" ? <LiveStepLine activity={ticket.liveStep} /> : null}
+    <span className="sq-ticket-time sq-num" title="Ticket time">{formatMinutes(ticket.minutes)}</span>
+  </>;
+  return clickable ? (
+    <button type="button" className="sq-ticket-row" data-state={ticket.state} aria-label={`${label} ${activity}${formatMinutes(ticket.minutes)}. Open thread.`}
+      onClick={() => open.thread(ticket.threadId!, `the ${ticket.state === "review" ? "reviewer" : "worker"} thread for ${ticket.id}`)}>
+      {body}
+    </button>
+  ) : <div className="sq-ticket-row" data-state={ticket.state} aria-label={label}>{body}</div>;
+}
+
 function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
   const reviewer = laneReviewer(lane);
@@ -441,7 +467,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
   // The airstream's pace: the lane's working threads. A lane with none working is still.
   const working = lane.workingThreads ?? 0;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
-  // In a narrow layout the lane is one compact row, then the pegs being worked, with every ticket behind a disclosure.
+  // In a narrow layout the lane is one compact row, then slim active tickets, with every ticket behind a disclosure.
   const narrow = useContext(LayoutContext) === "narrow";
   const air = landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />;
   const others = lane.unmatchedThreads?.length ? (
@@ -465,7 +491,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
       <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
         <LaneRow lane={lane} dispatch={dispatch} landing={landing} demo={demo} acting={acting} />
         <div className="sq-track">
-          {active.length ? <div className="sq-active">{active.map((t) => <Peg key={t.id} ticket={t} lane={lane} />)}</div> : null}
+          {active.length ? <div className="sq-active">{active.map((t) => <SlimTicketRow key={t.id} ticket={t} lane={lane} />)}</div> : null}
           <details className="sq-all">
             <summary>
               {lane.tickets.length === 1 ? "1 " : `All ${lane.tickets.length} `}<Term text={lane.tickets.length === 1 ? "ticket" : "tickets"} word="Ticket" nested />

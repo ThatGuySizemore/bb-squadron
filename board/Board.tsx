@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { LiveStep } from "../lib/live-step.js";
 import { LIVE_STEP_MS } from "../lib/live-step.js";
 import type { ReactNode, Ref } from "react";
@@ -69,18 +69,22 @@ function FormationMark({ limit, flying }: { limit: number; flying: number }) {
 
 // ---------- small parts ----------
 
-function AiChip({ route, prefix }: { route: Route; prefix?: string }) {
+/** The agent's family icon, model and effort. A compact chip with a prefix shows only the icon and prefix; the model stays in its hover title. */
+function AiChip({ route, prefix, compact = false }: { route: Route; prefix?: string; compact?: boolean }) {
   const { providers } = useProviders();
   const id = route.family === "claude" ? "claude-code" : "codex";
   const provider = providers.find((p) => p.id === id) ?? { id };
+  const title = `${route.family === "claude" ? "Claude Code" : "Codex"} · ${route.model} · ${route.effort} effort`;
   return (
-    <span className="sq-ai" title={`${route.family === "claude" ? "Claude Code" : "Codex"} · ${route.model} · ${route.effort} effort`}>
+    <span className="sq-ai" title={compact && prefix ? `${prefix}: ${title}` : title}>
       <ProviderIcon providerKind="agent" provider={provider} />
-      <span>
-        {prefix ? `${prefix} · ` : ""}
-        {route.model}
-        <span className="sq-ai-effort"> {route.effort === "high" ? "high" : "med"}</span>
-      </span>
+      {compact && prefix ? <span>{prefix}</span> : (
+        <span>
+          {prefix ? `${prefix} · ` : ""}
+          {route.model}
+          <span className="sq-ai-effort"> {route.effort === "high" ? "high" : "med"}</span>
+        </span>
+      )}
     </span>
   );
 }
@@ -135,6 +139,32 @@ const LANE_LABEL: Record<LaneState, string> = {
 /** Where the board is shown: BB's full page, or a thread's side panel. */
 export type Placement = "page" | "panel";
 const PlacementContext = createContext<Placement>("page");
+
+/** How the board lays out: wide, or narrow with one compact row per lane. */
+export type BoardLayout = "wide" | "narrow";
+const LayoutContext = createContext<BoardLayout>("wide");
+
+/** The widest board, in CSS pixels, that still takes the narrow layout. */
+export const NARROW_MAX = 900;
+
+/** A side panel is always narrow; the full page is narrow at 900px and under, once its width is known. */
+export function boardLayout(placement: Placement, width: number | null): BoardLayout {
+  return placement === "panel" || (width !== null && width <= NARROW_MAX) ? "narrow" : "wide";
+}
+
+/** The board's own width, measured before paint and on every resize. */
+function useWidth(ref: { current: HTMLElement | null }): number | null {
+  const [width, setWidth] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    setWidth(el.getBoundingClientRect().width);
+    const ro = new ResizeObserver((entries) => { for (const entry of entries) setWidth(entry.contentRect.width); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref]);
+  return width;
+}
 
 /** Beside the board on the full page; from a thread's side panel, in the main view the panel sits beside. */
 export function openThread(navigate: { toThread(threadId: string, options?: { split?: boolean }): void }, placement: Placement, threadId: string) {
@@ -304,28 +334,116 @@ function LaneActionButton({ type, specId, acting, tone, dispatch, localMerge = f
   );
 }
 
+/** The Lead chip, with the Lead's current step while the lane flies. It opens the Lead thread. */
+function LeadButton({ lane, compact = false }: { lane: Lane; compact?: boolean }) {
+  const open = useOpen();
+  return (
+    <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, lane.outside ? `the thread flying ${lane.specId}` : `the Lead thread for ${lane.specId}`)}>
+      <AiChip route={lane.lead} prefix="Lead" compact={compact} />
+      {lane.state === "flying" ? <LiveStepLine activity={lane.liveStep} /> : null}
+    </button>
+  );
+}
+
+/** The lane's PR, with its checks in words beside the dot. */
+function PrChip({ pr }: { pr: PullRequest }) {
+  const open = useOpen();
+  return (
+    <button
+      type="button"
+      className="sq-pr"
+      data-checks={pr.checks}
+      data-pr={pr.state}
+      aria-label={`PR #${pr.number}${pr.state && pr.state !== "open" ? `, ${pr.state}` : ""}, ${PR_CHECKS[pr.checks]}. Open on GitHub.`}
+      onClick={() => open.external(pr.url, `PR #${pr.number} on GitHub`)}
+    >
+      <span className="sq-pr-dot" aria-hidden="true" />
+      PR #{pr.number}
+      {pr.state && pr.state !== "open" ? <span className="sq-pr-state">{pr.state}</span> : null}
+      <span className="sq-pr-checks">{PR_CHECKS[pr.checks]}</span>
+    </button>
+  );
+}
+
+/** Merge, Resume and Stop for a lane Squadron started; an outside lane says why it has none. */
+function LaneActions({ lane, dispatch, demo, acting }: { lane: Lane; dispatch: (a: BoardAction) => void; demo: boolean; acting: LaneAction | null }) {
+  const stopped = lane.stopped ?? lane.state === "stopped";
+  if (lane.outside) return <p className="sq-readonly">Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge.</p>;
+  if (lane.state === "landed") return null;
+  return (
+    <div className="sq-actions">
+      {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} localMerge={lane.localMerge} /> : null}
+      {stopped ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+      {(demo ? lane.state === "flying" : !stopped) ? <LaneActionButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+      {demo ? <span className="sq-isolated">
+        <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
+          Cancel
+        </Btn>
+      </span> : null}
+    </div>
+  );
+}
+
+function SpecTitle({ lane }: { lane: Lane }) {
+  const open = useOpen();
+  return (
+    <h3 className="sq-line-title">
+      {lane.url ? (
+        <button type="button" className="sq-issue-link" title="Open the spec" onClick={() => open.external(lane.url!, `the spec ${lane.specId}`)}>
+          {lane.title}
+        </button>
+      ) : (
+        lane.title
+      )}
+    </h3>
+  );
+}
+
+/**
+ * The narrow layout's lane: one compact row in place of the tail card. The
+ * tail number, title and time on top; the Lead and its step, the PR, the lane
+ * state (never "Flying", which the section already says) and the actions
+ * below; the airstream as a thin pace line along its bottom edge. The branch
+ * is the row's hover title and sits in the lane's ticket list.
+ */
+function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting: LaneAction | null }) {
+  const working = lane.workingThreads ?? 0;
+  return (
+    <div className="sq-lane-row" title={`Branch ${lane.branch}`}>
+      <div className="sq-lane-row-top">
+        <PixelText text={lane.specId} cell={2} className="sq-tail-number" />
+        <SpecTitle lane={lane} />
+        <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
+      </div>
+      <div className="sq-lane-row-foot">
+        <LeadButton lane={lane} compact />
+        <div className="sq-lane-row-end">
+          {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}><Term text={LANE_LABEL[lane.state]} /></span> : null}
+          {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" compact /> : null}
+          {lane.pr ? <PrChip pr={lane.pr} /> : null}
+          {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
+          {lane.outside ? null : <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} />}
+        </div>
+      </div>
+      {lane.outside ? <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} /> : null}
+      {/* The pace line: still when no one works, faster with each working thread. */}
+      <span className="sq-pace-line" data-pace={working} aria-hidden="true">
+        {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
+      </span>
+    </div>
+  );
+}
+
 function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting?: LaneAction | null }) {
   const open = useOpen();
-  const stopped = lane.stopped ?? lane.state === "stopped";
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
   // The airstream's pace: the lane's working threads. A lane with none working is still.
   const working = lane.workingThreads ?? 0;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
-  // At side-panel width the line shows only the pegs being worked, with every ticket behind a disclosure.
-  const narrow = useContext(PlacementContext) === "panel";
+  // In a narrow layout the lane is one compact row, then the pegs being worked, with every ticket behind a disclosure.
+  const narrow = useContext(LayoutContext) === "narrow";
   const air = landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />;
-  const progress = (
-    <div className="sq-progress" role="img" aria-label={`${done} of ${lane.tickets.length} tickets in the branch`}>
-      {lane.tickets.map((t) => (
-        <span key={t.id} data-state={t.state} title={`${t.id}: ${TICKET_LABEL[t.state]}`} />
-      ))}
-      <span className="sq-progress-count sq-num">
-        {done}/{lane.tickets.length} in branch
-      </span>
-      {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working {working === 1 ? "thread" : "threads"}</span> : null}
-    </div>
-  );
   const others = lane.unmatchedThreads?.length ? (
     <div className="sq-threads">
       <span className="sq-threads-label">Other threads</span>
@@ -340,25 +458,48 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
       </ul>
     </div>
   ) : null;
-  // The pegs a side panel keeps: tickets an agent is on, or that wait on the owner.
-  const active = lane.tickets.filter((t) => t.state === "working" || t.state === "review" || t.state === "question" || t.state === "failed");
+  if (narrow) {
+    // The tickets a narrow lane keeps in view: those an agent is on, or that wait on the owner.
+    const active = lane.tickets.filter((t) => t.state === "working" || t.state === "review" || t.state === "question" || t.state === "failed");
+    return (
+      <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
+        <LaneRow lane={lane} dispatch={dispatch} landing={landing} demo={demo} acting={acting} />
+        <div className="sq-track">
+          {active.length ? <div className="sq-active">{active.map((t) => <Peg key={t.id} ticket={t} lane={lane} />)}</div> : null}
+          <details className="sq-all">
+            <summary>
+              {lane.tickets.length === 1 ? "1 " : `All ${lane.tickets.length} `}<Term text={lane.tickets.length === 1 ? "ticket" : "tickets"} word="Ticket" nested />
+              <span className="sq-all-count sq-num"> · {done} in branch</span>
+            </summary>
+            <ol>
+              {lane.tickets.map((t) => (
+                <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}><Term text={TICKET_LABEL[t.state]} /></span></li>
+              ))}
+            </ol>
+            <p className="sq-all-branch">Branch <span className="sq-branch">{lane.branch}</span></p>
+          </details>
+          {others}
+        </div>
+      </article>
+    );
+  }
+  const progress = (
+    <div className="sq-progress" role="img" aria-label={`${done} of ${lane.tickets.length} tickets in the branch`}>
+      {lane.tickets.map((t) => (
+        <span key={t.id} data-state={t.state} title={`${t.id}: ${TICKET_LABEL[t.state]}`} />
+      ))}
+      <span className="sq-progress-count sq-num">
+        {done}/{lane.tickets.length} in branch
+      </span>
+      {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working {working === 1 ? "thread" : "threads"}</span> : null}
+    </div>
+  );
   return (
     <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
       <div className="sq-tail">
-        <PixelText text={lane.specId} cell={narrow ? 3 : 4} className="sq-tail-number" />
-        <h3 className="sq-line-title">
-          {lane.url ? (
-            <button type="button" className="sq-issue-link" title="Open the spec" onClick={() => open.external(lane.url!, `the spec ${lane.specId}`)}>
-              {lane.title}
-            </button>
-          ) : (
-            lane.title
-          )}
-        </h3>
-        <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, lane.outside ? `the thread flying ${lane.specId}` : `the Lead thread for ${lane.specId}`)}>
-          <AiChip route={lane.lead} prefix="Lead" />
-          {lane.state === "flying" ? <LiveStepLine activity={lane.liveStep} /> : null}
-        </button>
+        <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
+        <SpecTitle lane={lane} />
+        <LeadButton lane={lane} />
         <div className="sq-tail-status">
           <span className="sq-lane-state" data-lane={lane.state}>
             <Term text={LANE_LABEL[lane.state]} />
@@ -366,51 +507,11 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
         {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" /> : null}
-        {lane.pr ? (
-          <button
-            type="button"
-            className="sq-pr"
-            data-checks={lane.pr.checks}
-            data-pr={lane.pr.state}
-            aria-label={`PR #${lane.pr.number}${lane.pr.state && lane.pr.state !== "open" ? `, ${lane.pr.state}` : ""}, ${PR_CHECKS[lane.pr.checks]}. Open on GitHub.`}
-            onClick={() => open.external(lane.pr!.url, `PR #${lane.pr!.number} on GitHub`)}
-          >
-            <span className="sq-pr-dot" aria-hidden="true" />
-            PR #{lane.pr.number}
-            {lane.pr.state && lane.pr.state !== "open" ? <span className="sq-pr-state">{lane.pr.state}</span> : null}
-            <span className="sq-pr-checks">{PR_CHECKS[lane.pr.checks]}</span>
-          </button>
-        ) : null}
+        {lane.pr ? <PrChip pr={lane.pr} /> : null}
         {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
         <span className="sq-branch">{lane.branch}</span>
-        {lane.outside ? (
-          <p className="sq-readonly">Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge.</p>
-        ) : lane.state !== "landed" ? (
-          <div className="sq-actions">
-            {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} localMerge={lane.localMerge} /> : null}
-            {stopped ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
-            {(demo ? lane.state === "flying" : !stopped) ? <LaneActionButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
-            {demo ? <span className="sq-isolated">
-              <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
-                Cancel
-              </Btn>
-            </span> : null}
-          </div>
-        ) : null}
+        <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} />
       </div>
-      {narrow ? (
-        <div className="sq-track">
-          {progress}
-          <div className="sq-air-band" aria-hidden="true">{air}</div>
-          {active.length ? <div className="sq-active">{active.map((t) => <Peg key={t.id} ticket={t} lane={lane} />)}</div> : null}
-          <details className="sq-all"><summary>{lane.tickets.length === 1 ? "1 " : `All ${lane.tickets.length} `}<Term text={lane.tickets.length === 1 ? "ticket" : "tickets"} word="Ticket" nested /></summary><ol>
-            {lane.tickets.map((t) => (
-              <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}><Term text={TICKET_LABEL[t.state]} /></span></li>
-            ))}
-          </ol></details>
-          {others}
-        </div>
-      ) : (
       <div className="sq-track">
         {progress}
         {/* The rail scrolls; the columns inside it are as wide as the pegs, so the airstream runs under all of them. */}
@@ -431,7 +532,6 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         </div>
         {others}
       </div>
-      )}
     </article>
   );
 }
@@ -862,7 +962,7 @@ interface BoardViewProps {
   /** False until the live board's first read, so the formation mark never counts lanes it hasn't read. */
   lanesKnown?: boolean;
   footer?: ReactNode;
-  /** The full page, or a thread's side panel: the comp's narrow layout, with thread links opening in the main view. */
+  /** The full page, or a thread's side panel: always the narrow layout, with thread links opening in the main view. */
   placement?: Placement;
 }
 
@@ -874,6 +974,13 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   const howId = useId();
   const howButton = useRef<HTMLButtonElement>(null);
   const reduced = usePrefersReducedMotion();
+  const ownRef = useRef<HTMLDivElement | null>(null);
+  const layout = boardLayout(placement, useWidth(ownRef));
+  const setRoot = useCallback((el: HTMLDivElement | null) => {
+    ownRef.current = el;
+    if (typeof rootRef === "function") rootRef(el);
+    else if (rootRef) rootRef.current = el;
+  }, [rootRef]);
   const items = needsYou(board);
   const phase = useLandings(board.lanes);
   const flying = board.lanes.filter((l) => l.state !== "landed");
@@ -905,7 +1012,8 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
   return (
     <PlacementContext.Provider value={placement}>
-    <div ref={rootRef} className="sq" data-reduced={reduced} data-layout={placement === "panel" ? "narrow" : "wide"}>
+    <LayoutContext.Provider value={layout}>
+    <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout}>
       <div className="sq-page">
         <header className="sq-head">
           <div className="sq-brand">
@@ -1029,6 +1137,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         {footer}
       </div>
     </div>
+    </LayoutContext.Provider>
     </PlacementContext.Provider>
   );
 }

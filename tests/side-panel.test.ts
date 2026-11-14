@@ -49,7 +49,7 @@ test("Squadron registers a thread side-panel tab alongside its full-page nav pan
   assert.notEqual(tab.component, slots.navPanel![0]!.component, "the tab renders the side-panel board, not the full page");
 });
 
-test("in the side panel a flying lane shows its active pegs and an All N tickets disclosure", async () => {
+test("in the side panel a flying lane shows its active pegs and an All N tickets disclosure with its in-branch count", async () => {
   const { createElement } = await import("react");
   const { BoardView } = await import("../board/Board.js");
   const props = { board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined };
@@ -59,17 +59,17 @@ test("in the side panel a flying lane shows its active pegs and an All N tickets
   assert.deepEqual([...active.matchAll(/class="sq-peg-id">([^<]+)</g)].map((m) => m[1]), ["FIX-3", "FIX-4"],
     "only tickets an agent is on, or that need the owner, are pegs");
   const all = /<details class="sq-all"><summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/.exec(panel);
-  assert.equal(all && visibleText(parse(all[1])), "All 4 tickets");
+  assert.equal(all && visibleText(parse(all[1])), "All 4 tickets · 1 in branch", "the in-branch count moves from the progress strip into the summary");
   assert.deepEqual([...(all?.[2] ?? "").matchAll(/<li data-state="([^"]+)"><span class="sq-id">([^<]+)<\/span><span>([^<]+)<\/span><span data-st="[^"]+">(?:<span[^>]*data-term="[^"]+"[^>]*>)?([^<]+)</g)]
     .map((m) => m.slice(1)), [
     ["done", "FIX-2", "Ticket FIX-2", "Done"], ["working", "FIX-3", "Ticket FIX-3", "Working"],
     ["question", "FIX-4", "Ticket FIX-4", "Needs you"], ["blocked", "FIX-5", "Ticket FIX-5", "Waiting"],
   ]);
   assert.ok(!panel.includes("sq-rail"), "no dependency rail at side-panel width");
-  assert.match(panel, /1\/4 in branch/, "the progress strip stays");
+  assert.ok(!panel.includes("sq-progress"), "the compact lane row replaces the progress strip");
   const single = await render(createElement(BoardView, { ...props, placement: "panel",
     board: { ...board, lanes: [{ ...lane, tickets: [ticket("FIX-2", "working")] }] } }));
-  assert.ok(elements(parse(single)).some((element) => element.tag === "summary" && visibleText(element) === "1 ticket"));
+  assert.ok(elements(parse(single)).some((element) => element.tag === "summary" && visibleText(element) === "1 ticket · 0 in branch"));
 
   const page = await render(createElement(BoardView, props));
   assert.match(page, /class="sq"[^>]*data-layout="wide"/);

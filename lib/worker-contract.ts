@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { routeSchema, type Route } from "./board-model.js";
+import { reviewStateSchema } from "./review-state.js";
 
 export const commitSchema = z.string().regex(/^[a-f0-9]{40}$/);
 export const findingSchema = z.object({
@@ -8,17 +9,25 @@ export const findingSchema = z.object({
   text: z.string().min(1).max(8_000),
   /** A dropped smell needs the reviewer's one-line reason in text. */
   disposition: z.enum(["fix", "drop"]).optional(),
-}).strict();
+}).strict().superRefine((finding, context) => {
+  if (finding.disposition !== undefined && finding.kind !== "smell") {
+    context.addIssue({ code: "custom", path: ["disposition"], message: "A disposition is valid only for a smell." });
+  }
+  if (finding.disposition === "drop" && (!finding.text.trim() || finding.text.length > 300 || /[\r\n\u2028\u2029]/.test(finding.text))) {
+    context.addIssue({ code: "custom", path: ["text"], message: "A dropped smell needs a single-line reason of 1 to 300 characters." });
+  }
+});
 export const reviewRunSchema = z.object({
   id: z.string(), route: routeSchema, threadId: z.string().nullable(), environmentId: z.string().nullable(),
   commit: commitSchema, originalCommit: commitSchema,
-  state: z.enum(["spawning", "reviewing", "changes", "fixing", "second-look", "approved", "failed"]),
+  state: reviewStateSchema,
   round: z.union([z.literal(0), z.literal(1)]),
   firstFindings: z.array(findingSchema).optional(),
   verdict: z.object({ commit: commitSchema, outcome: z.enum(["approve", "changes"]), findings: z.array(findingSchema),
     resolvedFindingIds: z.array(z.string()), at: z.number() }).optional(),
   failure: z.string().optional(), notifiedVerdict: z.string().optional(),
-  defects: z.record(z.string(), z.object({ key: z.string(), issueId: z.string(), receiptId: z.string().optional(), linkReceiptId: z.string().optional() })).optional(),
+  defects: z.record(z.string(), z.object({ key: z.string(), normalizedTitle: z.string().optional(), projectId: z.string().optional(),
+    issueId: z.string(), receiptId: z.string().optional(), linkReceiptId: z.string().optional() })).optional(),
 });
 export const workerRunSchema = z.object({
   id: z.string(), ticketIssueId: z.string(), ticketId: z.string(), route: routeSchema,
@@ -44,7 +53,8 @@ export function hasCurrentApproval(worker: WorkerRun): boolean {
     !!worker.commit && review.commit === worker.commit && review.verdict?.commit === worker.commit && review.verdict.outcome === "approve";
 }
 export type SpawnWorkerCommand = { type: "spawn-worker"; laneId: string; ticketIssueId: string; ticketId: string; route: Route };
-export const spawnWorkerSchema = z.object({ ticketId: z.string().min(1).max(256) }).strict();
+export const ticketIdSchema = z.object({ ticketId: z.string().min(1).max(256) }).strict();
+export const spawnWorkerSchema = ticketIdSchema;
 export const reportSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("done"), commit: commitSchema, summary: z.string().min(1).max(16_000) }).strict(),
   z.object({ type: z.literal("integrated"), ticketId: z.string().min(1), commit: commitSchema }).strict(),

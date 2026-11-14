@@ -106,6 +106,9 @@ test("reviewer card names the saved reviewer AI and its thread rather than infer
   const html = render();
   assert.ok(html.includes("Actual reviewer model"));
   assert.ok(html.includes("Second look"));
+  board.lanes[0].tickets[0].reviewer!.state = "fixing";
+  assert.match(render(), /class="sq-peg-state">Awaiting second look<\/span>/);
+  board.lanes[0].tickets[0].reviewer!.state = "second-look";
   assert.match(html, /aria-label="[^"]*Actual reviewer model[^"]*high[^"]*Open reviewer thread/);
   board.lanes[0].tickets[0].reviewer = { ...board.lanes[0].tickets[0].reviewer!, threadId: null, state: "spawning" };
   assert.ok(!render().includes("Open reviewer thread"), "an unconfirmed reviewer has no navigation button");

@@ -425,7 +425,7 @@ test("stale verdicts are ignored and a different reviewer or changed provider ha
 });
 
 test("one fix round returns in-spec findings to the same worker and second look is limited to those findings and the corrected SHA", async (t) => {
-  const { start, call, harness, board } = await setup(t); await start();
+  const fixture = await setup(t); const { start, call, harness, board, mutations } = fixture; await start();
   const worker = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
   const workerContext = { threadId: worker.threadId, projectId: "proj-one" };
   await call("squadron_report", { type: "done", commit, summary: "Initial tests." }, workerContext);
@@ -452,7 +452,8 @@ test("one fix round returns in-spec findings to the same worker and second look 
   await call("squadron_report", approval, reviewerContext);
   await call("squadron_report", { type: "integrated", ticketId: "FIX-6", commit: corrected });
   assert.equal((await board()).lanes[0].tickets.find((ticket) => ticket.id === "FIX-7")?.state, "ready");
-  assert.equal((await board()).writes?.pendingCount, 5, "in-spec findings must not file an issue");
+  await flushRecordedWrites(t, fixture);
+  assert.equal(mutations.filter((item) => item.query.includes("issueCreate")).length, 0, "in-spec findings must not file an issue");
 });
 
 test("fix resume and a new frontier worker serialize their claims on the last configured slot", async (t) => {
@@ -509,7 +510,7 @@ test("only recorded outside-spec defects can be filed, deduped once by the Lead 
   assert.equal(creates[0].variables.input.parentId, undefined);
   assert.deepEqual(mutations.find((item) => item.query.includes("issueRelationCreate"))?.variables.input,
     { id: first.linkReceiptId, issueId: first.issueId, relatedIssueId: "fix-5", type: "related" });
-  const duplicate = await call("squadron_report", { ...report, existingIssueId: "fix-8", dedupeKey: "known-defect" });
+  const duplicate = await call("squadron_report", { ...report, existingIssueId: "fix-9", dedupeKey: "known-defect" });
   assert.equal(duplicate.issueId, first.issueId, "a retry cannot replace the already filed defect");
 });
 
@@ -522,7 +523,7 @@ test("dedupe reuse never replaces an existing blocker or duplicate link to the s
     await call("squadron_report", { type: "verdict", commit, outcome: "approve", findings: [{ id: "O1", kind: "outside-spec", text: "Existing defect." }], resolvedFindingIds: [] },
       { threadId: reviewer.threadId, projectId: "proj-one" });
     await call("squadron_report", { type: "defect", ticketId: "FIX-6", findingId: "O1", title: "Existing defect", description: "Steps.", dedupeKey: "existing-defect",
-      dedupeEvidence: "Existing FIX-8 covers it.", existingIssueId: "fix-8" });
+      dedupeEvidence: "Existing FIX-9 covers it.", existingIssueId: "fix-9" });
     const service = harness.behavior.runService("linear-outbox"); t.after(() => service.controller.abort());
     for (let i = 0; i < 200 && !(await board()).writes?.blockedCount; i++) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(mutations.filter((item) => item.query.includes("issueCreate")).length, 0);
@@ -599,7 +600,7 @@ test("a refused verdict notification preserves the exact approval and retries sa
 });
 
 test("failed reviewer startup keeps its trusted binding visible and cannot grant a verdict or dispatch", async (t) => {
-  const { start, call, harness, board } = await setup(t, { releaseFails: "reviewer" }); await start();
+  const { start, call, harness, board, threads } = await setup(t, { releaseFails: "reviewer" }); await start();
   const worker = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
   await call("squadron_report", { type: "done", commit, summary: "Tests." }, { threadId: worker.threadId, projectId: "proj-one" });
   await assert.rejects(call("squadron_spawn_reviewer", { ticketId: "FIX-6" }), /startup is unconfirmed/);
@@ -607,9 +608,125 @@ test("failed reviewer startup keeps its trusted binding visible and cannot grant
   assert.equal(review.threadId, "thr_worker_3"); assert.equal(review.state, "failed");
   await assert.rejects(call("squadron_spawn_reviewer", { ticketId: "FIX-6" }), /already has a reviewer/);
   await assert.rejects(call("squadron_report", { type: "verdict", commit, outcome: "approve", findings: [], resolvedFindingIds: [] },
-    { threadId: review.threadId!, projectId: "proj-one" }), /not authorized|isn't awaiting/);
+    // Release failed before SDK assigned the reused environment, so the first
+    // refusal is specifically the real-thread binding check.
+    { threadId: review.threadId!, projectId: "proj-one" }), { message: "This thread is not authorized for this lane." });
+  const reviewerThread = threads.get(review.threadId!)!;
+  const workerThread = threads.get(worker.threadId)!;
+  threads.set(review.threadId!, { ...reviewerThread, environmentId: workerThread.environmentId });
+  await assert.rejects(call("squadron_report", { type: "verdict", commit, outcome: "approve", findings: [], resolvedFindingIds: [] },
+    { threadId: review.threadId!, projectId: "proj-one" }), { message: "This review isn't awaiting a verdict." });
   const gate = harness.inspection.registrations.hooks["message.dispatch"]!;
   assert.equal((await gate(makeMessageDispatchHookContext({ thread: { id: review.threadId! }, project: { id: "proj-one" }, originPluginId: "squadron" }))).action, "reject");
   await assert.rejects(call("squadron_report", { type: "integrated", ticketId: "FIX-6", commit }), /approval/);
   assert.ok(!JSON.stringify(harness.inspection.logEntries).includes("fake-private-release-error"));
+});
+
+async function outsideReview(call: Awaited<ReturnType<typeof setup>>["call"], ticketId: string, findingId = "O1") {
+  const worker = await call("squadron_spawn_worker", { ticketId });
+  await call("squadron_report", { type: "done", commit, summary: "Tests." }, { threadId: worker.threadId, projectId: "proj-one" });
+  const reviewer = await call("squadron_spawn_reviewer", { ticketId });
+  await call("squadron_report", { type: "verdict", commit, outcome: "approve", findings: [{ id: findingId, kind: "outside-spec", text: "Defect in another feature." }], resolvedFindingIds: [] },
+    { threadId: reviewer.threadId, projectId: "proj-one" });
+  return { threadId: reviewer.threadId, projectId: "proj-one" };
+}
+
+async function flushRecordedWrites(t: import("node:test").TestContext, fixture: Awaited<ReturnType<typeof setup>>) {
+  const service = fixture.harness.behavior.runService("linear-outbox"); t.after(() => service.controller.abort());
+  for (let i = 0; i < 200 && (await fixture.board()).writes?.pendingCount; i++) await new Promise((resolve) => setTimeout(resolve, 5));
+  const writes = (await fixture.board()).writes;
+  assert.equal(writes?.pendingCount, 0, "all recorded writes must finish before inspecting mutations");
+  assert.equal(writes?.blockedCount, 0);
+}
+
+test("queued defects dedupe across ticket/key changes by normalized title before mirror catch-up", async (t) => {
+  const fixture = await setup(t); const { start, call, mutations } = fixture; await start();
+  await outsideReview(call, "FIX-6");
+  const secondReviewer = await outsideReview(call, "FIX-8");
+  const report = { type: "defect", ticketId: "FIX-6", findingId: "O1", title: "An outside defect", description: "Reproduction.", dedupeKey: "first-key", dedupeEvidence: "Checked project issues." };
+  const first = await call("squadron_report", report);
+  const second = await call("squadron_report", { ...report, ticketId: "FIX-8", title: "  AN   outside DEFECT  ", dedupeKey: "different-key" });
+  assert.equal(second.issueId, first.issueId);
+  assert.equal(second.receiptId, first.receiptId);
+  const status = await call("squadron_status", {}, secondReviewer);
+  assert.equal(status.reports[0].review.defects.O1.normalizedTitle, "an outside defect");
+  await flushRecordedWrites(t, fixture);
+  assert.equal(mutations.filter((item) => item.query.includes("issueCreate")).length, 1);
+  assert.equal(mutations.filter((item) => item.query.includes("issueRelationCreate")).length, 1);
+});
+
+test("an outside defect cannot reuse this spec or one of its own tickets by title or explicit ID", async (t) => {
+  const fixture = await setup(t); const { start, call, harness, mutations } = fixture; await start();
+  await outsideReview(call, "FIX-6");
+  const status = await call("squadron_status", {});
+  const report = { type: "defect", ticketId: "FIX-6", findingId: "O1", description: "Reproduction.", dedupeKey: "in-spec-collision", dedupeEvidence: "Checked project issues." };
+  for (const title of [status.lane.title, "Ticket 8"]) await assert.rejects(call("squadron_report", { ...report, title }), /spec and its own tickets/);
+  for (const existingIssueId of ["fix-5", "fix-8", "FIX-6"]) await assert.rejects(call("squadron_report", { ...report, title: "Different title", existingIssueId }), /spec and its own tickets/);
+  await flushRecordedWrites(t, fixture);
+  assert.equal(mutations.filter((item) => item.query.includes("issueCreate") || item.query.includes("issueRelationCreate")).length, 0);
+  const after = await call("squadron_status", {});
+  assert.equal(after.reports[0].review.defects, undefined);
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 3);
+});
+
+test("defect dedupe reuses a mirror title and a saved cross-ticket key through public receipts", async (t) => {
+  for (const source of ["mirror title", "saved key"]) await t.test(source, async (t) => {
+    const fixture = await setup(t); const { start, call, mutations } = fixture; await start();
+    await outsideReview(call, "FIX-6"); await outsideReview(call, "FIX-8");
+    const report = { type: "defect", ticketId: "FIX-6", findingId: "O1", title: source === "mirror title" ? "  LINEAR   WEBHOOKS " : "First outside title",
+      description: "Reproduction.", dedupeKey: "one-semantic-defect", dedupeEvidence: "Checked all project issues." };
+    const first = await call("squadron_report", report);
+    const second = await call("squadron_report", { ...report, ticketId: "FIX-8", title: "Different wording for same defect" });
+    assert.equal(second.issueId, first.issueId);
+    assert.equal(second.receiptId, first.receiptId);
+    if (source === "mirror title") assert.equal(first.issueId, "fix-9");
+    await flushRecordedWrites(t, fixture);
+    assert.equal(mutations.filter((item) => item.query.includes("issueCreate")).length, source === "mirror title" ? 0 : 1);
+    assert.equal(mutations.filter((item) => item.query.includes("issueRelationCreate")).length, 1);
+  });
+});
+
+test("dropped smells approve only with a short single-line reason and disposition is exclusive to smells", async (t) => {
+  const { start, call } = await setup(t); await start();
+  const worker = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  await call("squadron_report", { type: "done", commit, summary: "Tests." }, { threadId: worker.threadId, projectId: "proj-one" });
+  const reviewer = await call("squadron_spawn_reviewer", { ticketId: "FIX-6" });
+  const context = { threadId: reviewer.threadId, projectId: "proj-one" };
+  const verdict = { type: "verdict", commit, outcome: "approve", resolvedFindingIds: [] };
+  for (const kind of ["in-spec", "question", "not-proven", "outside-spec"]) await assert.rejects(call("squadron_report", {
+    ...verdict, findings: [{ id: "D1", kind, text: "This needs owner attention.", disposition: "drop" }],
+  }, context), /disposition.*smell/);
+  for (const text of ["Two\nlines", "Two\rlines", " ", "x".repeat(301)]) await assert.rejects(call("squadron_report", {
+    ...verdict, findings: [{ id: "D1", kind: "smell", disposition: "drop", text }],
+  }, context), /single-line reason/);
+  const accepted = await call("squadron_report", { ...verdict, findings: [{ id: "D1", kind: "smell", disposition: "drop", text: "The optional rewrite would add complexity without changing behavior." }] }, context);
+  assert.equal(accepted.state, "approved");
+  assert.equal((await call("squadron_status", {}, context)).reports[0].review.firstFindings[0].disposition, "drop");
+});
+
+test("Lead startup and registered tool descriptions explain review, fix, dedupe and PR duties", async (t) => {
+  const { start, harness } = await setup(t); await start();
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0];
+  for (const text of ["squadron_spawn_reviewer", "squadron_report", "dedupeEvidence", "Open questions", "Not proven"]) assert.ok(args.prompt?.includes(text), `Lead prompt must name ${text}`);
+  const config = await harness.behavior.resolveAgentConfiguration(makePluginAgentConfigurationContext({ thread: { id: "thr_lead" }, project: { id: "proj-one" } }));
+  const description = config.tools.find((tool) => tool.name === "squadron_report")?.description ?? "";
+  for (const text of ["verdict", "fix", "defect", "duplicate", "Open questions", "Not proven"]) assert.ok(description.includes(text), `report tool must explain ${text}`);
+  assert.match(config.tools.find((tool) => tool.name === "squadron_spawn_reviewer")?.description ?? "", /second look/);
+});
+
+test("fix-round delivery sends only requires-fix findings while preserving other findings for the Lead", async (t) => {
+  const { start, call, harness } = await setup(t); await start();
+  const worker = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  await call("squadron_report", { type: "done", commit, summary: "Tests." }, { threadId: worker.threadId, projectId: "proj-one" });
+  const reviewer = await call("squadron_spawn_reviewer", { ticketId: "FIX-6" });
+  const finding = { id: "S1", kind: "in-spec", text: "Fix the missing behavior." };
+  const findings = [finding, { id: "Q1", kind: "question", text: "Owner decision." }, { id: "N1", kind: "not-proven", text: "No device proof." },
+    { id: "O1", kind: "outside-spec", text: "Other feature breaks." }, { id: "D1", kind: "smell", disposition: "drop", text: "The optional rewrite adds complexity." }];
+  await call("squadron_report", { type: "verdict", commit, outcome: "changes", findings, resolvedFindingIds: [] }, { threadId: reviewer.threadId, projectId: "proj-one" });
+  await call("squadron_report", { type: "fix", ticketId: "FIX-6" });
+  const messages = harness.inspection.sdk.callsTo("threads.send").map((args) => args[0] as Parameters<BbPluginApi["sdk"]["threads"]["send"]>[0]);
+  const fix = messages.find((message) => message.threadId === worker.threadId)!;
+  const text = (fix.input[0] as { text: string }).text;
+  assert.deepEqual(JSON.parse(text.split("\n").at(-1)!).findings, [finding]);
+  assert.deepEqual((await call("squadron_status", {})).reports[0].review.firstFindings, findings);
 });

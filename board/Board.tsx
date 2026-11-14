@@ -10,6 +10,7 @@ import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
 import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
 import type { workerContract } from "../lib/worker-contract.js";
+import type { ReviewState } from "../lib/review-state.js";
 import type { LaneStarted, laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
@@ -144,6 +145,15 @@ const TICKET_LABEL: Record<TicketState, string> = {
   failed: "Stopped",
   done: "Done",
 };
+const REVIEW_LABEL: Record<ReviewState, string> = {
+  spawning: "Starting review",
+  reviewing: "In review",
+  changes: "Fixes requested",
+  fixing: "Awaiting second look",
+  "second-look": "Second look",
+  approved: "Approved",
+  failed: "Review unconfirmed",
+};
 
 const LANE_LABEL: Record<LaneState, string> = {
   flying: "Flying",
@@ -198,9 +208,6 @@ function Peg({ ticket, lane, onRoute }: { ticket: Ticket; lane: Lane; onRoute?: 
   const open = useOpen();
   const reviewer = ticket.reviewer;
   const state = ticket.state;
-  const reviewState = reviewer?.state === "second-look" ? "Second look" : reviewer?.state === "approved" ? "Approved"
-    : reviewer?.state === "changes" ? "Fixes requested" : reviewer?.state === "spawning" ? "Starting review"
-    : reviewer?.state === "failed" ? "Review unconfirmed" : "In review";
   const threadId = state === "review" && reviewer ? reviewer.threadId : ticket.threadId;
   const threadRole = state === "review" && reviewer ? "reviewer" : "worker";
   const reviewerLabel = state === "review" && reviewer ? ` Reviewer · ${reviewer.route.family} · ${reviewer.route.model} · ${reviewer.route.effort}.` : "";
@@ -214,7 +221,7 @@ function Peg({ ticket, lane, onRoute }: { ticket: Ticket; lane: Lane; onRoute?: 
     state === "blocked"
       ? "Waiting"
       : state === "review"
-        ? reviewer ? reviewState : "Reported done"
+        ? reviewer ? REVIEW_LABEL[reviewer.state] : "Reported done"
         : TICKET_LABEL[state];
   const clickable = Boolean(threadId);
   const size = state === "branch" || state === "done" ? "compact" : state === "blocked" ? "slim" : "full";

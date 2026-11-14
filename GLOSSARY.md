@@ -17,6 +17,10 @@ _Avoid_: dependency (in UI copy), prerequisite
 
 **Follow-up**: A deduped real defect outside the spec, filed with `needs-triage` and linked to the spec. Findings inside the ticket or spec belong in the branch's fix round.
 
+**Finding**: A reviewer's observation about the work: an in-spec finding, a smell, an owner question, behavior not proven, or an outside-spec defect. In-spec findings require a fix; a smell is fixed or dropped with a one-line reason.
+
+**Defect**: Observed behavior that fails a requirement. A real defect outside the spec becomes a Follow-up after deduplication; a defect inside the spec is fixed in the branch.
+
 **Unplanned**: An open issue that is neither a ready spec nor one of its tickets, including a sub-issue whose parent is closed, outside the project, missing or not ready. It waits in the board's Unplanned row, which names any parent without changing it in Linear, until a planning thread turns it into a spec.
 
 ## Roles
@@ -47,6 +51,10 @@ _Avoid_: builder, implementer, subagent
 **Route**: A row in the repo's AI table that maps a ticket label to a family, model and effort. The table lives in `docs/agents/squadron.md`.
 
 **Two strikes**: A failure gets two fix attempts. After that the lane stops and asks the owner.
+
+**Fix round**: The worker's one return to address the findings from its first review.
+
+**Second look**: The original reviewer's one recheck of corrected work, limited to the first review's findings.
 
 **Stop list**: The project's list of problems that block a merge. It doesn't make an unfinished requirement or an in-spec review finding a follow-up.
 

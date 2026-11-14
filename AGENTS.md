@@ -1,8 +1,10 @@
 # BB Squadron
 
-A BB plugin that runs a software factory on a project's Linear tickets. Plugin code (the Helper) starts one Lead thread for each ready spec. The Lead builds the spec's tickets on one integration branch, using worker threads, and opens one PR. A live board page shows every issue, the thread working on it, and the PR.
+A BB plugin that runs a software factory on a project's Linear tickets. Squadron is the orchestrator: it shows the board and starts one Lead thread for each ready spec. The Lead builds the spec's tickets on one integration branch, using worker threads, and opens one PR. The Helper is the optional agent thread the owner talks to.
 
 Read `GLOSSARY.md` before naming anything, and read `docs/adr/` before changing how runs, reviews or Linear writes work.
+
+Use Owner words from `GLOSSARY.md` in anything the owner reads, including PR bodies, comments and Needs you text. Use Factory words for machinery in contributor docs and agent instructions. See [the vocabulary decision](docs/adr/0010-owner-words-and-factory-words.md).
 
 ## Building
 

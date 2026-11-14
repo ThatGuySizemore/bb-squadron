@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import type { LeadThread } from "./lead-threads.js";
+import { latestLeads, type LeadThread } from "./lead-threads.js";
 import { selectProjectCheckout } from "./project-checkout.js";
 import { repositoryHostContract, type RepositoryState } from "./repository-contract.js";
 import { localMarkdownHostContract } from "./local-markdown-contract.js";
@@ -15,6 +15,7 @@ export interface LaneProgress {
 
 /** Read-only lane inputs. Git and file reads execute on the project's selected host. */
 export async function readLaneProgress(bb: BbPluginApi, snapshot: TrackerSnapshot, leads: LeadThread[], signal?: AbortSignal): Promise<LaneProgress> {
+  leads = latestLeads(leads);
   if (!leads.length) return {};
   const checkout = await selectProjectCheckout(bb, snapshot.bbProjectId, signal);
   if (!checkout) return {};

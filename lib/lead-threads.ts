@@ -24,6 +24,20 @@ export interface LeadThread {
   branchCandidates?: string[];
 }
 
+/** One current lane per spec. Older Leads remain in BB with their own environment,
+ * branch, workers and PR; list order must never make their evidence current again. */
+export function latestLeads(leads: LeadThread[]): LeadThread[] {
+  const current = new Map<string, LeadThread>();
+  for (const lead of leads) {
+    const previous = current.get(lead.specId);
+    if (!previous || lead.thread.createdAt > previous.thread.createdAt ||
+      (lead.thread.createdAt === previous.thread.createdAt && lead.thread.id.localeCompare(previous.thread.id) > 0)) {
+      current.set(lead.specId, lead);
+    }
+  }
+  return [...current.values()];
+}
+
 /** The route BB actually runs on a thread, including its unavailable-model fallback. */
 export function threadRoute(providerId: string | null, execution: { model?: string | null; reasoningLevel?: string | null } | null): Route {
   return { family: providerId === "claude-code" ? "claude" : "gpt",

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test, type TestContext } from "node:test";
+import { test, mock, type TestContext } from "node:test";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
 import { createDoctorHost } from "../host.js";
@@ -192,4 +192,43 @@ test("stale Status lines stay Waiting despite a branch commit claiming completio
   git(root, "checkout", "main");
   await harness.behavior.callRpc("lane.start", { projectId: "project", specId: "flight" });
   assert.equal((await board()).lanes[0]?.tickets[0]?.state, "blocked");
+});
+
+test("returning local work reads the new lane branch and leaves the landed branch and workers attributable to the old Lead", async (t) => {
+  let clock = Date.now();
+  const now = mock.method(Date, "now", () => clock);
+  t.after(() => now.mock.restore());
+  const { root, commit, harness, threads, metadata, board } = await fixture(t);
+  git(root, "checkout", "-b", "integration/flight");
+  await writeFile(join(root, ".scratch/flight/issues/01-reader.md"), "# 01: Reader\nStatus: hold\n");
+  commit("Deliver first lane with held work");
+  git(root, "checkout", "main");
+  await harness.behavior.callRpc("lane.start", { projectId: "project", specId: "flight" });
+  git(root, "merge", "--ff-only", "integration/flight");
+  const oldTip = git(root, "rev-parse", "integration/flight");
+  clock += 31_000; // Let the tracker's public read cache expire.
+  assert.equal((await board()).lanes[0].state, "landed");
+  assert.equal((await board()).ready.length, 0);
+  await writeFile(join(root, ".scratch/flight/issues/01-reader.md"), "# 01: Reader\nStatus: ready-for-agent\n");
+  commit("Un-hold remaining work");
+  clock += 31_000;
+  assert.equal((await board()).ready[0]?.id, "flight");
+  git(root, "branch", "integration/flight-return");
+  harness.sdk.stub("threads.spawn", async (args: { providerId?: string; pluginMetadata?: Record<string, unknown> }) => {
+    const next = makeThreadResponse({ id: "return-lead", projectId: "project", providerId: args.providerId,
+      environmentId: "return-environment", status: "active", createdAt: Date.parse("2026-01-01T00:01:00Z") });
+    threads.set(next.id, next); metadata.set(next.id, args.pluginMetadata ?? {});
+    return next;
+  });
+  // The newer Lead precedes the older one in BB's response.
+  harness.sdk.stub("threads.list", async () => [...threads.values()].reverse().map((thread) => ({ ...thread,
+    environmentBranchName: thread.id === "lead" ? "integration/flight" : "integration/flight-return",
+  })));
+  assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "project", specId: "flight" }), { threadId: "return-lead" });
+  const returned = (await board()).lanes[0];
+  assert.deepEqual([returned.leadThreadId, returned.branch, returned.state], ["return-lead", "integration/flight-return", "flying"]);
+  assert.deepEqual(returned.tickets.map(({ id, state }) => [id, state]), [["flight/01", "blocked"]]);
+  assert.equal(git(root, "rev-parse", "integration/flight"), oldTip, "the landed branch stays intact");
+  assert.ok(threads.has("lead"));
+  assert.equal(metadata.get("lead")?.specId, ".scratch/flight/spec.md");
 });

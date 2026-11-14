@@ -21,7 +21,7 @@ export const laneRunSchema = z.object({
   /** Disposable metadata-derived links never grant tools, writes or launches. */
   recoveryOnly: z.boolean().optional(),
   firstPrompt: firstPromptSchema.optional(),
-  startFailure: z.enum(["spawn", "prompt", "environment"]).optional(),
+  startFailure: z.enum(["spawn", "prompt", "environment", "lifecycle"]).optional(),
   workers: z.array(workerRunSchema).optional(),
   routeOverrides: z.record(z.string(), routeSchema).optional(),
 });

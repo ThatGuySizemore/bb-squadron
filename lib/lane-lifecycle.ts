@@ -18,8 +18,8 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
   workers: { withLane<T>(laneId: string, action: () => Promise<T>): Promise<T> }, options: { now?: () => number } = {}) {
   const now = options.now ?? Date.now;
 
-  function latest(projectId: string, laneId: string): LaneRun {
-    const run = lanes.list(projectId).find((item) => item.id === laneId);
+  function latest(projectId: string, laneId: string, includeRecovered = false): LaneRun {
+    const run = lanes.list(projectId).find((item) => item.id === laneId && (includeRecovered || !item.recoveryOnly));
     if (!run) throw new Error("This lane no longer exists.");
     return run;
   }
@@ -117,7 +117,10 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
   }
   function cancel(projectId: string, laneId: string): Promise<LaneRun> {
     return workers.withLane(laneId, async () => {
-      const current = latest(projectId, laneId);
+      const current = latest(projectId, laneId, true);
+      // These are display links only: never stop a hinted thread, grant its
+      // lost authority, or invent a Linear cancellation write.
+      if (current.recoveryOnly) return lanes.cancelRecovered(projectId, laneId, now());
       if (current.state === "landed" || current.state === "canceled") throw new Error("This lane is no longer flying. Refresh the board.");
       const canceled = saveLifecycle(current, { state: "canceled", canceledAt: now() }, ["stopReason", "writeError"]);
       await stopThreads(canceled);
@@ -129,9 +132,10 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
     });
   }
 
-  function find(projectId: string, specId: string): LaneRun {
+  function find(projectId: string, specId: string, includeRecovered = false): LaneRun {
     const run = lanes.list(projectId).filter((item) => item.specId === specId && item.state !== "landed" && item.state !== "canceled").at(-1);
     if (!run) throw new Error("This lane is no longer flying. Refresh the board.");
+    if (run.recoveryOnly && !includeRecovered) throw new Error("This recovered lane has no trusted service binding. Cancel clears its display reservation; Resume requires an explicit adoption decision.");
     return run;
   }
   bb.rpc.register(laneLifecycleContract, {
@@ -145,7 +149,7 @@ export function registerLifecycle(bb: BbPluginApi, sources: Pick<LaneSources, "m
     },
     "lanes.cancel": async ({ projectId, specId }, context) => {
       if (context.experimental_caller.kind !== "client") throw new Error("Cancel lanes from the Squadron board.");
-      return { state: (await cancel(projectId, find(projectId, specId).id)).state };
+      return { state: (await cancel(projectId, find(projectId, specId, true).id)).state };
     },
   });
   return { stop, stopInLane, resume, cancel };

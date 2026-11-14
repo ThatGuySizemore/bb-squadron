@@ -16,7 +16,6 @@ export async function releaseBoundPrompt(bb: BbPluginApi, threadId: string) {
   return bb.sdk.threads.queuedMessages.send({ threadId, queuedMessageId: rows[0].id, mode: "auto" });
 }
 
-
 export const firstPromptSchema = z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), queuedMessageId: z.string().optional(), released: z.boolean() });
 export type FirstPrompt = z.infer<typeof firstPromptSchema>;
 export const promptHash = (text: string) => createHash("sha256").update(text).digest("hex");

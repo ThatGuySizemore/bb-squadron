@@ -238,7 +238,6 @@ export function helperCore(input: HelperInput): HelperOutput {
   };
 }
 
-
 /** Rebuild disposable links without rebuilding grants, receipts or approval.
  * A durable lane always wins, including its stopped/landed owner choices. */
 export function rebuildLaneLinks(snapshot: MirrorSnapshot, durable: readonly LaneRun[], threads: readonly RestartThread[]): LaneRun[] {
@@ -251,7 +250,7 @@ export function rebuildLaneLinks(snapshot: MirrorSnapshot, durable: readonly Lan
   for (const [id, group] of groups) {
     const first = group[0];
     const spec = snapshot.issues.find((issue) => issue.id === first.specIssueId && issue.identifier === first.specId && issue.inProject);
-    if (!spec) continue;
+    if (!spec || !isOpenIssue(spec)) continue;
     const leads = group.filter((thread) => thread.role === "Lead" && thread.specIssueId === spec.id && thread.parentThreadId === null);
     const lead = leads.length === 1 ? leads[0] : null;
     recovered.push({ id, bbProjectId: first.projectId, workspaceId: "",

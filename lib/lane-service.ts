@@ -50,33 +50,77 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
   }
 
   db.exec(`CREATE TABLE IF NOT EXISTS squadron_recovered_links (id TEXT PRIMARY KEY, bb_project_id TEXT NOT NULL, run_json TEXT NOT NULL)`);
+  db.exec(`CREATE TABLE IF NOT EXISTS squadron_recovery_dismissals (id TEXT PRIMARY KEY, bb_project_id TEXT NOT NULL, run_json TEXT NOT NULL)`);
   let recoveryGate: (() => Promise<void>) | undefined;
   let refreshRecoveryLinks: ((projectId: string) => void) | undefined;
   const setRecoveryGate = (gate: () => Promise<void>, refreshLinks: (projectId: string) => void) => { recoveryGate = gate; refreshRecoveryLinks = refreshLinks; };
   function list(projectId: string): LaneRun[] {
     const durable = (db.prepare(`SELECT run_json FROM squadron_lanes WHERE bb_project_id=? ORDER BY rowid`).all(projectId) as { run_json: string }[])
       .map((row) => laneRunSchema.parse(JSON.parse(row.run_json)));
-    const links = (db.prepare(`SELECT run_json FROM squadron_recovered_links WHERE bb_project_id=? ORDER BY rowid`).all(projectId) as { run_json: string }[])
+    const dismissed = (db.prepare(`SELECT run_json FROM squadron_recovery_dismissals WHERE bb_project_id=? ORDER BY rowid`).all(projectId) as { run_json: string }[])
       .map((row) => laneRunSchema.parse(JSON.parse(row.run_json)))
       .filter((run) => !durable.some((saved) => saved.id === run.id || saved.specIssueId === run.specIssueId));
-    return [...durable, ...links];
+    const links = (db.prepare(`SELECT run_json FROM squadron_recovered_links WHERE bb_project_id=? ORDER BY rowid`).all(projectId) as { run_json: string }[])
+      .map((row) => laneRunSchema.parse(JSON.parse(row.run_json)))
+      .filter((run) => !durable.some((saved) => saved.id === run.id || saved.specIssueId === run.specIssueId) && !dismissed.some((saved) => saved.id === run.id || saved.specIssueId === run.specIssueId));
+    return [...durable, ...dismissed, ...links];
   }
   /** Trusted service seam for subsequent ticket, review and lifecycle commands. */
   function save(run: LaneRun) {
     if (run.recoveryOnly) throw new Error("Recovered display links cannot become service bindings.");
     const value = laneRunSchema.parse(run);
+    const encoded = JSON.stringify(value);
+    const previous = db.prepare(`SELECT run_json FROM squadron_lanes WHERE id=?`).get(value.id) as { run_json: string } | undefined;
+    if (previous?.run_json === encoded) return;
     db.prepare(`INSERT INTO squadron_lanes (id, bb_project_id, run_json) VALUES (?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET run_json=excluded.run_json`).run(value.id, value.bbProjectId, JSON.stringify(value));
+      ON CONFLICT(id) DO UPDATE SET run_json=excluded.run_json`).run(value.id, value.bbProjectId, encoded);
     for (const listener of listeners) listener(run.bbProjectId);
     schedule(run.bbProjectId);
   }
   function saveRecovered(run: LaneRun) {
     const value = laneRunSchema.parse({ ...run, recoveryOnly: true, state: "stopped" });
+    const previous = db.prepare(`SELECT run_json FROM squadron_recovered_links WHERE id=?`).get(value.id) as { run_json: string } | undefined;
+    if (previous?.run_json === JSON.stringify(value)) return;
     db.prepare(`INSERT INTO squadron_recovered_links (id, bb_project_id, run_json) VALUES (?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET run_json=excluded.run_json`).run(value.id, value.bbProjectId, JSON.stringify(value));
     for (const listener of listeners) listener(run.bbProjectId);
   }
-  const projects = () => (db.prepare(`SELECT bb_project_id FROM squadron_lanes UNION SELECT bb_project_id FROM squadron_recovered_links`).all() as { bb_project_id: string }[]).map((row) => row.bb_project_id);
+  /** Replace only after a complete successful thread scan and usable mirror. */
+  function replaceRecovered(projectId: string, runs: readonly LaneRun[]) {
+    const values = runs.map((run) => laneRunSchema.parse({ ...run, recoveryOnly: true, state: "stopped" }));
+    if (values.some((run) => run.bbProjectId !== projectId)) throw new Error("Recovered links belong to another project.");
+    let changed = false;
+    db.transaction(() => {
+      const rows = db.prepare(`SELECT id, run_json FROM squadron_recovered_links WHERE bb_project_id=?`).all(projectId) as { id: string; run_json: string }[];
+      const next = new Set(values.map((run) => run.id));
+      for (const row of rows) if (!next.has(row.id)) {
+        db.prepare(`DELETE FROM squadron_recovered_links WHERE bb_project_id=? AND id=?`).run(projectId, row.id); changed = true;
+      }
+      for (const value of values) {
+        const encoded = JSON.stringify(value);
+        if (rows.some((row) => row.id === value.id && row.run_json === encoded)) continue;
+        db.prepare(`INSERT INTO squadron_recovered_links (id, bb_project_id, run_json) VALUES (?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET run_json=excluded.run_json`).run(value.id, projectId, encoded); changed = true;
+      }
+    })();
+    if (changed) for (const listener of listeners) listener(projectId);
+  }
+  /** Owner Cancel clears only this display reservation. It grants no adoption. */
+  function cancelRecovered(projectId: string, laneId: string, canceledAt: number): LaneRun {
+    const run = list(projectId).find((item) => item.id === laneId && item.recoveryOnly && item.state !== "canceled");
+    if (!run) throw new Error("This recovered reservation no longer exists.");
+    const value: LaneRun = { ...run, state: "canceled", canceledAt };
+    delete value.stopReason; delete value.writeError;
+    db.transaction(() => {
+      db.prepare(`INSERT INTO squadron_recovery_dismissals (id, bb_project_id, run_json) VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET run_json=excluded.run_json`).run(value.id, projectId, JSON.stringify(laneRunSchema.parse(value)));
+      db.prepare(`DELETE FROM squadron_recovered_links WHERE bb_project_id=? AND id=?`).run(projectId, laneId);
+    })();
+    for (const listener of listeners) listener(projectId);
+    schedule(projectId);
+    return value;
+  }
+  const projects = () => (db.prepare(`SELECT bb_project_id FROM squadron_lanes UNION SELECT bb_project_id FROM squadron_recovered_links UNION SELECT bb_project_id FROM squadron_recovery_dismissals`).all() as { bb_project_id: string }[]).map((row) => row.bb_project_id);
   const onChange = (listener: (projectId: string) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   // Serialize each project's starts across different specs; share duplicate clicks.
   const queues = new Map<string, Promise<unknown>>();
@@ -154,11 +198,14 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
   // Start reconciliation owns the lane fields and preserves that progress.
   function saveStart(run: LaneRun) {
     const latest = list(run.bbProjectId).find((item) => item.id === run.id);
-    // The owner's Stop or Cancel during a start pass wins over that pass.
-    const owner = latest && (latest.state === "canceled" || (latest.state === "stopped" && latest.stoppedAt !== undefined && latest.stoppedAt !== run.stoppedAt));
-    save({ ...latest, ...run, writeError: run.writeError, stopReason: run.stopReason, startFailure: run.startFailure, ...(latest?.workers ? { workers: latest.workers } : {}),
-      ...(latest?.routeOverrides ? { routeOverrides: latest.routeOverrides } : {}),
-      ...(owner ? { state: latest.state, stopReason: latest.stopReason, stoppedAt: latest.stoppedAt, canceledAt: latest.canceledAt } : {}) });
+    // Only start-owned fields are rebased. Other tickets may advance durable
+    // safety, activity, review or lifecycle state while a write is awaiting BB.
+    const owner = latest && (latest.state === "canceled" || latest.state === "landed" ||
+      (latest.state === "stopped" && latest.stoppedAt !== undefined && latest.stoppedAt !== run.stoppedAt));
+    const value: LaneRun = latest ? { ...latest, state: run.state, leadThreadId: run.leadThreadId, environmentId: run.environmentId,
+      branch: run.branch, firstPrompt: run.firstPrompt, startWrites: run.startWrites, writeError: run.writeError,
+      stopReason: run.stopReason, startFailure: run.startFailure } : { ...run };
+    save({ ...value, ...(owner ? { state: latest.state, stopReason: latest.stopReason, stoppedAt: latest.stoppedAt, canceledAt: latest.canceledAt } : {}) });
     if (owner) Object.assign(run, { state: latest.state });
   }
 
@@ -385,6 +432,6 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       try { await delay(15_000, undefined, { signal: stop }); } catch { return; }
     }
   } });
-  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile, saveRecovered, projects, setRecoveryGate, withProject: serialize, settleStartWrites };
+  return { start: startOnce, list, save, onChange, reconcileStart, autoStart, reconcile, saveRecovered, projects, setRecoveryGate, withProject: serialize, settleStartWrites, replaceRecovered, cancelRecovered };
 }
 export type LaneService = ReturnType<typeof registerLanes>;

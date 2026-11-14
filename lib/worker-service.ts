@@ -3,9 +3,11 @@ import { bindingSchedule, releaseBoundPrompt, firstPromptIntent, pendingBoundPro
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { BbPluginApi, PluginAgentToolContext } from "@get-bb/plugin-sdk";
+import { hasAcceptedOwnerAnswer } from "./owner-answer-recovery.js";
 import { helperCore } from "./helper-core.js";
 import type { LaneRun } from "./lane-contract.js";
 import type { LaneService, LaneSources } from "./lane-service.js";
+import type { RestartThread } from "./restart-contract.js";
 import type { WorkerRun } from "./worker-contract.js";
 import { workerContract, workerHostContract, spawnWorkerSchema, reportSchema } from "./worker-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
@@ -321,17 +323,27 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
     });
   } });
   /** Caller holds withLane; never re-enter the same queue here. */
-  async function reconcileInLane(laneId: string, observations: readonly import("./restart-contract.js").RestartThread[]) {
-    const projectId = lanes.projects().find((project) => lanes.list(project).some((run) => run.id === laneId));
-    if (!projectId) return;
+  async function reconcileInLane(projectId: string, laneId: string, observations: readonly RestartThread[], completeScan = true) {
     const run = current(projectId, laneId);
-    if (run.recoveryOnly || run.state !== "flying") return;
+    if (run.recoveryOnly || run.state === "canceled" || run.state === "landed") return;
+    for (const worker of run.workers ?? []) {
+      if (!worker.question || !worker.threadId) continue;
+      try {
+        const thread = await bb.sdk.threads.get({ threadId: worker.threadId, signal: lifetime.signal });
+        if (isActiveProjectThread(thread, worker.threadId, projectId) && thread.parentThreadId === run.leadThreadId &&
+          await hasAcceptedOwnerAnswer(bb, worker.threadId, worker.question.askedAt, lifetime.signal)) {
+          delete worker.question; saveWorkers(run);
+        }
+      } catch (error) { if (!lifetime.signal.aborted) bb.log.warn(`Lane ${run.id} worker ${worker.id} answer-catch-up: ${diagnostic(error)}`); }
+    }
+    if (run.state !== "flying") return;
     for (const worker of run.workers ?? []) {
       if (await missingWorkerReceipt(run, worker)) continue;
       if (worker.state === "integrated" || worker.state === "reported") continue;
       const interrupted = worker.state === "spawning" || (worker.state === "failed" && ["spawn", "prompt"].includes(worker.failurePhase ?? ""));
       if (worker.state === "failed" && !interrupted) continue;
       try {
+        if (!worker.threadId && !completeScan) continue;
         if (!worker.threadId && worker.firstPrompt && !worker.firstPrompt.released) {
           const candidates: string[] = [];
           for (const observation of observations.filter((item) => item.laneId === run.id && item.role === "Worker" && item.workerId === worker.id && item.ticketIssueId === worker.ticketIssueId)) {
@@ -345,7 +357,7 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
           worker.state = "failed"; worker.failure = "The worker identity is unproven. Check BB threads; this slot stays reserved."; saveWorkers(run); continue;
         }
         const thread = await bb.sdk.threads.get({ threadId: worker.threadId, signal: lifetime.signal });
-        if (!isActiveProjectThread(thread, worker.threadId, projectId) || thread.parentThreadId !== run.leadThreadId || thread.status === "error" || thread.status === "stopping") {
+        if (!isActiveProjectThread(thread, worker.threadId, projectId) || thread.parentThreadId !== run.leadThreadId || thread.status === "error") {
           worker.state = "failed"; worker.failurePhase = "lifecycle"; worker.failure = "The linked worker stopped, failed or is unavailable. Its progress and slot are preserved. Check its thread before resuming."; saveWorkers(run); continue;
         }
         if (worker.firstPrompt && !worker.firstPrompt.released) {
@@ -355,18 +367,25 @@ export function registerWorkers(bb: BbPluginApi, sources: Pick<LaneSources, "con
           }
           worker.firstPrompt.queuedMessageId = row.id;
           worker.state = "working"; delete worker.failure; delete worker.failurePhase; saveWorkers(run);
-          const released = await bb.sdk.threads.queuedMessages.send({ threadId: thread.id, queuedMessageId: row.id, mode: "auto" });
+          let released;
+          try { released = await bb.sdk.threads.queuedMessages.send({ threadId: thread.id, queuedMessageId: row.id, mode: "auto" }); }
+          catch (error) {
+            worker.state = "failed"; worker.failurePhase = "prompt";
+            worker.failure = "The worker's initial prompt outcome is unproven. Check its queue; this slot stays reserved."; saveWorkers(run);
+            bb.log.warn(`Lane ${run.id} worker ${worker.id} recover-prompt: ${diagnostic(error)}`); continue;
+          }
           worker.firstPrompt.released = released.delivery === "sent"; saveWorkers(run);
           if (!worker.firstPrompt.released) continue;
         } else if (interrupted) {
           // Old bindings without an exact pending intent cannot authorize replay.
           worker.state = "failed"; worker.failure = "The worker's launch outcome is unproven. Check its thread and queue; the slot stays reserved."; saveWorkers(run); continue;
         }
-        await environment(run, worker); saveWorkers(run);
+        // Linked worktrees need no repeat environment read on a passive pass.
+        // Missing links still use the same validated provisioning adapter.
+        if (!worker.environmentId || !worker.branch) { await environment(run, worker); saveWorkers(run); }
         if (!worker.writes?.started || worker.writeError) await queueWrites(run, worker, "started", sources.mirror.getSnapshot(projectId));
       } catch (error) {
-        worker.state = "failed"; worker.failurePhase = worker.firstPrompt?.released ? "lifecycle" : "prompt";
-        worker.failure = "Worker recovery could not be confirmed. Its record and slot are preserved. Check its thread and queue before resuming."; saveWorkers(run);
+        // An SDK read failure supplies no terminal lifecycle evidence.
         bb.log.warn(`Lane ${run.id} worker ${worker.id} recovery: ${diagnostic(error)}`);
       }
     }

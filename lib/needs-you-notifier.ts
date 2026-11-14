@@ -69,7 +69,7 @@ export function registerNeedsYouNotifications(bb: BbPluginApi, lanes?: Pick<Lane
   }
   if (lanes) bb.onDispose(lanes.onChange((projectId) => {
     for (const run of lanes.list(projectId)) {
-      if (run.leadThreadId && run.state !== "landed" && run.state !== "canceled") void quiet(run.leadThreadId);
+      if (!run.recoveryOnly && run.leadThreadId && run.state !== "landed" && run.state !== "canceled") void quiet(run.leadThreadId);
     }
   }));
   return { observe, quiet };

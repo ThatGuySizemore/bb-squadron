@@ -1,5 +1,5 @@
 // Derives the board from the in-memory Linear snapshot and project settings.
-import { dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type UnplannedIssue } from "./board-model.js";
+import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type LinearStatus, type ReadySpec, type Route, type Ticket, type UnplannedIssue } from "./board-model.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
@@ -62,7 +62,10 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const binding = snapshot.binding;
   const leads = new Map((input.leads ?? []).filter(({ thread }) =>
     binding && isActiveProjectThread(thread, thread.id, binding.bbProjectId)).map((lead) => [lead.specId, lead]));
-  const lanes: Lane[] = specs.flatMap((spec) => {
+  // A spec its Lead closed after the merge keeps its lane, so the lane lands and stays Landed.
+  const closedSpecs = snapshot.issues.filter((issue) => issue.parentId === null && issue.state.type === "completed" &&
+    issue.teamId === binding?.team.id && issue.projectId === binding?.project.id && labels(issue).includes(READY_FOR_AGENT));
+  const lanes: Lane[] = [...specs, ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
@@ -102,20 +105,23 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
     const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt) : undefined;
+    const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
+    const acceptOwner = labels(spec).includes(ACCEPT_OWNER);
+    // accept:owner holds a mergeable PR for the owner's click; other Leads merge their own.
+    const inReview = pr?.state === "open" ? (acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
     return {
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
       branch: lead.branch,
-      state: landedAt !== undefined ? "landed" : pr?.state === "open" ? "pr-open" : stopped ? "stopped" : "flying",
+      state: landedAt !== undefined ? "landed" : inReview ?? (stopped ? "stopped" : "flying"),
       ...(needs.length ? { needs } : {}),
       minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
-      ...(pr ? { pr: { number: pr.number, state: pr.state, url: pr.url,
-        checks: pr.checks.state === "no_checks" ? "none" as const : pr.checks.state } } : {}),
+      ...(pr && checks ? { pr: { number: pr.number, state: pr.state, url: pr.url, checks } } : {}),
       ...(landedAt !== undefined ? { landedAt } : {}),
       ...(settings ? { reviewer: reviewerFor(lead.route, settings.finalReviewFamily,
         // The default row speaks for its family before label-specific rows.
         [...settings.routes].sort((a, b) => Number(b.label === null) - Number(a.label === null))
           .map(({ family, model, effort }) => ({ family, model, effort }))) } : {}),
-      acceptOwner: labels(spec).includes(ACCEPT_OWNER), tickets: dependencyColumns(tickets).flat(),
+      acceptOwner, tickets: dependencyColumns(tickets).flat(),
       unmatchedThreads: workers.filter((child) => !matched.has(child.id))
         .map((child) => ({ threadId: child.id, title: child.title ?? "" })),
     };

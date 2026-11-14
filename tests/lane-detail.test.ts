@@ -171,3 +171,90 @@ test("an open or merged PR outranks a quiet Lead, which otherwise reads as stopp
   assert.equal(state({ env_lead: pr("open") }), "pr-open");
   assert.equal(state({ env_lead: pr("merged") }), "landed");
 });
+
+test("Merge shows only for an open PR with passing checks, and an accept:owner PR ready to merge is in Needs you", async () => {
+  const { canMerge, needsYou } = await import("../lib/board-model.js");
+  const board = (pullRequests: Record<string, unknown>, specLabels = ["ready-for-agent"]) => {
+    const [spec, ...tickets] = laneIssues();
+    return deriveBoard(input(snapshot([{ ...spec, labels: specLabels.map((name) => ({ id: `label-${name}`, name, color: "#888888" })) }, ...tickets]),
+      { leads: [lead()], pullRequests })).board;
+  };
+  const mergeable = (pullRequests: Record<string, unknown>) => canMerge(board(pullRequests).lanes[0]);
+  assert.equal(mergeable({}), false, "no PR, no Merge");
+  assert.equal(mergeable({ env_lead: pr("draft", "passing") }), false);
+  for (const checks of ["failing", "pending", "no_checks", "unknown"] as const) {
+    assert.equal(mergeable({ env_lead: pr("open", checks) }), false, `open with ${checks} checks`);
+  }
+  assert.equal(mergeable({ env_lead: pr("merged") }), false);
+  assert.equal(mergeable({ env_lead: pr("closed") }), false);
+  assert.equal(mergeable({ env_lead: pr("open", "passing") }), true);
+
+  const owner = board({ env_lead: pr("open", "passing") }, ["ready-for-agent", "accept:owner"]);
+  assert.equal(owner.lanes[0].state, "merge-waits");
+  assert.deepEqual(needsYou(owner).map(({ kind, specId, threadId }) => [kind, specId, threadId]), [["merge", "FIX-1", "thr_lead"]]);
+  assert.doesNotMatch(needsYou(owner)[0].text, /both reviews/, "the slim lane has one final review");
+
+  const pending = board({ env_lead: pr("open", "pending") }, ["ready-for-agent", "accept:owner"]);
+  assert.equal(pending.lanes[0].state, "pr-open", "accept:owner waits for checks before it needs you");
+  assert.deepEqual(needsYou(pending), []);
+  assert.deepEqual(needsYou(board({ env_lead: pr("open", "passing") })), [], "the Lead merges its own lane without accept:owner");
+});
+
+test("the lane row shows Merge for an open PR with passing checks and not otherwise", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const html = (checks: "passing" | "pending") => renderToStaticMarkup(createElement(BoardView, {
+    board: deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], pullRequests: { env_lead: pr("open", checks) } })).board,
+    demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+  }));
+  assert.match(html("passing"), /<article class="sq-line"[\s\S]*>Merge<\/button>/);
+  assert.doesNotMatch(html("pending"), />Merge<\/button>/);
+  const merging = renderToStaticMarkup(createElement(BoardView, {
+    board: deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], pullRequests: { env_lead: pr("open", "passing") } })).board,
+    demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, acting: { specId: "FIX-1", type: "merge" },
+  }));
+  assert.match(merging, /role="status">Squash-merging the PR/);
+  assert.match(merging, /<button[^>]*disabled=""[^>]*>Merging…<\/button>/);
+});
+
+test("the landing animation plays once, when the board sees a lane turn Landed", async () => {
+  const { LANDING_MS, nextLandings } = await import("../lib/board-model.js");
+  const landedBoard = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;
+  const flyingBoard = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], pullRequests: { env_lead: pr("open") } })).board;
+  const at = SYNCED_AT + 5 * 60_000;
+
+  const reopened = nextLandings(null, landedBoard.lanes, at);
+  assert.deepEqual(reopened.until, {}, "a lane already Landed when the board opens doesn't replay its landing");
+
+  const watching = nextLandings(null, flyingBoard.lanes, at);
+  const landing = nextLandings(watching, landedBoard.lanes, at + 1_000);
+  assert.deepEqual(landing.until, { "FIX-1": at + 1_000 + LANDING_MS }, "the landing plays when the PR's merge is seen");
+  const later = nextLandings(landing, structuredClone(landedBoard.lanes), at + 1_000 + LANDING_MS + 1);
+  assert.deepEqual(later.until, {}, "the next board read after the window plays nothing more");
+  assert.deepEqual(nextLandings(later, landedBoard.lanes, at + 60_000).until, {}, "it never plays again");
+});
+
+test("a landing is a still state under reduced motion", async () => {
+  const css = readFileSync("board/board.css", "utf8");
+  const reduced = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+  assert.match(reduced, /\.sq \*,[\s\S]*?animation: none !important;/, "the stamp and every other animation stop");
+  assert.match(reduced, /\.sq-burst \{\s*display: none;/, "the burst's pixels never show");
+});
+
+test("a spec the Lead closed after its merge stays a Landed lane with its done tickets", () => {
+  const [spec, two, three, twelve] = laneIssues();
+  const { board } = deriveBoard(input(snapshot([
+    withStatus(spec, "Done", "completed"), withStatus(two, "Done", "completed"), withStatus(three, "Done", "completed"),
+    withStatus(twelve, "Canceled", "canceled"),
+  ]), { leads: [lead()], pullRequests: { env_lead: pr("merged") } }));
+  assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.state]), [["FIX-1", "landed"]]);
+  assert.deepEqual(ticketStates(board), [["FIX-2", "done"], ["FIX-3", "done"]]);
+  assert.deepEqual(board.ready, []);
+  assert.deepEqual(board.unplanned, [], "closed issues stay off Unplanned");
+
+  const elsewhere = deriveBoard(input(snapshot([{ ...withStatus(spec, "Done", "completed"), projectId: "project-other" }]),
+    { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;
+  assert.deepEqual(elsewhere.lanes, [], "a spec moved out of the bound project leaves the board");
+});

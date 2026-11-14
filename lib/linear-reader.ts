@@ -24,6 +24,7 @@ const relatedNode = issueNode.omit({ labels: true });
 const relationNode = z.object({ id: z.string(), type: z.string(), issue: relatedNode, relatedIssue: relatedNode });
 const graphNode = issueNode.extend({ relations: connection(relationNode), inverseRelations: connection(relationNode) });
 const issuesResponse = z.object({ issues: connection(graphNode) });
+const laneSpecResponse = z.object({ issue: issueNode.extend({ children: connection(issueNode) }).nullable() });
 const referenceFields = `id identifier title description url updatedAt team { id } project { id } parent { id } state { id name type }`;
 const relationFields = `nodes { id type issue { ${referenceFields} } relatedIssue { ${referenceFields} } } pageInfo { hasNextPage endCursor }`;
 const issueFields = `id identifier title description url updatedAt team { id } project { id } parent { id }
@@ -45,6 +46,8 @@ async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pag
 }
 
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
+  /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
+  laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
   now?: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 } = {}) {
@@ -222,6 +225,36 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
       seen.add(next);
       after = next;
     } while (true);
+    // The open walk misses a lane's done tickets and a spec its Lead closed after the merge.
+    // Read each Lead's spec and its completed sub-issues so the lane can land and stay Landed.
+    let laneSpecIds: string[] = [];
+    try { laneSpecIds = await options.laneSpecIds?.(bbProjectId) ?? []; }
+    catch (error) { bb.log.warn(`lane spec ids unavailable: ${error instanceof Error ? error.name : "unknown"}`); }
+    for (const id of new Set(laneSpecIds)) {
+      let childrenAfter: string | null = null;
+      const childCursors = new Set<string>();
+      do {
+        let issue: z.infer<typeof laneSpecResponse>["issue"];
+        try {
+          issue = laneSpecResponse.parse(await graphql(`query SquadronLaneSpec($id: String!, $after: String) {
+            issue(id: $id) { ${issueFields}
+              children(first: 50, after: $after, filter: { state: { type: { eq: "completed" } } }) { nodes { ${issueFields} } pageInfo { hasNextPage endCursor } }
+            }
+          }`, { id, after: childrenAfter })).issue;
+        } catch (error) {
+          // A deleted spec must not stop the whole read.
+          if (error instanceof LinearRequestError && error.code === "graphql") break;
+          throw error;
+        }
+        if (!issue) break;
+        putIssue(issue, issue.labels.nodes);
+        for (const child of issue.children.nodes) putIssue(child, child.labels.nodes);
+        if (!issue.children.pageInfo.hasNextPage) break;
+        const cursor: string | null = issue.children.pageInfo.endCursor;
+        if (!cursor || childCursors.has(cursor) || childCursors.size >= 1_000) throw new LinearRequestError("invalid_response");
+        childCursors.add(cursor); childrenAfter = cursor;
+      } while (true);
+    }
     const teamLabels: MirrorSnapshot["labels"] = [];
     const teamStates: MirrorSnapshot["states"] = [];
     const stateCursors = new Set<string>();

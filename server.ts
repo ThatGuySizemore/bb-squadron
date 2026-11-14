@@ -11,7 +11,8 @@ import { readPullRequests } from "./lib/pull-requests.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
-  const mirror = registerLinearReader(bb, linear);
+  const mirror = registerLinearReader(bb, linear, {
+    laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId) });
   const doctor = registerDoctor(bb, () => linear.getConnection());
   registerBoard(bb, { connection: () => linear.getConnection(), mirror, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal) });

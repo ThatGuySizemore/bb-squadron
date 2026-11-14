@@ -3,7 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
-import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
+import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
 import type { boardContract } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
@@ -268,17 +268,19 @@ function useOverflow<T extends HTMLElement>() {
   return [ref, overflow] as const;
 }
 
-/** A Stop or Resume whose message is on its way to the Lead. */
-export interface LaneAction { specId: string; type: "stop" | "resume" }
+/** A Stop or Resume on its way to the Lead, or a Merge on its way to the pull-request plugin. */
+export interface LaneAction { specId: string; type: "stop" | "resume" | "merge" }
 
-const LANE_ACTION_PENDING: Record<LaneAction["type"], string> = { stop: "Stopping…", resume: "Resuming…" };
+const LANE_ACTION_LABEL: Record<LaneAction["type"], string> = { stop: "Stop", resume: "Resume", merge: "Merge" };
+const LANE_ACTION_PENDING: Record<LaneAction["type"], string> = { stop: "Stopping…", resume: "Resuming…", merge: "Merging…" };
 const LANE_ACTION_STATUS: Record<LaneAction["type"], string> = {
   stop: "Asking the Lead to wind down",
   resume: "Asking the Lead to carry on",
+  merge: "Squash-merging the PR",
 };
 
-/** Stop or Resume, disabled while a message to this lane's Lead is on its way. */
-function LaneMessageButton({ type, specId, acting, tone, dispatch }: {
+/** Stop, Resume or Merge, disabled while any lane action is on its way. */
+function LaneActionButton({ type, specId, acting, tone, dispatch }: {
   type: LaneAction["type"]; specId: string; acting: LaneAction | null; tone: "plain" | "primary" | "amber"; dispatch: (a: BoardAction) => void;
 }) {
   const mine = acting?.specId === specId;
@@ -286,7 +288,7 @@ function LaneMessageButton({ type, specId, acting, tone, dispatch }: {
     <>
       {mine && acting.type === type ? <span className="sq-plan-why" role="status">{LANE_ACTION_STATUS[type]}</span> : null}
       <Btn tone={tone} disabled={acting !== null} onClick={() => dispatch({ type, specId })}>
-        {mine && acting.type === type ? LANE_ACTION_PENDING[type] : type === "stop" ? "Stop" : "Resume"}
+        {mine && acting.type === type ? LANE_ACTION_PENDING[type] : LANE_ACTION_LABEL[type]}
       </Btn>
     </>
   );
@@ -339,13 +341,9 @@ function SortieLine({ lane, dispatch, landing, acting = null }: { lane: Lane; di
         <span className="sq-branch">{lane.branch}</span>
         {lane.state !== "landed" ? (
           <div className="sq-actions">
-            {lane.state === "merge-waits" ? (
-              <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: lane.specId })}>
-                Merge
-              </Btn>
-            ) : null}
-            {lane.state === "stopped" ? <LaneMessageButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
-            {lane.state === "flying" ? <LaneMessageButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {canMerge(lane) ? <LaneActionButton type="merge" tone="amber" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {lane.state === "stopped" ? <LaneActionButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {lane.state === "flying" ? <LaneActionButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
             <span className="sq-isolated">
               <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
                 Cancel
@@ -451,7 +449,7 @@ export function NeedsYouStrip({ items, dispatch, setup, demo = false, acting = n
             ) : null}
             {item.kind === "stopped" ? (
               <>
-                <LaneMessageButton type="resume" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} />
+                <LaneActionButton type="resume" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} />
                 {demo ? (
                   <Btn onClick={() => toast(`Prototype: opens a planning thread on ${item.specId}.`)}>Re-plan</Btn>
                 ) : item.threadId ? (
@@ -459,11 +457,7 @@ export function NeedsYouStrip({ items, dispatch, setup, demo = false, acting = n
                 ) : null}
               </>
             ) : null}
-            {item.kind === "merge" ? (
-              <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: item.specId })}>
-                Merge
-              </Btn>
-            ) : null}
+            {item.kind === "merge" ? <LaneActionButton type="merge" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} /> : null}
           </span>
         </li>
       ))}
@@ -565,19 +559,19 @@ function usePrefersReducedMotion() {
   return reduced;
 }
 
-const LANDING_MS = 1600;
-
-/** Re-renders once a landing's burst window has passed. */
-function useLandingClock(lanes: Lane[]): number {
+/** Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed. */
+function useLandings(lanes: Lane[]): (lane: Lane) => boolean {
+  const seen = useRef<Landings | null>(null);
+  // Folded in as each board arrives, so a lane never flashes into Landed before its burst.
+  const landings = useMemo(() => (seen.current = nextLandings(seen.current, lanes, Date.now())), [lanes]);
   const [now, setNow] = useState(() => Date.now());
-  const pending = lanes.filter((l) => l.landedAt !== undefined && now - l.landedAt < LANDING_MS);
+  const pending = Object.values(landings.until).filter((until) => until > now);
   useEffect(() => {
     if (pending.length === 0) return;
-    const until = Math.min(...pending.map((l) => l.landedAt! + LANDING_MS));
-    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, until - Date.now()) + 20);
+    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, Math.min(...pending) - Date.now()) + 20);
     return () => window.clearTimeout(t);
   });
-  return Math.max(now, ...lanes.map((l) => l.landedAt ?? 0));
+  return (lane) => lane.state === "landed" && (landings.until[lane.specId] ?? 0) > now;
 }
 
 /** Where the board's copy of Linear stands, in one muted line under the header. */
@@ -618,8 +612,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
-  const now = useLandingClock(board.lanes);
-  const isLanding = (l: Lane) => l.state === "landed" && l.landedAt !== undefined && now - l.landedAt < LANDING_MS;
+  const isLanding = useLandings(board.lanes);
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || isLanding(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !isLanding(l));
@@ -822,12 +815,13 @@ export async function startFromBoard(deps: {
   } finally { await deps.refresh(); }
 }
 
+type LeadMessage = { specId: string; type: "stop" | "resume" };
 /** Send Stop or Resume to a lane's Lead through the board's public RPC, then read the board again. */
 export async function messageLeadFromBoard(deps: {
-  send: (type: LaneAction["type"], input: { projectId: string; specId: string }) => Promise<{ threadId: string }>;
+  send: (type: LeadMessage["type"], input: { projectId: string; specId: string }) => Promise<{ threadId: string }>;
   notify: (text: string) => void;
   refresh: () => Promise<void>;
-}, projectId: string, action: LaneAction) {
+}, projectId: string, action: LeadMessage) {
   try {
     await deps.send(action.type, { projectId, specId: action.specId });
     deps.notify(action.type === "stop"
@@ -836,6 +830,20 @@ export async function messageLeadFromBoard(deps: {
   } catch (error) {
     deps.notify(error instanceof Error && error.message ? error.message
       : `Couldn't ${action.type === "stop" ? "stop" : "resume"} ${action.specId}. Try again.`);
+  } finally { await deps.refresh(); }
+}
+
+/** Squash-merge a lane's PR through the board's public RPC, then read the board again. */
+export async function mergeFromBoard(deps: {
+  merge: (input: { projectId: string; specId: string }) => Promise<{ number: number }>;
+  notify: (text: string) => void;
+  refresh: () => Promise<void>;
+}, projectId: string, specId: string) {
+  try {
+    const merged = await deps.merge({ projectId, specId });
+    deps.notify(`Squash-merged PR #${merged.number} for ${specId}. The lane lands when BB sees the merge.`);
+  } catch (error) {
+    deps.notify(error instanceof Error && error.message ? error.message : `Couldn't merge ${specId}'s PR. Try again.`);
   } finally { await deps.refresh(); }
 }
 
@@ -901,12 +909,17 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       }, projectId, specId);
     } finally { setStarting(null); }
   }, [rpc, projectId, starting, open, load]);
-  const message = useCallback(async (action: LaneAction) => {
+  const act = useCallback(async (action: LaneAction) => {
     if (!projectId || acting !== null) return;
     setActing(action);
     try {
-      await messageLeadFromBoard({ send: (type, input) => rpc.call(type === "stop" ? "lane.stop" : "lane.resume", input),
-        notify: (text) => toast(text), refresh: load }, projectId, action);
+      if (action.type === "merge") {
+        await mergeFromBoard({ merge: (input) => rpc.call("lane.merge", input), notify: (text) => toast(text), refresh: load },
+          projectId, action.specId);
+      } else {
+        await messageLeadFromBoard({ send: (type, input) => rpc.call(type === "stop" ? "lane.stop" : "lane.resume", input),
+          notify: (text) => toast(text), refresh: load }, projectId, { type: action.type, specId: action.specId });
+      }
     } finally { setActing(null); }
   }, [rpc, projectId, acting, load]);
   const notice = liveNotice({ projectId, board, failed });
@@ -917,7 +930,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       modeSwitch={modeSwitch}
       dispatch={(action) => {
         if (action.type === "start") void start(action.specId);
-        else if (action.type === "stop" || action.type === "resume") void message({ type: action.type, specId: action.specId });
+        else if (action.type === "stop" || action.type === "resume" || action.type === "merge") void act({ type: action.type, specId: action.specId });
       }}
       onPlan={(issueId) => void plan(issueId)}
       planning={planning}

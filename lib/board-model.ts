@@ -90,7 +90,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
         key: `merge:${lane.specId}`,
         kind: "merge",
         specId: lane.specId,
-        text: `PR #${lane.pr?.number} passed checks and both reviews. accept:owner holds it for your merge.`,
+        text: `PR #${lane.pr?.number} passed its checks. accept:owner holds it for your merge.`,
         threadId: lane.leadThreadId,
       });
     }
@@ -146,6 +146,32 @@ export function dependencyColumns(tickets: Ticket[]): Ticket[][] {
     (columns[d] ??= []).push(t);
   }
   return columns.filter(Boolean);
+}
+
+/** How long a landing's burst plays on the sortie line before the lane moves to Landed. */
+export const LANDING_MS = 1600;
+
+/** The lane states one board view has seen, and when each landing it saw plays until. */
+export interface Landings { seen: Record<string, LaneState>; until: Record<string, number> }
+
+/**
+ * A landing plays once: only when this view saw the lane in another state and now sees it Landed.
+ * A lane already Landed when the board opens is history, so a reload never replays it.
+ */
+export function nextLandings(previous: Landings | null, lanes: readonly Lane[], now: number): Landings {
+  const until: Record<string, number> = {};
+  for (const lane of lanes) {
+    const playing = previous?.until[lane.specId];
+    const before = previous?.seen[lane.specId];
+    if (playing !== undefined && playing > now) until[lane.specId] = playing;
+    else if (lane.state === "landed" && before !== undefined && before !== "landed") until[lane.specId] = now + LANDING_MS;
+  }
+  return { seen: Object.fromEntries(lanes.map((lane) => [lane.specId, lane.state])), until };
+}
+
+/** Merge shows, and the server merges, only for an open PR whose checks pass. The demo's PRs carry no state. */
+export function canMerge(lane: { pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+  return (lane.pr?.state ?? "open") === "open" && lane.pr?.checks === "passing";
 }
 
 export function otherFamily(family: Family): Family {

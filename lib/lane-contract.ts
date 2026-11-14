@@ -5,11 +5,13 @@ const lane = {
   output: z.object({ threadId: z.string() }),
 };
 
-/** Start spawns a Lead; Stop and Resume only send it a fixed message. */
+/** Start spawns a Lead; Stop and Resume only send it a fixed message; Merge merges its PR. */
 export const laneContract = {
   "lane.start": lane,
   "lane.stop": lane,
   "lane.resume": lane,
+  /** Squash-merges the lane's PR through BB's pull-request plugin. */
+  "lane.merge": { input: lane.input, output: z.object({ number: z.number() }) },
 } as const;
 
 /** Stops are states, not rulings (ADR-0008): these ask for progress records only. */

@@ -32,10 +32,14 @@ export const workspaceIssues = { data: { issues: { nodes: [
 export const binding = { bbProjectId: "proj-one", teamId: "team-one", projectId: "linear-one" };
 
 /** Answers Squadron's read-only queries. Every mutation fails the test. */
-export function workspace(options: { issues?: () => Response; vocabulary?: () => Response } = {}) {
+export function workspace(options: {
+  issues?: () => Response; vocabulary?: () => Response;
+  /** A lane spec read by id, with its completed sub-issues. Defaults to the open fixture spec and none. */
+  laneSpec?: (id: string) => Response;
+} = {}) {
   const operations: string[] = [];
   const fetch = async (_url: string | URL | Request, init?: RequestInit) => {
-    const { query } = JSON.parse(String(init?.body)) as { query: string };
+    const { query, variables } = JSON.parse(String(init?.body)) as { query: string; variables?: Record<string, unknown> };
     if (!query.trimStart().startsWith("query ")) throw new Error("The board must not write to Linear.");
     const name = /^query\s+(\w+)/.exec(query.trimStart())?.[1] ?? "unknown";
     operations.push(name);
@@ -48,6 +52,12 @@ export function workspace(options: { issues?: () => Response; vocabulary?: () =>
         project: { id: "linear-one", name: "Fixture project", teams: { nodes: [{ id: "team-one" }], pageInfo: end } },
       } });
       case "SquadronIssues": return options.issues ? options.issues() : Response.json(workspaceIssues);
+      case "SquadronLaneSpec": {
+        const id = String(variables?.id);
+        if (options.laneSpec) return options.laneSpec(id);
+        const spec = workspaceIssues.data.issues.nodes.find((issue) => issue.id === id);
+        return Response.json({ data: { issue: spec ? { ...spec, children: none } : null } });
+      }
       case "SquadronVocabulary": return options.vocabulary ? options.vocabulary() : Response.json(vocabularyResponse);
       default: throw new Error(`Unexpected Linear query ${name}`);
     }

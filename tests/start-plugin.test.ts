@@ -325,3 +325,86 @@ test("Needs you names each kind in words and offers its one action; lane buttons
   assert.match(stopping, /<button[^>]*disabled=""[^>]*>Stopping…<\/button>/);
   assert.doesNotMatch(stopping, /<button(?![^>]*disabled)[^>]*>(Stop|Resume)<\/button>/, "other lane messages wait");
 });
+
+test("Merge squash-merges the lane's PR through BB's pull-request plugin, and refuses unless its checks pass", async (t) => {
+  const { harness } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  let checks = "failing";
+  const calls: unknown[] = [];
+  harness.sdk.stub("plugins.callRpc", async (args: { pluginId: string; method: string; input: unknown }) => {
+    calls.push([args.pluginId, args.method, args.input]);
+    if (args.method === "merge") return { message: "Merged pull request #7." };
+    return { env_lead_1: { outcome: "available", pullRequest: {
+      number: 7, title: "FIX-5", state: "open", url: "https://github.com/fixture/repo/pull/7", baseRefName: "main",
+      headRefName: "spec/fix-5", updatedAt: "2026-11-13T20:00:00Z", autoMerge: false, inMergeQueue: null,
+      checks: { state: checks, totalCount: 1, passedCount: 0, failedCount: 1, pendingCount: 0 },
+      review: { state: "none", reviewRequestCount: 0 },
+      mergeability: { state: "mergeable", mergeStateStatus: "CLEAN", mergeable: "MERGEABLE" }, attention: "none",
+    } } };
+  });
+  const merge = () => harness.behavior.callRpc("lane.merge", { projectId: "proj-one", specId: "FIX-5" });
+
+  await assert.rejects(merge(), /checks/i);
+  assert.ok(!calls.some((call) => (call as unknown[])[1] === "merge"), "failing checks never reach the merge call");
+
+  checks = "passing";
+  assert.deepEqual(await merge(), { number: 7 });
+  assert.deepEqual(calls.filter((call) => (call as unknown[])[1] === "merge"),
+    [["bb--github-pr-status", "merge", { environmentId: "env_lead_1", method: "squash" }]]);
+
+  await assert.rejects(harness.behavior.callRpc("lane.merge", { projectId: "proj-one", specId: "FIX-9" }), /no Lead/);
+  await assert.rejects(harness.behavior.callRpc("lane.merge", { projectId: "proj-one", specId: "FIX-5" },
+    { experimental_caller: { kind: "plugin", pluginId: "other" } }), /from the Squadron board/);
+  assert.equal(calls.filter((call) => (call as unknown[])[1] === "merge").length, 1);
+});
+
+test("a lane whose Lead closed its spec and tickets after the merge stays on the board as Landed", async (t) => {
+  let closed = false;
+  const nodes = workspaceIssues.data.issues.nodes;
+  const done = { id: "state-done", name: "Done", type: "completed" };
+  const linear = workspace({
+    issues: () => Response.json(closed ? { data: { issues: { ...workspaceIssues.data.issues,
+      nodes: nodes.filter((node) => node.identifier !== "FIX-5" && node.identifier !== "FIX-6") } } } : workspaceIssues),
+    laneSpec: (id) => {
+      const spec = nodes.find((node) => node.id === id)!;
+      const children = closed ? nodes.filter((node) => node.parent?.id === id).map((node) => ({ ...node, state: done })) : [];
+      return Response.json({ data: { issue: { ...spec, ...(closed ? { state: done } : {}),
+        children: { nodes: children, pageInfo: { hasNextPage: false, endCursor: null } } } } });
+    },
+  });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const { bb, harness } = host();
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  await harness.behavior.callRpc("linear.bind", binding);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
+    number: 7, title: "FIX-5", state: "merged", url: "https://github.com/fixture/repo/pull/7", baseRefName: "main",
+    headRefName: "spec/fix-5", updatedAt: "2026-11-13T20:00:00Z", autoMerge: false, inMergeQueue: null,
+    checks: { state: "passing", totalCount: 1, passedCount: 1, failedCount: 0, pendingCount: 0 },
+    review: { state: "none", reviewRequestCount: 0 },
+    mergeability: { state: "unknown", mergeStateStatus: null, mergeable: null }, attention: "none",
+  } } }));
+
+  closed = true;
+  await harness.behavior.callRpc("linear.bind", binding);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.state, lane.tickets.map((ticket) => [ticket.id, ticket.state])]),
+    [["FIX-5", "landed", [["FIX-6", "done"]]]]);
+  assert.ok(linear.operations.includes("SquadronLaneSpec"), "the reader reads the Lead's spec by id");
+  assert.ok(!linear.operations.some((name) => /mutation/i.test(name)));
+});
+
+test("Merge on the board says which PR merged or why it didn't, and refreshes the board", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { mergeFromBoard } = await import("../board/Board.js");
+  const notes: string[] = [];
+  let refreshed = 0;
+  const run = (result: () => Promise<{ number: number }>) => mergeFromBoard({
+    merge: result, notify: (text) => notes.push(text), refresh: async () => { refreshed++; },
+  }, "proj-one", "FIX-5");
+  await run(async () => ({ number: 7 }));
+  await run(async () => { throw new Error("PR #7 can merge once its checks pass."); });
+  assert.deepEqual(notes, ["Squash-merged PR #7 for FIX-5. The lane lands when BB sees the merge.", "PR #7 can merge once its checks pass."]);
+  assert.equal(refreshed, 2);
+});

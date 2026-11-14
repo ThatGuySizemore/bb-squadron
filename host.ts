@@ -4,6 +4,8 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { doctorHostContract } from "./lib/doctor-contract.js";
 import { setupFiles } from "./lib/doctor.js";
+import { localMarkdownHostContract } from "./lib/local-markdown-contract.js";
+import { readLocalMarkdown } from "./lib/local-markdown-host.js";
 import { githubHostContract } from "./lib/github-contract.js";
 import { githubLogin, readGithub, runGithubCommand, type GithubCommand } from "./lib/github-host.js";
 
@@ -27,8 +29,9 @@ async function regularSkillFile(path: string): Promise<boolean> {
 
 export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<boolean | { authenticated: boolean; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand) {
   return experimental_defineHostEntry({
-    contract: { ...doctorHostContract, ...githubHostContract },
+    contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract },
     handlers: {
+      readLocalMarkdown: (input) => readLocalMarkdown(input),
       inspectFiles: async ({ checkoutPath, skillPaths }) => {
         const homePath = home();
         const [repoRulesExists, playbookExists, machineProfileExists, setup, skills] = await Promise.all([

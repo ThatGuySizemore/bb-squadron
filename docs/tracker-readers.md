@@ -17,7 +17,7 @@ The public contract for Connect's readers is [`lib/tracker-contract.ts`](../lib/
 
 `TrackerReader.getSnapshot(bbProjectId)` may return a snapshot or a promise. `onChange(listener)` announces changes by BB project ID and returns an unsubscribe function. It exposes no tracker writes.
 
-`tracker.snapshot` exposes the same schema through RPC. `registerTracker` in [`lib/tracker-service.ts`](../lib/tracker-service.ts) selects the reader. SIZE-949 supplies Linear through `linearTrackerSnapshot` in [`lib/tracker-snapshot.ts`](../lib/tracker-snapshot.ts). GitHub and local readers are the next tickets; until installed they return an explicit unavailable-reader error without requesting Linear setup.
+`tracker.snapshot` exposes the same schema through RPC. `registerTracker` in [`lib/tracker-service.ts`](../lib/tracker-service.ts) selects the reader. SIZE-949 supplies Linear through `linearTrackerSnapshot` in [`lib/tracker-snapshot.ts`](../lib/tracker-snapshot.ts). Local markdown is supplied by `registerLocalMarkdownReader`. GitHub returns an explicit unavailable-reader error until its reader is installed, without requesting Linear setup.
 
 ## Detection and binding
 
@@ -52,3 +52,13 @@ authentication command output. A login for a different host does not pass.
 `tests/github-reader.test.ts` drives the host entry with recorded CLI response fixtures
 and the SDK testing host, then checks the snapshot and derived board. Live GitHub and
 Enterprise reads remain separate hand checks.
+
+## Local markdown reader
+
+`registerLocalMarkdownReader` in `lib/local-markdown-reader.ts` reads the selected BB project's default checkout through the read-only `readLocalMarkdown` host method. It coalesces reads and reuses a complete snapshot for 30 seconds. It adds no background poller; the board watcher requests snapshots through `TrackerReader`. A failed read keeps the last complete data and timestamp and supplies a safe diagnostic.
+
+`localMarkdownHostContract` in `lib/local-markdown-contract.ts` takes `{ checkoutPath, bbProjectId, projectName }` and returns a `TrackerSnapshot`. `readLocalMarkdown` in `lib/local-markdown-host.ts` supplies the implementation. It reads `.scratch/<feature>/spec.md` and `issues/NN-*.md` on disk. Integration-branch reads are the subsequent lanes ticket's scope.
+
+Issue IDs and `path` are repository-relative paths. Spec identifiers are feature slugs; ticket identifiers are `<feature>/NN`. Ticket `parentId` is the spec path. File URLs point to each markdown file. Both plain `Status:` / `Blocked by:` and bold `**Status:**` / `**Blocked by:**` metadata work. `Blocked by: NN, NN` resolves within the same feature, while `None` may have an explanatory suffix. Metadata in appended Comments is ignored. No source file is written.
+
+Status names preserve the source text. Done, resolved and closed are completed, in-progress and claimed are Working, and all other or missing statuses are Waiting. `ready-for-agent` also supplies the readiness label. `tests/local-markdown-reader.test.ts` drives the host with a temporary git fixture and observes snapshots and board output, including different main and integration-branch content, the 30-second refresh, and retention after host failure.

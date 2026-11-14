@@ -18,5 +18,5 @@ test("Linear data reaches the board through the tracker snapshot with closed and
   assert.deepEqual(board.ready[0].blockedBy, ["OUT-9"]);
   assert.equal(board.ready[0].ticketCount, 1);
   assert.equal(board.ready[0].startReason, "Every ticket waits on a blocker: OUT-9");
-  assert.deepEqual(board.unplanned, []);
+  assert.deepEqual(board.openIssues, []);
 });

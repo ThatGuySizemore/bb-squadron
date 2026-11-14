@@ -63,7 +63,7 @@ test("install, bind a recorded workspace, sync it and read the real board throug
 
   const unbound = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(unbound.linear?.state, "unbound");
-  assert.deepEqual([unbound.ready, unbound.unplanned], [[], []]);
+  assert.deepEqual([unbound.ready, unbound.openIssues], [[], []]);
 
   await harness.behavior.callRpc("linear.bind", binding);
   await until(() => harness.inspection.realtimeSignals.some((signal) => signal.channel === "board-changed"), "board-changed");
@@ -77,7 +77,7 @@ test("install, bind a recorded workspace, sync it and read the real board throug
     { id: "FIX-1", ticketCount: 2, blockedBy: ["OUT-10"], startReason: "Waits on OUT-10 (outside this project)", models: ["gpt-6.1-sol", "claude-opus-5-5"] },
     { id: "FIX-5", ticketCount: 1, blockedBy: [], startReason: null, models: ["gpt-6.1-sol"] },
   ]);
-  assert.deepEqual(board.unplanned.map((row) => [row.id, row.title]), [["FIX-9", "Linear webhooks"]]);
+  assert.deepEqual(board.openIssues.map((row) => [row.id, row.title]), [["FIX-9", "Linear webhooks"]]);
   assert.deepEqual(board.lanes, []);
   assert.ok(!linear.operations.some((name) => !name.startsWith("Squadron")));
 });
@@ -102,7 +102,7 @@ test("a change in Linear reaches open boards as board-changed on the mirror's ne
   t.after(() => poll.controller.abort());
   await until(() => harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length > before, "board-changed after the poll");
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(board.unplanned.map((row) => row.id), ["FIX-9", "FIX-12"]);
+  assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9", "FIX-12"]);
 });
 
 test("a reload keeps the binding and rebuilds the board from Linear without a stored snapshot", async (t) => {
@@ -128,7 +128,7 @@ test("a reload keeps the binding and rebuilds the board from Linear without a st
   await until(() => harness.inspection.realtimeSignals.some((signal) => signal.channel === "linear-mirror-changed"), "fresh snapshot");
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.linear?.state, "current");
-  assert.deepEqual(board.unplanned.map((row) => row.id), ["FIX-9", "FIX-12"]);
+  assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9", "FIX-12"]);
 });
 
 test("without a Linear credential the board asks the owner to connect and reads nothing", async (t) => {
@@ -181,11 +181,11 @@ test("a failed read keeps the last good copy and shows Linear's safe reason", as
   await until(() => harness.inspection.realtimeSignals.filter((signal) => signal.channel === "board-changed").length > signalsBeforeFailure, "board-changed after the failure");
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual([board.linear?.state, board.linear?.message], ["failed", "Linear could not complete the request."]);
-  assert.deepEqual(board.unplanned.map((row) => row.id), ["FIX-9"]);
+  assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9"]);
   assert.ok(!JSON.stringify(board).includes("fake-private-provider-detail"));
 });
 
-test("the board page renders the RPC board model: Ready, Unplanned, reasons and the Linear line", async (t) => {
+test("the board page renders the RPC board model: Ready, Open issues, reasons and the Linear line", async (t) => {
   await import("./fixtures/app-runtime.js");
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
@@ -202,6 +202,7 @@ test("the board page renders the RPC board model: Ready, Unplanned, reasons and 
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
+  assert.match(html, /<h2[^>]*>Open issues<\/h2>/, "the section uses the glossary's Open issue term");
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
     "Doctor checks", "Linear webhooks", "No lanes flying."]) {
     assert.ok(html.includes(text), `the board shows ${text}`);
@@ -228,7 +229,7 @@ test("the board page renders the RPC board model: Ready, Unplanned, reasons and 
 test("empty, disconnected, unbound and failed boards each say what to do", async () => {
   await import("./fixtures/app-runtime.js");
   const { liveNotice } = await import("../board/Board.js");
-  const base = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [], unplanned: [] };
+  const base = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], ready: [], openIssues: [] };
   const status = (state: NonNullable<Board["linear"]>["state"], syncedAt: number | null = null): Board =>
     ({ ...base, linear: { state, message: "", syncedAt, project: null } });
   assert.equal(liveNotice({ projectId: null, board: null, failed: false }), "Choose a BB project to see its board.");

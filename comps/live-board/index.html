@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" class="theme-dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Squadron · SIZE-948 comp · the live dithered board</title>
+  <link rel="stylesheet" href="comp.css">
+</head>
+<body>
+  <div id="comp" class="comp">
+    <div id="comp-bar" class="comp-bar" aria-label="Comp controls"></div>
+    <main id="stage" class="stage"></main>
+    <details class="comp-sources">
+      <summary>Where the comp's data comes from</summary>
+      <ul>
+        <li>BB Squadron: Linear issues, sub-issues, blocking links and timestamps in the BB Squadron project, read 14 Nov 2026 00:58 CST. The three moments are real points on SIZE-947's own path: published with its ready label before its tickets (00:42), Ready with twelve tickets (00:45), and flying under a Lead started by hand (now).</li>
+        <li>The Needs-you question is the Lead asking you to approve this comp, which the lead brief tells it to do once the comp is in <code>connect</code>.</li>
+        <li>bb-bot: <code>.scratch/bb-bot/issues/*.md</code> titles and <code>Blocked by:</code> lines; ticket states from the Lead's "Merge ticket NN" commits on <code>integration/bb-bot</code> and its thread (07, 20 and 21 building). Its <code>Status:</code> lines still say ready-for-agent on both branches, so a reader that trusts only Status lines would show all 22 as Waiting.</li>
+        <li>bb Bot: <code>~/dev/bb Bot</code> has no <code>docs/agents/</code> and isn't a git repository.</li>
+        <li>Doctor results for bb-bot and bb Bot follow from their files. BB Squadron's Linear key and gh login are shown passing for illustration; the comp didn't run Doctor.</li>
+        <li>Landed: SIZE-939 (PR #3) and SIZE-871 (62afb50 on main), with Linear's start and completion times.</li>
+        <li>The provider marks on chips are stand-ins; the plugin draws BB's own provider icons. Thread and lane times are frozen at the snapshot.</li>
+      </ul>
+    </details>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script src="data.js"></script>
+  <script src="dither.js"></script>
+  <script src="board.js"></script>
+</body>
+</html>

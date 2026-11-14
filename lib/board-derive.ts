@@ -4,7 +4,7 @@ import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
-import type { LeadThread } from "./lead-threads.js";
+import type { LeadThread, WorkerThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
@@ -30,6 +30,21 @@ function byIdentifier(a: MirrorIssue, b: MirrorIssue): number {
 
 function list(ids: string[]): string {
   return ids.length < 2 ? ids.join("") : `${ids.slice(0, -1).join(", ")} and ${ids[ids.length - 1]}`;
+}
+
+type LaneThread = Pick<WorkerThread, "id" | "status" | "runtime" | "hasPendingInteraction" | "queuedWork">;
+/** BB statuses in which a thread is still doing, or about to do, work. */
+const RUNNING = new Set(["active", "starting", "pending", "stopping"]);
+
+/** Why a lane thread needs the owner, read only from its BB state. */
+function threadNeed(thread: LaneThread, who: string): NonNullable<Lane["needs"]>[number] | null {
+  if (thread.hasPendingInteraction) return { threadId: thread.id, kind: "waiting", text: `${who} is waiting on you.` };
+  if (thread.status === "error") return { threadId: thread.id, kind: "failed", text: `${who} failed. Open it to see why.` };
+  if (thread.queuedWork === "failed") return { threadId: thread.id, kind: "blocked", text: `${who} couldn't deliver a queued message.` };
+  if (thread.runtime.displayStatus === "waiting-for-host") {
+    return { threadId: thread.id, kind: "blocked", text: `${who} is waiting for its machine to come online.` };
+  }
+  return null;
 }
 
 function uniqueRoutes(routes: Route[]): Route[] {
@@ -62,12 +77,17 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   function lane(spec: MirrorIssue, lead: LeadThread): Lane {
     const issues = snapshot.issues.filter((issue) => issue.parentId === spec.id && issue.state.type !== "canceled");
     const ids = new Set(issues.map((issue) => issue.id));
-    const children = [...(lead.workers ?? [])].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
+    const workers = lead.workers ?? [];
+    const needs = [threadNeed(lead.thread, `The Lead for ${spec.identifier}`),
+      ...workers.map((worker) => threadNeed(worker, worker.title ?? "A worker"))].filter((need) => need !== null);
+    // Stopped is only the threads' status (ADR-0008): nothing in the lane is running.
+    const stopped = [lead.thread, ...workers].every((thread) => !RUNNING.has(thread.status));
+    const children = [...workers].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const matched = new Set<string>();
     const tickets: Ticket[] = issues.sort(byIdentifier).map((issue) => {
       // The newest child naming the ticket is its worker; FIX-1 never matches FIX-12.
       const pattern = new RegExp(`(?<![A-Za-z0-9])${issue.identifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![0-9])`, "i");
-      const worker = children.find((child) => pattern.test(child.title));
+      const worker = children.find((child) => pattern.test(child.title ?? ""));
       if (worker) matched.add(worker.id);
       return {
         id: issue.identifier, title: issue.title,
@@ -84,7 +104,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt) : undefined;
     return {
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
-      branch: lead.branch, state: landedAt !== undefined ? "landed" : pr?.state === "open" ? "pr-open" : "flying",
+      branch: lead.branch,
+      state: landedAt !== undefined ? "landed" : pr?.state === "open" ? "pr-open" : stopped ? "stopped" : "flying",
+      ...(needs.length ? { needs } : {}),
       minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
       ...(pr ? { pr: { number: pr.number, state: pr.state, url: pr.url,
         checks: pr.checks.state === "no_checks" ? "none" as const : pr.checks.state } } : {}),
@@ -94,8 +116,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
         [...settings.routes].sort((a, b) => Number(b.label === null) - Number(a.label === null))
           .map(({ family, model, effort }) => ({ family, model, effort }))) } : {}),
       acceptOwner: labels(spec).includes(ACCEPT_OWNER), tickets: dependencyColumns(tickets).flat(),
-      unmatchedThreads: [...(lead.workers ?? [])].filter((child) => !matched.has(child.id))
-        .map((child) => ({ threadId: child.id, title: child.title })),
+      unmatchedThreads: workers.filter((child) => !matched.has(child.id))
+        .map((child) => ({ threadId: child.id, title: child.title ?? "" })),
     };
   }
   /** Open blockers of one issue, in identifier order. Unknown endpoints are skipped. */

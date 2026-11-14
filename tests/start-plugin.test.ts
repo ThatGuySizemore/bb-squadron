@@ -224,3 +224,104 @@ test("the Start button announces opening and waits while its Lead is created", a
   assert.match(html, /role="status">Opening its Lead thread/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>Start<\/button>/, "other Starts wait instead of silently ignoring a click");
 });
+
+/** Everything the plugin stores: its database rows and kv keys. */
+async function stored(bb: import("@get-bb/plugin-sdk").BbPluginApi) {
+  const db = bb.storage.database();
+  const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as { name: string }[])
+    .map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}"`).all()]);
+  return { tables, kv: await bb.storage.kv.list() };
+}
+
+test("Stop and Resume send their fixed message to the spec's own Lead and store nothing", async (t) => {
+  const linear = workspace();
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const { bb, harness, native } = host();
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  await harness.behavior.callRpc("linear.bind", binding);
+  // Another spec's Lead must not receive this lane's messages.
+  native.threads.set("thr_other", makeThreadResponse({ id: "thr_other", projectId: "proj-one", providerId: "codex", status: "active" }));
+  native.metadata.set("thr_other", { role: "lead", specId: "fix-1" });
+  native.routes.set("thr_other", { model: "gpt-6.1-sol", reasoningLevel: "high" });
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const sent: { threadId: string; text: string }[] = [];
+  harness.sdk.stub("threads.send", async (raw: unknown) => {
+    const args = raw as Parameters<typeof bb.sdk.threads.send>[0];
+    const [part] = args.input;
+    sent.push({ threadId: args.threadId, text: part.type === "text" ? part.text : "" });
+    return { ok: true, delivery: "sent" } as Awaited<ReturnType<typeof bb.sdk.threads.send>>;
+  });
+  const before = await stored(bb);
+
+  assert.deepEqual(await harness.behavior.callRpc("lane.stop", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
+  assert.deepEqual(await harness.behavior.callRpc("lane.resume", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
+
+  assert.deepEqual(sent.map(({ threadId }) => threadId), ["thr_lead_1", "thr_lead_1"]);
+  const [stop, resume] = sent.map(({ text }) => text);
+  assert.match(stop, /wind/i);
+  assert.match(stop, /work in progress to (its|their) branch/i);
+  assert.match(stop, /summary on the spec/i);
+  assert.match(resume, /carry on from your last summary/i);
+  for (const text of [stop, resume]) {
+    assert.match(text, /progress only/i, "the message limits ticket comments to progress");
+    assert.doesNotMatch(text, /paused|don't start|do not start/i, "a stop is never written as a standing order");
+  }
+  assert.deepEqual(await stored(bb), before, "Stop and Resume store nothing");
+  await assert.rejects(harness.behavior.callRpc("lane.stop", { projectId: "proj-one", specId: "FIX-9" }), /no Lead/);
+  await assert.rejects(harness.behavior.callRpc("lane.stop", { projectId: "proj-one", specId: "FIX-5" },
+    { experimental_caller: { kind: "plugin", pluginId: "other" } }), /from the Squadron board/);
+  assert.equal(sent.length, 2);
+});
+
+test("Stop and Resume on the board message the Lead, say what happened, and refresh the board", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { messageLeadFromBoard } = await import("../board/Board.js");
+  const sent: unknown[] = [];
+  const notes: string[] = [];
+  let refreshed = 0;
+  const run = (type: "stop" | "resume", result: () => Promise<{ threadId: string }>) => messageLeadFromBoard({
+    send: async (kind, input) => { sent.push([kind, input]); return result(); },
+    notify: (text) => notes.push(text), refresh: async () => { refreshed++; },
+  }, "proj-one", { type, specId: "FIX-5" });
+  await run("stop", async () => ({ threadId: "thr_lead" }));
+  await run("resume", async () => ({ threadId: "thr_lead" }));
+  await run("stop", async () => { throw new Error("FIX-5 has no Lead thread in this project. Read the board again."); });
+  assert.deepEqual(sent, [["stop", { projectId: "proj-one", specId: "FIX-5" }], ["resume", { projectId: "proj-one", specId: "FIX-5" }],
+    ["stop", { projectId: "proj-one", specId: "FIX-5" }]]);
+  assert.deepEqual(notes, [
+    "Asked the Lead for FIX-5 to wind down. Its workers save their work first.",
+    "Asked the Lead for FIX-5 to carry on from its last summary.",
+    "FIX-5 has no Lead thread in this project. Read the board again.",
+  ]);
+  assert.equal(refreshed, 3);
+});
+
+test("Needs you names each kind in words and offers its one action; lane buttons wait while a message is sent", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const lane = (specId: string, state: "flying" | "stopped", needs?: NonNullable<Board["lanes"][number]["needs"]>) => ({
+    specId, title: `Spec ${specId}`, lead: { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const },
+    leadThreadId: `thr_${specId}`, branch: "", state, minutes: 3, acceptOwner: false, tickets: [], ...(needs ? { needs } : {}),
+  });
+  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, ready: [], unplanned: [], lanes: [
+    lane("FIX-1", "flying", [{ threadId: "thr_w1", kind: "waiting", text: "Worker FIX-2 is waiting on you." }]),
+    lane("FIX-3", "flying", [{ threadId: "thr_w3", kind: "failed", text: "Worker FIX-4 failed. Open it to see why." }]),
+    lane("FIX-5", "stopped"),
+  ] };
+  const render = (acting: { specId: string; type: "stop" | "resume" } | null) => renderToStaticMarkup(createElement(BoardView, {
+    board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, acting,
+  }));
+  const html = render(null);
+  for (const [kind, action] of [["Waiting", "Answer in thread"], ["Failed", "Open thread"], ["Stopped", "Resume"]]) {
+    assert.match(html, new RegExp(`sq-need-kind">${kind}<[\\s\\S]*?>${action}</button>`), `${kind} offers ${action}`);
+  }
+  assert.doesNotMatch(html, /Re-plan|Prototype/, "the live strip has no prototype actions");
+  assert.match(html, />Stop<\/button>/);
+  const stopping = render({ specId: "FIX-1", type: "stop" });
+  assert.match(stopping, /role="status">Asking the Lead to wind down/);
+  assert.match(stopping, /<button[^>]*disabled=""[^>]*>Stopping…<\/button>/);
+  assert.doesNotMatch(stopping, /<button(?![^>]*disabled)[^>]*>(Stop|Resume)<\/button>/, "other lane messages wait");
+});

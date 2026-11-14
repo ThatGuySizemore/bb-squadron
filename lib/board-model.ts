@@ -23,6 +23,10 @@ const lane = z.object({
   url: z.string().optional(),
   /** Child threads of the Lead that match no ticket, so no thread is hidden. */
   unmatchedThreads: z.array(z.object({ threadId: z.string(), title: z.string() })).optional(),
+  /** Lane threads that wait on the owner, failed or are blocked, read from BB thread states. */
+  needs: z.array(z.object({
+    threadId: z.string(), kind: z.enum(["waiting", "failed", "blocked"]), text: z.string(),
+  })).optional(),
 });
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
 const boardSchema = z.object({
@@ -57,7 +61,7 @@ export type Board = z.infer<typeof boardSchema>;
 export type ReadySpec = Board["ready"][number];
 export type UnplannedIssue = Board["unplanned"][number];
 export type LinearStatus = NonNullable<Board["linear"]>;
-export type NeedsYouKind = "setup" | "question" | "stopped" | "merge";
+export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge";
 
 export interface NeedsYouItem {
   key: string;
@@ -75,6 +79,11 @@ export function needsYou(board: Board): NeedsYouItem[] {
   if (board.linear?.state === "disconnected" || board.linear?.state === "unbound") {
     items.push({ key: "setup", kind: "setup", specId: "", text: board.linear.message, threadId: null });
   }
+  for (const check of board.doctor?.checks ?? []) {
+    if (check.status === "fix") {
+      items.push({ key: `setup:${check.id}`, kind: "setup", specId: "", text: check.message, threadId: null });
+    }
+  }
   for (const lane of board.lanes) {
     if (lane.state === "merge-waits") {
       items.push({
@@ -85,7 +94,11 @@ export function needsYou(board: Board): NeedsYouItem[] {
         threadId: lane.leadThreadId,
       });
     }
-    if (lane.state === "stopped") {
+    for (const need of lane.needs ?? []) {
+      items.push({ key: `${need.kind}:${need.threadId}`, kind: need.kind, specId: lane.specId, text: need.text, threadId: need.threadId });
+    }
+    // A failure or a question already says why the lane isn't moving.
+    if (lane.state === "stopped" && !lane.needs?.length) {
       items.push({
         key: `stopped:${lane.specId}`,
         kind: "stopped",
@@ -98,7 +111,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       if (ticket.state === "question" && ticket.threadId) {
         items.push({
           key: `question:${ticket.id}`,
-          kind: "question",
+          kind: "waiting",
           specId: lane.specId,
           ticketId: ticket.id,
           text: ticket.question ?? "The worker asked a question.",
@@ -107,7 +120,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { setup: 0, stopped: 1, question: 2, merge: 3 };
+  const order: Record<NeedsYouKind, number> = { setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 

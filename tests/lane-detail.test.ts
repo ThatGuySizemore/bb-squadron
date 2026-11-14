@@ -13,8 +13,9 @@ function lead(children: { id: string; title: string; createdAt?: number }[] = []
   return {
     specId: "fix-1", route: LEAD_ROUTE, branch: "spec/fix-1",
     thread: makeThreadResponse({ id: "thr_lead", projectId: "proj-one", providerId: "claude-code",
-      environmentId: "env_lead", createdAt: SYNCED_AT - 30 * 60_000 }),
-    workers: children.map(({ id, title, createdAt }) => ({ id, title, createdAt: createdAt ?? SYNCED_AT - 10 * 60_000 })),
+      environmentId: "env_lead", status: "active", createdAt: SYNCED_AT - 30 * 60_000 }),
+    workers: children.map(({ id, title, createdAt }) => makeThreadResponse({ id, title, projectId: "proj-one",
+      parentThreadId: "thr_lead", status: "idle", createdAt: createdAt ?? SYNCED_AT - 10 * 60_000 })),
   };
 }
 
@@ -160,4 +161,13 @@ test("the lane row links the Lead, the spec and the PR, labels In review, and li
   assert.match(html, /aria-label="FIX-2, First slice: Waiting\. Open thread\."/);
   assert.match(html, /after FIX-2/, "a waiting ticket names its open blocker");
   assert.doesNotMatch(html, /after blockers/, "a waiting ticket with no blocker gets no empty after-line");
+});
+
+test("an open or merged PR outranks a quiet Lead, which otherwise reads as stopped", () => {
+  const quiet = { ...lead(), thread: { ...lead().thread, status: "idle" as const } };
+  const state = (pullRequests?: Record<string, unknown>) =>
+    deriveBoard(input(snapshot(laneIssues()), { leads: [quiet], pullRequests })).board.lanes[0].state;
+  assert.equal(state(), "stopped");
+  assert.equal(state({ env_lead: pr("open") }), "pr-open");
+  assert.equal(state({ env_lead: pr("merged") }), "landed");
 });

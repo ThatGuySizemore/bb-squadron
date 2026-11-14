@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { laneContract } from "./lane-contract.js";
+import { laneContract, RESUME_MESSAGE, STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
 import { readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
@@ -44,9 +44,29 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });
     return { threadId: thread.id };
   }
+  /** Send the spec's own Lead a fixed message. Nothing is stored; the Lead's status is the lane's state. */
+  async function tell(projectId: string, specId: string, text: string, mode: "steer-if-active" | "queue-if-active") {
+    const spec = sources.mirror.getSnapshot(projectId).issues.find((issue) => issue.identifier === specId && issue.inProject);
+    const lead = spec && (await readLeadThreads(bb, projectId)).find((found) => found.specId === spec.id);
+    if (!lead) throw new Error(`${specId} has no Lead thread in this project. Read the board again.`);
+    await bb.sdk.threads.send({ threadId: lead.thread.id, mode, input: [{ type: "text", text, mentions: [] }] });
+    publishSquadronSignal(bb.realtime, boardChanged, { projectId });
+    return { threadId: lead.thread.id };
+  }
+  const fromBoard = (context: { experimental_caller: { kind: string } }, action: string) => {
+    if (context.experimental_caller.kind !== "client") throw new Error(`${action} a lane from the Squadron board.`);
+  };
   bb.rpc.register(laneContract, {
+    "lane.stop": ({ projectId, specId }, context) => {
+      fromBoard(context, "Stop");
+      return tell(projectId, specId, STOP_MESSAGE, "steer-if-active");
+    },
+    "lane.resume": ({ projectId, specId }, context) => {
+      fromBoard(context, "Resume");
+      return tell(projectId, specId, RESUME_MESSAGE, "queue-if-active");
+    },
     "lane.start": ({ projectId, specId }, context) => {
-      if (context.experimental_caller.kind !== "client") throw new Error("Start a lane from the Squadron board.");
+      fromBoard(context, "Start");
       const key = JSON.stringify([projectId, specId]);
       let running = starting.get(key);
       if (!running) {

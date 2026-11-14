@@ -148,8 +148,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const note = snapshot.error ?? (snapshot.kind === "linear" && !snapshot.project ? "Choose its Linear project on its board."
         : snapshot.syncedAt === null ? "Not read yet." : null);
       if (note) return { id: projectId, tracker: snapshot.kind, ready: null, flying: null, note };
+      const leads = await sources.leads?.(projectId);
+      const progress = await readLaneProgress(bb, snapshot, leads ?? [], lifetime.signal);
       const { board } = deriveBoard({ snapshot, connection: { status: "connected", message: "" }, settings: null, now: now(),
-        leads: await sources.leads?.(projectId) });
+        leads, ...progress });
       return { id: projectId, tracker: snapshot.kind, ready: board.ready.length,
         flying: board.lanes.filter((lane) => lane.state !== "landed").length, note: null };
     } catch {

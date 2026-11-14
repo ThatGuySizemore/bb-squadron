@@ -41,7 +41,8 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const metadata = new Map<string, Record<string, unknown>>();
   const { bb, harness } = createFakePluginHost({ pluginId: "squadron", experimental_hostEntry: true, sdk: {
-    projects: { get: async () => ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
+    projects: { list: async () => [{ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }],
+      get: async () => ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
       sources: [{ id: "source", projectId: "project", hostId: "repo-host", path: root, isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
     files: { read: async ({ path }) => ({ path, content: await readFile(path, "utf8"), contentEncoding: "utf8", sha256: "fixture", sizeBytes: 0 }) },
     skills: { list: async () => ({ skills: ["codex", "claude-code"].flatMap((provider) =>
@@ -140,6 +141,8 @@ test("no-remote Merge messages the Lead with a fixed order, and actual ancestry 
   assert.equal(landed.state, "landed");
   assert.equal(landed.tickets[0]?.state, "done");
   assert.equal(canMerge(landed), false);
+  const counts = await harness.behavior.callRpc("board.projectCounts", null) as { projects: { flying: number }[] };
+  assert.equal(counts.projects[0].flying, 0, "the picker agrees that the local lane landed");
 });
 
 test("a no-remote spec marked done on main lands even without its ready label or a surviving branch", async (t) => {

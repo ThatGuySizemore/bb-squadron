@@ -87,6 +87,7 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
     "Use the squadron-lead skill for this spec.", "", "Spec: https://linear.app/fixture/issue/FIX-5",
     "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
     "Playbook: /owner/.bb-squadron/playbook.md", "Machine profile: /owner/.bb-squadron/machine.md",
+    "Held tickets carry one of these labels or Status lines: hold, needs-triage, needs-info, ready-for-human, wontfix.",
   ].join("\n"));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes.map(({ specId, state, leadThreadId }) => [specId, state, leadThreadId]), [["FIX-5", "flying", "thr_lead_1"]]);

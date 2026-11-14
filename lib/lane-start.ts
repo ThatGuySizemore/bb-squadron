@@ -49,6 +49,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     if (ready.startReason) throw new Error(ready.startReason);
     if (!checkout.settings?.ok) throw new Error("Fix docs/agents/squadron.md, then try Start again.");
     const route = resolveRoute(checkout.settings.settings, spec.labels.map((label) => label.name));
+    const { holdLabels } = checkout.settings.settings;
     const ownerPath = (id: "playbook" | "machine-profile") => doctor.configurationFiles.find((file) => file.id === id)?.path;
     const thread = await bb.sdk.threads.spawn({
       projectId, title: `Lead ${spec.identifier}`, visibility: "visible",
@@ -60,6 +61,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
         "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
         `Playbook: ${ownerPath("playbook") ?? "~/.bb-squadron/playbook.md"}`,
         `Machine profile: ${ownerPath("machine-profile") ?? "~/.bb-squadron/machine.md"}`,
+        `Held tickets carry one of these labels or Status lines: ${holdLabels.join(", ")}.${holdLabels.some((label) => label.endsWith("*")) ? " A trailing * matches a prefix." : ""}`,
       ].join("\n"),
     });
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });

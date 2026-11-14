@@ -959,6 +959,19 @@ button.sq-peg:hover {
 .sq-peg[data-state="blocked"] :is(.sq-peg-id, .sq-peg-state, .sq-peg-title) {
   color: var(--sq-muted);
 }
+/* Held: slim like Waiting, on a dotted hairline, so the form says "not for an agent". */
+.sq-peg[data-state="held"] {
+  width: 168px;
+  padding: 6px 8px;
+  border-style: dotted;
+  border-color: var(--sq-rule);
+}
+.sq-peg[data-state="held"] .sq-peg-title {
+  -webkit-line-clamp: 1;
+}
+.sq-peg[data-state="held"] :is(.sq-peg-id, .sq-peg-state, .sq-peg-title) {
+  color: var(--sq-muted);
+}
 .sq-peg[data-state="working"] {
   border-color: transparent;
 }
@@ -1244,7 +1257,8 @@ button.sq-peg:hover {
   font-family: var(--sq-mono);
   font-size: 11px;
 }
-.sq-all li[data-state="blocked"] {
+.sq-all li[data-state="blocked"],
+.sq-all li[data-state="held"] {
   color: var(--sq-muted);
 }
 .sq-all [data-st="branch"],

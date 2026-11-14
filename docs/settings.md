@@ -28,6 +28,21 @@ Every tracker needs these sections before Start:
 | Routes | A Label / Family / Model / Effort table with one `(default)` row. Families are Claude or GPT; effort is medium or high. |
 | Final review | `other` or `same`, relative to the Lead's model family. |
 
+## Hold labels
+
+A held ticket is an open ticket that carries a hold label. The board shows it as Held, and the Lead starts no worker for it, picks it up if the label comes off while the lane runs, and lists it under "Held" in the PR body. A spec whose open tickets are all held stays Shaping. A lane that delivers the rest leaves its held tickets and the spec open.
+
+The default hold labels are `hold` plus Matt's triage roles that mean "not for an agent": `needs-triage`, `needs-info`, `ready-for-human` and `wontfix`. An optional section adds more:
+
+```md
+## Hold labels
+
+- blocked-externally
+- wayfinder:*
+```
+
+List one label per bullet; other lines are prose. Labels match regardless of case, and a trailing `*` matches a prefix. The section only adds to the defaults; it never removes them. Trackers without labels, such as Local markdown, hold a ticket whose `Status:` line names a hold label, as they mark a spec ready with `Status: ready-for-agent`. Doctor flags a one-word line that isn't a bullet, an empty bullet, a lone `*`, a `*` before the end, or several labels on one bullet. A missing or prose-only section is fine.
+
 ## Scope applies only to Linear
 
 A Linear project's board reads the issues its `## Scope` section names. Without a valid Scope the board shows no issues and Doctor reports a fix. Set at least one key, one per line:

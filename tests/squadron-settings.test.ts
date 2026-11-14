@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseLinearScope, parseSquadronSettings, resolveRoute, SCOPE_MISSING } from "../lib/squadron-settings.js";
+import { DEFAULT_HOLD_LABELS, isHoldLabel, parseLinearScope, parseSquadronSettings, resolveRoute, SCOPE_MISSING } from "../lib/squadron-settings.js";
 
 const fixture = readFileSync("tests/fixtures/squadron.md", "utf8");
 
@@ -23,6 +23,7 @@ test("repo settings supply the quick check, stop list, limits and ordered routes
         ticket: { waiting: "Todo", working: "In Progress", inBranch: "In Review", done: "Done" },
       },
       scope: { team: "FIX", project: "Fixture project" },
+      holdLabels: ["hold", "needs-triage", "needs-info", "ready-for-human", "wontfix"],
     },
   });
 });
@@ -145,4 +146,32 @@ test("route labels match regardless of case, so UI and ui route the same way", (
   const upperRow = parseSquadronSettings(fixture.replace("| `ui` |", "| `UI` |"));
   assert.ok(upperRow.ok);
   assert.deepEqual(resolveRoute(upperRow.settings, ["ui"]), ui, "a route row written in capitals matches a lower-case label");
+});
+
+const withHold = (body: string) => `${fixture}\n## Hold labels\n\n${body}\n`;
+
+test("hold labels are Matt's not-for-an-agent roles plus hold, and a repo's list only adds to them", () => {
+  assert.deepEqual(DEFAULT_HOLD_LABELS, ["hold", "needs-triage", "needs-info", "ready-for-human", "wontfix"]);
+  const result = parseSquadronSettings(withHold("Tickets with these wait for the owner.\n\n- `Blocked-Externally`\n- wayfinder:*\n- hold"));
+  assert.deepEqual(result.ok && result.settings.holdLabels,
+    ["hold", "needs-triage", "needs-info", "ready-for-human", "wontfix", "blocked-externally", "wayfinder:*"]);
+});
+
+test("a hold label matches regardless of case, and a trailing * matches a prefix", () => {
+  const labels = [...DEFAULT_HOLD_LABELS, "wayfinder:*"];
+  assert.equal(isHoldLabel(labels, "Needs-Info"), true);
+  assert.equal(isHoldLabel(labels, "Wayfinder:Later"), true);
+  assert.equal(isHoldLabel(labels, "wayfinder"), false);
+  assert.equal(isHoldLabel(labels, "holding"), false);
+  assert.equal(isHoldLabel(labels, "ready-for-agent"), false);
+});
+
+test("a malformed Hold labels section is a settings issue; a missing or prose-only one is not", () => {
+  assert.equal(parseSquadronSettings(fixture).ok, true);
+  const prose = parseSquadronSettings(withHold("Optional. List more labels here, one per bullet."));
+  assert.deepEqual(prose.ok && prose.settings.holdLabels, [...DEFAULT_HOLD_LABELS]);
+  const message = "List one hold label per bullet under Hold labels, such as - hold or - wayfinder:*. A * may only end a label.";
+  for (const body of ["wayfinder:*", "- hold, needs-info", "- *", "- way*finder", "- ``"]) {
+    assert.deepEqual(parseSquadronSettings(withHold(body)), { ok: false, issues: [{ section: "Hold labels", message }] }, body);
+  }
 });

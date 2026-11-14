@@ -6,7 +6,7 @@ import { trackerKindSchema } from "./tracker-contract.js";
 const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
 const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
-  state: z.enum(["blocked", "ready", "working", "question", "review", "branch", "failed", "done"]),
+  state: z.enum(["blocked", "held", "ready", "working", "question", "review", "branch", "failed", "done"]),
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({
@@ -48,6 +48,8 @@ const boardSchema = z.object({
     startReason: z.string().nullable().optional(),
     /** Open tickets that wait on open blockers, so a partial frontier shows why the rest won't start. */
     waiting: z.array(z.object({ id: z.string(), title: z.string(), blockedBy: z.array(z.string()) })).optional(),
+    /** Open tickets a hold label keeps from agents. The Lead skips them. */
+    held: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
   })),
   /** Specs that aren't Ready: what's missing, and the one button that fixes it. */
   shaping: z.array(z.object({

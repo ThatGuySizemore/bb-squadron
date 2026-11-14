@@ -99,3 +99,12 @@ test("a Linear project without a valid Scope is a fix, and so is a Scope Linear 
     issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/github.md", "utf8") });
   assert.equal(github.checks.find((check) => check.id === "settings")?.status, "pass", "only Linear reads a Scope");
 });
+
+test("Doctor flags a malformed Hold labels section and passes without one", () => {
+  assert.equal(doctor(readyInput).checks.find((check) => check.id === "settings")?.status, "pass");
+  const report = doctor({ ...readyInput, settingsMarkdown: `${settingsMarkdown}\n## Hold labels\n\n- way*finder\n` });
+  const settings = report.checks.find((check) => check.id === "settings");
+  assert.equal(report.ready, false);
+  assert.equal(settings?.status, "fix");
+  assert.match(settings?.message ?? "", /Hold labels/);
+});

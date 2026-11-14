@@ -740,3 +740,112 @@ for (const completed of [false, true]) {
     assert.deepEqual([...native.metadata.values()].map((row) => row.specId), completed ? ["fix-1"] : ["fix-5"]);
   });
 }
+
+/** PR evidence belongs to an environment, never just to a spec. */
+function lanePr(state: "open" | "merged", number = 7) {
+  return { outcome: "available", pullRequest: {
+    number, title: "FIX-5", state, url: `https://github.com/fixture/repo/pull/${number}`, baseRefName: "main",
+    headRefName: "spec/fix-5-old", updatedAt: "2026-11-14T20:00:00Z", autoMerge: false, inMergeQueue: null,
+    checks: { state: "passing", totalCount: 1, passedCount: 1, failedCount: 0, pendingCount: 0 },
+    review: { state: "none", reviewRequestCount: 0 },
+    mergeability: { state: "mergeable", mergeStateStatus: "CLEAN", mergeable: "MERGEABLE" }, attention: "none",
+  } };
+}
+
+test("accept:owner waiting on a merge stays in Needs you while the next Ready spec takes its slot", async (t) => {
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-5" ? {
+      ...node, labels: { ...node.labels, nodes: [...node.labels.nodes, { id: "accept", name: "accept:owner", color: "#aaaaaa" }] },
+    } : node.identifier === "FIX-1" ? { ...node, inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } : node),
+  } } }));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("open") }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 2);
+  assert.equal(native.metadata.get("thr_lead_2")?.specId, "fix-1");
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes.find((lane) => lane.specId === "FIX-5")?.state, "merge-waits");
+  const { needsYou } = await import("../lib/board-model.js");
+  assert.ok(needsYou(board).some((need) => need.kind === "merge" && need.threadId === "thr_lead_1"));
+});
+
+test("a landed spec with remaining un-held tickets returns Ready and starts a fresh Lead without reusing its landed branch", async (t) => {
+  const { harness, native } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  native.threads.set("old-worker", makeThreadResponse({ id: "old-worker", title: "Worker FIX-6", projectId: "proj-one",
+    parentThreadId: "thr_lead_1", status: "error" }));
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(before.ready.map((spec) => spec.id), ["FIX-1", "FIX-5"]);
+  assert.equal(before.lanes[0].state, "landed");
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 2);
+  assert.equal(native.metadata.get("thr_lead_2")?.specId, "fix-5");
+  const spawns = harness.inspection.sdk.callsTo("threads.spawn");
+  const args = spawns[1][0] as { environment: unknown; prompt: string };
+  assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: {
+    type: "managed-worktree", baseBranch: { kind: "default" },
+  } });
+  assert.match(args.prompt, /fresh integration branch/);
+  assert.match(args.prompt, /spec\/fix-5/);
+  // BB assigns each newly managed worktree its own branch. Return newest first to
+  // prove selection does not depend on SDK list ordering.
+  harness.sdk.stub("threads.list", async () => [...native.threads.values()].reverse().map((thread) => ({
+    ...thread, environmentBranchName: thread.id === "thr_lead_1" ? "spec/fix-5" : "spec/fix-5-returned",
+  })));
+  const after = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(after.lanes.map((lane) => [lane.leadThreadId, lane.branch, lane.state, lane.pr]),
+    [["thr_lead_2", "spec/fix-5-returned", "flying", undefined]]);
+  assert.equal(after.lanes[0].tickets[0].threadId, undefined, "old workers never become the returning lane's workers");
+  assert.equal(after.lanes[0].needs, undefined, "old worker failures never become this lane's questions");
+  assert.ok(native.threads.has("old-worker"));
+  assert.ok(native.threads.has("thr_lead_1"), "the old Lead and its environment remain attributable in BB");
+  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-5", startedBy: "owner" });
+  assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_2" });
+});
+
+test("a landed spec stays Landed while every remaining ticket is held, then returns when the hold clears", async (t) => {
+  let held = true;
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-6" && held ? {
+      ...node, labels: { ...node.labels, nodes: [{ id: "hold", name: "hold", color: "#aaaaaa" }] },
+    } : node),
+  } } }));
+  native.threads.set("old", makeThreadResponse({ id: "old", projectId: "proj-one", providerId: "codex",
+    environmentId: "env_lead_1", status: "idle", createdAt: 1 }));
+  native.metadata.set("old", { role: "lead", specId: "fix-5", startedBy: "owner" });
+  native.routes.set("old", { model: "gpt-6.1-sol", reasoningLevel: "high" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(before.lanes[0].state, "landed");
+  assert.equal(before.lanes[0].tickets[0].state, "held");
+  assert.ok(!before.ready.some((spec) => spec.id === "FIX-5"));
+  assert.ok(!before.shaping.some((spec) => spec.id === "FIX-5"));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 0);
+  held = false;
+  const next = await harness.lifecycle.reload(plugin);
+  t.after(() => next.harness.lifecycle.dispose());
+  next.harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  const unheld = await next.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.ok(unheld.ready.some((spec) => spec.id === "FIX-5"));
+  await watcherCycle(next.harness);
+  assert.equal(native.count, 1);
+  assert.equal(native.metadata.get("thr_lead_1")?.specId, "fix-5");
+});
+
+test("an un-held spec with an open PR keeps its existing Lead and never returns Ready", async (t) => {
+  const { harness, native } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("open") }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes[0].state, "pr-open");
+  assert.ok(!board.ready.some((spec) => spec.id === "FIX-5"));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 2 });
+  await watcherCycle(harness);
+  assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
+  assert.equal(native.count, 1);
+});

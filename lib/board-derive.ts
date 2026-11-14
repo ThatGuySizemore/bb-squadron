@@ -4,7 +4,7 @@ import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { DEFAULT_HOLD_LABELS, isHoldLabel, resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
-import type { LeadThread, WorkerThread } from "./lead-threads.js";
+import { latestLeads, type LeadThread, type WorkerThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
@@ -109,8 +109,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const project = snapshot.project;
-  const leads = new Map((input.leads ?? []).filter(({ thread }) =>
-    project && isActiveProjectThread(thread, thread.id, snapshot.bbProjectId)).map((lead) => [lead.specId, lead]));
+  const leads = new Map(latestLeads((input.leads ?? []).filter(({ thread }) =>
+    project && isActiveProjectThread(thread, thread.id, snapshot.bbProjectId))).map((lead) => [lead.specId, lead]));
   // A spec its Lead closed after the merge keeps its lane, so the lane lands and stays Landed.
   const closedSpecs = snapshot.issues.filter((issue) => issue.parentId === null && issue.state.type === "completed" &&
     issue.inProject && (readyMarked(issue) || leads.has(issue.id)));
@@ -212,7 +212,13 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     }));
   const ready: ReadySpec[] = [];
   const shaping: ShapingSpec[] = [];
-  for (const spec of specs.filter((spec) => !leads.has(spec.id))) {
+  // The landed lane stays visible until another Lead starts. Read remaining work
+  // from today's tracker, never from the landed integration branch.
+  const returning = new Set(lanes.filter((lane) => lane.state === "landed" && !lane.outside)
+    .map((lane) => lane.specId));
+  const queueSpecs = [...specs, ...closedSpecs.filter((spec) => returning.has(spec.identifier))];
+  for (const spec of queueSpecs.filter((spec) => !leads.has(spec.id) ||
+    (returning.has(spec.identifier) && ticketsOf(spec).some((ticket) => !held(ticket))))) {
     const tickets = ticketsOf(spec);
     const marked = readyMarked(spec);
     const heldTickets = tickets.filter(held);
@@ -273,7 +279,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       held: open.filter(held).map((ticket) => ({ id: ticket.identifier, title: ticket.title })),
     };
   }
-  const queueOrder = new Map(sortQueue(specs, snapshot).map((spec, index) => [spec.identifier, index]));
+  const queueOrder = new Map(sortQueue(queueSpecs, snapshot).map((spec, index) => [spec.identifier, index]));
   ready.sort((a, b) => queueOrder.get(a.id)! - queueOrder.get(b.id)!);
   // Anything open that isn't a spec or one of its tickets waits here,
   // so no issue in the project's scope drops off the board.

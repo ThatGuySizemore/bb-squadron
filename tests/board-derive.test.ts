@@ -443,3 +443,18 @@ for (const kind of ["github", "local-markdown"] as const) {
     assert.deepEqual(deriveBoard(source).board.ready.map((row) => row.id), ["FIX-10", "FIX-20"]);
   });
 }
+
+test("a returning completed spec keeps its queue order beside Ready specs and its Landed history", () => {
+  const returning = { ...issue("FIX-20", { labels: ["ready-for-agent"], done: true }), sortOrder: -1 };
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
+    returning, issue("FIX-21", { parent: "FIX-20" }),
+  ]), {
+    leads: [{ specId: "fix-20", branch: "landed/old", route: { family: "gpt", model: "gpt-6.1-sol", effort: "high" },
+      thread: makeThreadResponse({ id: "old-lead", projectId: "proj-one", environmentId: "old-env", status: "idle" }) }],
+    pullRequests: { "old-env": { outcome: "available", pullRequest: { number: 1, state: "merged", url: "https://example.invalid/pr/1",
+      updatedAt: "2026-11-13T20:00:00Z", checks: { state: "passing" } } } },
+  }));
+  assert.deepEqual(board.ready.map((row) => row.id), ["FIX-20", "FIX-1"]);
+  assert.deepEqual(board.lanes.map((row) => [row.specId, row.state, row.leadThreadId]), [["FIX-20", "landed", "old-lead"]]);
+});

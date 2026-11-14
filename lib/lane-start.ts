@@ -1,7 +1,8 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
-import { readLeadThreads } from "./lead-threads.js";
+import { latestLeads, readLeadThreads } from "./lead-threads.js";
+import { readLaneProgress } from "./lane-progress.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { resolveLeadRoute } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
@@ -32,17 +33,23 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   const starting = new Map<string, Promise<{ threadId: string } | null>>();
   async function start(projectId: string, specId: string, startedBy: "owner" | "autopilot", allowed?: () => Promise<boolean>) {
     const snapshot = await sources.tracker.getSnapshot(projectId);
-    const leads = await readLeadThreads(bb, projectId);
+    const leads = latestLeads(await readLeadThreads(bb, projectId));
     const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
     const existing = spec && leads.find((lead) => lead.specId === spec.id);
-    if (existing) return { threadId: existing.thread.id };
     const planning = await readPlanningThreads(bb, projectId);
     const outside = spec ? (await outsideLanes(projectId, snapshot, leads, planning)).filter((lane) => lane.specId === spec.id) : [];
     if (outside.length) throw refuse(specId, "start another Lead for");
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to start a lane in.");
+    const progress = await readLaneProgress(bb, snapshot, leads);
+    const pullRequests = await readPullRequests(bb, leads.flatMap((lead) => lead.thread.environmentId ? [lead.thread.environmentId] : []));
+    const previous = deriveBoard({ snapshot, leads, planning, settings: checkout.settings, ...progress, pullRequests,
+      connection: { status: "connected", message: "" }, now: Date.now() }).board;
+    const returning = existing && previous.lanes.some((lane) => lane.leadThreadId === existing.thread.id && lane.state === "landed")
+      && previous.ready.some((row) => row.id === specId);
+    if (existing && !returning) return { threadId: existing.thread.id };
     const doctor = await sources.doctor(projectId);
-    const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], planning, settings: checkout.settings, doctor,
+    const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], planning, settings: checkout.settings, doctor, ...progress, pullRequests,
       connection: { status: "connected", message: "" }, now: Date.now() });
     const ready = board.ready.find((row) => row.id === specId);
     if (!ready || !spec) throw new Error(`${specId} isn't a ready spec in this project's tracker. Read the board again.`);
@@ -58,6 +65,10 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
       pluginMetadata: { role: "lead", specId: spec.id, startedBy },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
       prompt: ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
+        ...(returning ? [
+          `This spec's previous lane landed. Start a fresh integration branch from this new worktree's default branch; never reuse the landed branch ${existing.branch}.`,
+          `Previous Lead: ${existing.thread.id}. Its branch, workers and PR are evidence for that lane only. Read remaining tickets afresh.`,
+        ] : []),
         ...(snapshot.kind === "linear" ? [] : ["Read docs/agents/issue-tracker.md and update the spec and its tickets as that file describes. Tell workers to do the same."]),
         "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
         `House rules: ${ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md"}`,
@@ -72,7 +83,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   async function leadOf(projectId: string, specId: string, action: string) {
     const snapshot = await sources.tracker.getSnapshot(projectId);
     const spec = snapshot.issues.find((issue) => issue.identifier === specId && issue.inProject);
-    const leads = await readLeadThreads(bb, projectId);
+    const leads = latestLeads(await readLeadThreads(bb, projectId));
     const lead = spec && leads.find((found) => found.specId === spec.id);
     if (lead) return lead;
     if (spec && (await outsideLanes(projectId, snapshot, leads)).some((lane) => lane.specId === spec.id)) throw refuse(specId, action);

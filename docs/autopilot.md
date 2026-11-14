@@ -6,6 +6,10 @@ The existing board watcher considers one start per project per cycle, and on boa
 
 Lanes started by the owner count toward the limit, though an owner click can exceed it. Outside lanes, Landed lanes, stopped lanes and lanes waiting for an owner merge don't count. A lane waiting on an owner question keeps its slot. The board's formation uses the project's saved limit.
 
+A Landed spec returns to Ready when today's tracker still marks it ready and has an open, unblocked ticket that isn't held. The landed lane remains visible until a new Lead starts. If every remaining ticket is held, it stays Landed. An open PR keeps the existing lane in review.
+
+A returning Start creates a new Lead in a new managed worktree based on the default branch. Its first message names the previous Lead and forbids reusing the landed integration branch. Previous Leads, workers, environments and branches stay intact in BB and Git. The board and lane controls use the newest Lead by creation time; PR evidence comes from that Lead's environment, and local ticket progress comes from its branch. Returning work is selected from the main tracker's current snapshot, rather than the landed branch's old ticket states.
+
 ## Functions for follow-on tickets
 
 `registerAutopilot` in `lib/autopilot.ts` returns `get`, `set`, `update`, `pause`, `resume`, `isOn` and `enabledProjectIds`. `update` serializes read/modify/write per project and validates the resulting state. State contains `status` (`off`, `on`, `paused`), `laneLimit`, `consecutiveStops` and `pauseReason`. `resume` clears the reason and consecutive-stop count. No lane outcomes are stored here.

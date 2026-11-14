@@ -4,18 +4,22 @@ The words BB Squadron uses. Use these, and only these, in code, tickets, comment
 
 ## Work
 
-**Spec**: A Linear issue holding a feature's `to-spec` write-up and labelled `ready-for-agent`. Its sub-issues are its tickets. One spec becomes one lane, one integration branch and one PR.
+**Spec**: An issue holding a feature's `to-spec` write-up. Its child issues are its tickets. A spec can be Shaping or Ready before it becomes a lane.
 _Avoid_: epic, feature issue, PRD
 
 **Ticket**: A sub-issue of a spec: one tracer-bullet slice that one worker can finish in one sitting.
 _Avoid_: task, story
 
-**Blocker**: An issue that must be Done before another may start, from Linear's native "blocks" relation.
+**Blocker**: An issue that must be Done before another may start, as recorded in the repo's tracker.
 _Avoid_: dependency (in UI copy), prerequisite
 
 **Frontier**: The tickets of a spec whose blockers are all done and that nobody is working on yet.
 
-**Unplanned**: An open issue that is neither a spec nor one of its tickets. It waits in the board's Unplanned row until planning turns it into a spec.
+**Open issue**: An open issue that is neither a spec nor one of its tickets. It waits in the board's Open issues section until planning turns it into a spec.
+
+**Shaping**: A spec not yet Ready. It has an open planning thread, has tickets without the ready label, or has the ready label without tickets.
+
+**Ready**: A spec carrying `ready-for-agent` with at least one open, unblocked ticket.
 
 ## Roles
 
@@ -38,11 +42,13 @@ _Avoid_: builder, implementer, subagent
 
 **Lane**: One spec being worked: its Lead, workers, reviewer, integration branch and PR.
 
-**Lane state**: Ready, Flying, In review or Landed. It is always read from the Lead thread, the PR and Linear, and never stored.
+**Outside lane**: A lane started outside Squadron and shown read-only, with a link to its thread. Squadron offers no Stop, Resume or Merge for it.
+
+**Lane state**: Ready, Flying, In review or Landed. It is read from threads, the tracker and the PR or local merge, and never stored.
 
 **Ticket state**: Waiting, Working, In branch or Done.
 
-**Status mapping**: The table that names the Linear status for each lane state and ticket state.
+**Status mapping**: The table that names the Linear status for each lane state and ticket state. Only Linear repos need it.
 
 **Integration branch**: The one branch a lane builds on. Workers branch from it and merge back into it, and its PR goes to `main`.
 
@@ -63,13 +69,15 @@ _Avoid_: cancel, kill
 
 **Quick check**: The project's fast test command, run before every merge into the integration branch and before the PR merges.
 
-**Doctor**: The check that must pass before Start: Matt's plugin in each family's harness, Matt's setup files, Squadron's settings, the Linear key and `gh` login.
+**Doctor**: The check that must pass before Start. It checks Matt's plugin and setup, Squadron's settings and the detected tracker's requirements. Reading the board needs no Doctor pass.
 
 ## Configuration
 
 **Repo rules**: How to work on a repo's code: its `AGENTS.md` and Matt's `docs/agents/` setup. Checked in, and not Squadron's.
 
-**Project settings**: How the fleet flies one repo: quick check, stop list, routes, final-review family, time limits and status mapping. Checked in as `docs/agents/squadron.md`.
+**Tracker**: Where a repo's issues live: Linear, GitHub or Local markdown. A BB project reads one planning tracker.
+
+**Project settings**: How the fleet flies one repo: quick check, stop list, routes, final-review family, time limits, an optional Tracker override and Linear-only status mapping. Checked in as `docs/agents/squadron.md`.
 
 **Playbook**: How the owner likes work done in every project, read by both families. Private to the owner. Its Never and Held entries beat every other rule.
 _Avoid_: global rules, harness rules
@@ -85,4 +93,4 @@ _Avoid_: personal settings, local config
 
 **Needs you**: The board's first section: threads waiting on the owner, `accept:owner` PRs ready to merge, and setup problems.
 
-**Binding**: The owner's choice of which Linear team and project a BB project's board reads.
+**Binding**: The owner's choice of which Linear team and project a BB project's board reads. Only Linear uses a binding.

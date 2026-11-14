@@ -40,7 +40,7 @@ const boardSchema = z.object({
     acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
     startReason: z.string().nullable().optional(),
   })),
-  unplanned: z.array(z.object({
+  openIssues: z.array(z.object({
     id: z.string(), title: z.string(), labels: z.array(z.string()), url: z.string().optional(), under: z.string().optional(),
     priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
   })),
@@ -61,7 +61,7 @@ export type PullRequest = NonNullable<Lane["pr"]>;
 export type Blocker = z.infer<typeof blocker>;
 export type Board = z.infer<typeof boardSchema>;
 export type ReadySpec = Board["ready"][number];
-export type UnplannedIssue = Board["unplanned"][number];
+export type OpenIssue = Board["openIssues"][number];
 export type LinearStatus = NonNullable<Board["linear"]>;
 export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge";
 

@@ -191,11 +191,11 @@ The theme supplies the neutrals; four state inks supply the meaning.
 - **Display** (pixel cells: 4px cells on a 5px pitch, 34px tall, in lane tails; 2px cells with no gap, 14px tall, in Needs-you, Ready and Landed lists): spec numbers only. Ink follows lane state: board ink, red ink when stopped, amber ink when the merge waits, green ink when landed.
 - **Headline** (650, 22px, 1.15, -0.02em): the page title "Squadron", once.
 - **Title** (620, 14px, 1.3, balanced wrap): the spec title in each tail card. Ready-row titles step down to 600 at 13.5px.
-- **Body** (400, 13px, 1.45): Needs-you text, empty-state lines, Unplanned rows, header counts.
+- **Body** (400, 13px, 1.45): Needs-you text, empty-state lines, Open issue rows, header counts.
 - **Body small** (400, 12.5px, 1.3, clamped to two lines): peg titles.
-- **Label** (650, 12px, 0.08em, uppercase): the section headings Needs you, Flying, Ready, Unplanned, Landed, each sitting on a pixel rule. The Needs-you kind tag uses the same voice at 700, 11px, 0.04em on solid amber.
+- **Label** (650, 12px, 0.08em, uppercase): the section headings Needs you, Flying, Ready, Open issues, Landed, each sitting on a pixel rule. The Needs-you kind tag uses the same voice at 700, 11px, 0.04em on solid amber.
 - **Meta** (600, 11px): button text (12px), peg state, tags, AI chips, counts.
-- **Mono** (650, 11px, tabular figures): ticket ids on pegs; branch names and Unplanned ids at 400 in muted ink.
+- **Mono** (650, 11px, tabular figures): ticket ids on pegs; branch names and Open issue ids at 400 in muted ink.
 
 ### Named Rules
 
@@ -205,11 +205,11 @@ The theme supplies the neutrals; four state inks supply the meaning.
 
 ## Layout
 
-One centred column (max 1480px) with 22px top and 28px side padding, sections 30px apart, each opened by an uppercase label on a 2px pixel rule. Order is fixed by the product: header and Linear status line, Needs you, Flying, Ready, Unplanned, then Landed when any lane has landed. The synthetic demo adds its labelled footer behind a dashed hairline. Doctor is a header utility whose open checks sit in the page flow after Needs you, before Flying.
+One centred column (max 1480px) with 22px top and 28px side padding, sections 30px apart, each opened by an uppercase label on a 2px pixel rule. Order is fixed by the product: header and Linear status line, Needs you, Flying, Ready, Open issues, then Landed when any lane has landed. The synthetic demo adds its labelled footer behind a dashed hairline. Doctor is a header utility whose open checks sit in the page flow after Needs you, before Flying.
 
 A sortie line is a two-column grid: a tail card (200–236px) and a track, 20px apart, 16px of vertical padding, closed by a 1px hairline. The track holds a progress strip (one segment per ticket, max 40px each, 2px apart, then a count) above a horizontally scrolling rail of dependency columns. The pixel rule runs through the rail's vertical centre and scrolls with the pegs; columns are joined by 6x10 pixel chevrons with 7px side margins, and pegs in one column stack 8px apart.
 
-List rows (Ready, Unplanned, Landed) are grids on 1px hairlines with 11px, 7px and 9px vertical padding respectively; spec numbers in lists sit on a band plate (6px 8px padding).
+List rows (Ready, Open issues, Landed) are grids on 1px hairlines with 11px, 7px and 9px vertical padding respectively; spec numbers in lists sit on a band plate (6px 8px padding).
 
 The board is a container (`container-type: inline-size`) and responds to its own width, not the window. At 900px and below the header stacks, the sortie line becomes one column with the tail card laid out as a wrapping row, Ready rows wrap with routes and ticket counts hidden, and Needs-you rows drop the spec number and put actions on their own line.
 
@@ -258,7 +258,7 @@ The live Linear board is the default. Plan opens a planning thread; Start opens 
 
 - **Linear status line:** a wrapping line under the header in 12px muted ink. The bound "Team · Project" uses board ink at 600; a failed read uses red ink. It shows connection, binding, catch-up or current state and the time of the last read.
 - **Setup rows:** the existing amber Needs-you row and kind tag, with connection or binding controls.
-- **Issue-title links:** Ready and Unplanned titles are plain text at rest, underlined on hover with a 3px underline offset and a 1px rule-ink underline. They retain the global 2px sky focus outline. Ready titles are 13.5px at 600; Unplanned titles are 13px. Unplanned parent context wraps beside the title in 12px muted ink and leaves the Linear parent unchanged.
+- **Issue-title links:** Ready and Open issue titles are plain text at rest, underlined on hover with a 3px underline offset and a 1px rule-ink underline. They retain the global 2px sky focus outline. Ready titles are 13.5px at 600; Open issue titles are 13px. Open issue parent context wraps beside the title in 12px muted ink and leaves the Linear parent unchanged.
 - **Binding picker:** native team and project selects, 28px high, 2px corners, ground fill and hairline border, 12px at 600, maximum width 220px. Controls wrap with 6px gaps. Disabled controls use 42% opacity. Progress is muted text; errors wrap on their own line in red ink. The global sky focus outline applies.
 - **Doctor:** a quiet header button with `aria-expanded` and `aria-controls`. Open checks occupy a full-width, flat region after Needs you, with 12px padding and a hairline border. Each row shows the check name, a Pass, Warning or Fix tag and a plain explanation. Warning and Fix tags have dashed borders; their text uses board ink. A "Configuration files" list follows, with a linked file name, Present or Missing tag and its path on each row. At 650px explanations and file paths move below their name and tag. Loading and error text and Check again use the existing body and button styles. No popover, shadow or header restyling.
 

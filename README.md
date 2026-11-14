@@ -8,6 +8,8 @@ A [BB](https://getbb.app) plugin that runs a software factory on your Linear tic
 
 Status: being designed. The decisions so far are in [`docs/adr/`](docs/adr/) and the vocabulary in [`GLOSSARY.md`](GLOSSARY.md).
 
+Project setup is documented in [Squadron settings](docs/settings.md), including the optional Tracker override and Linear-only Status mapping.
+
 ## Licence
 
 MIT. Code adapted from other plugins keeps its notice in `THIRD_PARTY_NOTICES.md`.

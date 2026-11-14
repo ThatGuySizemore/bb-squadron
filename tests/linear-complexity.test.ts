@@ -3,7 +3,7 @@
 // `first` (default 50). This computes that for every query the reader sends.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LINEAR_QUERIES, LINEAR_QUERY_MAX_VARIABLES } from "../lib/linear-queries.js";
+import { LINEAR_QUERIES } from "../lib/linear-queries.js";
 
 const BUDGET = 2_500;
 
@@ -62,7 +62,7 @@ function cost(fields: Field[], variables: Record<string, number>): number {
   }, 0);
 }
 
-export function complexity(query: string, variables: Record<string, number> = LINEAR_QUERY_MAX_VARIABLES): number {
+export function complexity(query: string, variables: Record<string, number> = {}): number {
   return Math.round(cost(parse(query), variables));
 }
 

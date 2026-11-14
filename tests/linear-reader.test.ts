@@ -100,6 +100,9 @@ test("every Scope key narrows the issue filter, and a View walks the view's own 
     } });
     if (operation === "SquadronIssues") return issuesOf([specIssue]);
     if (operation === "SquadronViewIssues") return Response.json({ data: { customView: { issues: { nodes: [specIssue], pageInfo: end } } } });
+    if (operation === "SquadronViews") return Response.json({ data: { customViews: variables.after
+      ? { nodes: [{ id: "view-one", name: "Agent work", slugId: "0123456789ab" }], pageInfo: end }
+      : { nodes: [{ id: "view-other", name: "Other", slugId: "ffffffffffff" }], pageInfo: { hasNextPage: true, endCursor: "views-two" } } } });
     return undefined;
   });
   const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: api.fetch }), { scope: async () => ({ ok: true, scope }) });
@@ -111,10 +114,27 @@ test("every Scope key narrows the issue filter, and a View walks the view's own 
   scope = { view: "https://linear.app/fixture/view/agent-work-0123456789ab" };
   const viewed = await mirror.sync("proj-one");
   assert.deepEqual([viewed.scope, viewed.issues.map((issue) => [issue.identifier, issue.inProject])], [{ name: "Agent work" }, [["FIX-1", true]]]);
-  assert.deepEqual(api.requests.filter((request) => request.operation === "SquadronScope").at(-1)?.variables.view, { slugId: { eq: "0123456789ab" } });
+  assert.equal(api.requests.filter((request) => request.operation === "SquadronScope").at(-1)?.variables.withView, false,
+    "CustomViewFilter has no slugId, so a view URL is not a filter");
+  assert.deepEqual(api.requests.filter((request) => request.operation === "SquadronViews").map((request) => request.variables.after),
+    [null, "views-two"], "the views walk pages until the slug matches");
   assert.deepEqual(api.requests.find((request) => request.operation === "SquadronViewIssues")?.variables, {
     view: "view-one", filter: { state: { type: { nin: ["completed", "canceled"] } } }, after: null,
   });
+});
+
+test("a view URL whose slug no view has is a Scope error naming View", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
+  t.after(() => harness.lifecycle.dispose());
+  const api = linear(({ operation }) => operation === "SquadronScope" ? Response.json({ data: {} })
+    : operation === "SquadronViews" ? Response.json({ data: { customViews: { nodes: [{ id: "v", name: "Other", slugId: "ffffffffffff" }], pageInfo: end } } })
+    : undefined);
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: api.fetch }),
+    { scope: scoped({ view: "https://linear.app/fixture/view/gone-0123456789ab" }) });
+  const snapshot = await mirror.sync("proj-one");
+  assert.deepEqual([snapshot.scope, snapshot.error], [null,
+    "Scope View \"https://linear.app/fixture/view/gone-0123456789ab\" matches no Linear view. Fix it in docs/agents/squadron.md."]);
+  assert.ok(!api.requests.some((request) => request.operation === "SquadronIssues" || request.operation === "SquadronViewIssues"));
 });
 
 test("a Scope value that matches nothing or more than one record names its key and reads no issues", async (t) => {
@@ -369,6 +389,33 @@ test("states and labels come from the teams of the issues read, with later vocab
     { id: "state-ready", name: "Ready", type: "unstarted" },
     { id: "state-working", name: "In Progress", type: "started" },
   ]);
+});
+
+test("more than 50 labels keep paging after the states finish, without asking Linear for a zero-size page", async (t) => {
+  const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
+  t.after(() => harness.lifecycle.dispose());
+  const labelPage = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({ id: `label-${from + i}`, name: `l${from + i}`, color: "#888888" }));
+  const api = linear(({ operation, variables }) => {
+    if (operation === "SquadronIssues") return issuesOf([specIssue]);
+    if (operation !== "SquadronVocabulary") return undefined;
+    if (!variables.labelsAfter) {
+      assert.deepEqual([variables.withStates, variables.withLabels], [true, true]);
+      return Response.json({ data: {
+        workflowStates: { nodes: [ready], pageInfo: end },
+        issueLabels: { nodes: labelPage(0, 50), pageInfo: { hasNextPage: true, endCursor: "labels-two" } },
+      } });
+    }
+    assert.deepEqual([variables.withStates, variables.withLabels, variables.labelsAfter], [false, true, "labels-two"],
+      "finished states are left out, not asked for with first: 0");
+    return Response.json({ data: { issueLabels: { nodes: labelPage(50, 7), pageInfo: end } } });
+  });
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: api.fetch }), { scope: scoped() });
+  const snapshot = await mirror.sync("proj-one");
+  assert.equal(snapshot.labels.filter((item) => item.id.startsWith("label-") && item.id !== "label-ready").length, 57);
+  assert.deepEqual(snapshot.states, [ready]);
+  for (const request of api.requests.filter((item) => item.operation === "SquadronVocabulary")) {
+    assert.ok(!Object.values(request.variables).includes(0), "no first: 0");
+  }
 });
 
 test("closed blockers are in scope when Linear says they match it, and keep their status off open rows", async (t) => {

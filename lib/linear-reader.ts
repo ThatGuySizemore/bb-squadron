@@ -10,7 +10,7 @@ import { linearMirrorContract, mirrorLabelSchema, mirrorStateSchema,
   type MirrorIssue, type MirrorRelation, type MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { LINEAR_QUERIES, PAGE } from "./linear-queries.js";
-import { resolveScope, scopeDisplayName, scopeIssueFilter, scopeLookup, type ResolvedScope } from "./linear-scope.js";
+import { resolveScope, scopeDisplayName, scopeIssueFilter, scopeLookup, viewSlugId, type ResolvedScope } from "./linear-scope.js";
 import { parseLinearScope, SETTINGS_UNREADABLE, type LinearScope } from "./squadron-settings.js";
 
 const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() });
@@ -171,7 +171,21 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     const cached = resolved.get(bbProjectId);
     if (cached?.key === key && now() - cached.at < RESOLVE_MS) return cached.scope;
     if (signal.aborted) throw new LinearRequestError("unavailable");
-    const result = resolveScope(scope, scopeResponse.parse(await linear.graphql(LINEAR_QUERIES.scope, scopeLookup(scope), signal)));
+    const found = scopeResponse.parse(await linear.graphql(LINEAR_QUERIES.scope, scopeLookup(scope), signal));
+    const slugId = viewSlugId(scope);
+    if (slugId) {
+      // CustomViewFilter has no slugId: list views, stopping at the page that holds the slug.
+      const views = connection(z.object({ id: z.string(), name: z.string(), slugId: z.string() }));
+      const matches: { id: string; name: string }[] = [];
+      await walk(async (after) => {
+        if (signal.aborted) throw new LinearRequestError("unavailable");
+        const page = z.object({ customViews: views }).parse(await linear.graphql(LINEAR_QUERIES.views, { after }, signal)).customViews;
+        matches.push(...page.nodes.filter((view) => view.slugId === slugId).map(({ id, name }) => ({ id, name })));
+        return matches.length ? { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } : page;
+      });
+      found.customViews = { nodes: matches };
+    }
+    const result = resolveScope(scope, found);
     if (signal.aborted) throw new LinearRequestError("unavailable");
     if (!result.ok) { resolved.delete(bbProjectId); throw new ScopeError(result.message); }
     resolved.set(bbProjectId, { key, at: now(), scope: result.scope });
@@ -286,10 +300,11 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
       let statesDone = false;
       let labelsDone = false;
       do {
-        const result = z.object({ workflowStates: connection(mirrorStateSchema), issueLabels: connection(mirrorLabelSchema) }).parse(
-          await graphql(LINEAR_QUERIES.vocabulary, { teamIds, statesAfter, labelsAfter,
-            statesFirst: statesDone ? 0 : PAGE.vocabulary, labelsFirst: labelsDone ? 0 : PAGE.vocabulary }));
-        if (!statesDone) {
+        // A finished side is left out with @include; Linear's `first` must be 1 to 250.
+        const result = z.object({ workflowStates: connection(mirrorStateSchema).optional(), issueLabels: connection(mirrorLabelSchema).optional() }).parse(
+          await graphql(LINEAR_QUERIES.vocabulary, { teamIds, statesAfter, labelsAfter, withStates: !statesDone, withLabels: !labelsDone }));
+        if (!statesDone && !result.workflowStates || !labelsDone && !result.issueLabels) throw new LinearRequestError("invalid_response");
+        if (!statesDone && result.workflowStates) {
           teamStates.push(...result.workflowStates.nodes);
           statesDone = !result.workflowStates.pageInfo.hasNextPage;
           if (!statesDone) {
@@ -298,7 +313,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
             stateCursors.add(cursor); statesAfter = cursor;
           }
         }
-        if (!labelsDone) {
+        if (!labelsDone && result.issueLabels) {
           teamLabels.push(...result.issueLabels.nodes);
           labelsDone = !result.issueLabels.pageInfo.hasNextPage;
           if (!labelsDone) {

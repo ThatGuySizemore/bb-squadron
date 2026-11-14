@@ -24,6 +24,10 @@ export const LINEAR_QUERIES = {
     issueLabels(first: ${PAGE.scope}, filter: $label) @include(if: $withLabel) { nodes { id name } }
     customViews(first: ${PAGE.scope}, filter: $view) @include(if: $withView) { nodes { id name } }
   }`,
+  /** CustomViewFilter has no slugId, so a view URL is matched against listed views. */
+  views: `query SquadronViews($after: String) {
+    customViews(first: ${PAGE.followUp}, after: $after) { nodes { id name slugId } ${pageInfo} }
+  }`,
   issues: `query SquadronIssues($filter: IssueFilter!, $after: String) {
     issues(first: ${PAGE.issues}, after: $after, filter: $filter) { nodes { ${graphFields} } ${pageInfo} }
   }`,
@@ -52,15 +56,13 @@ export const LINEAR_QUERIES = {
   viewMembers: `query SquadronViewMembers($view: String!, $filter: IssueFilter!) {
     customView(id: $view) { issues(first: ${PAGE.members}, filter: $filter) { nodes { id } } }
   }`,
-  vocabulary: `query SquadronVocabulary($teamIds: [ID!]!, $statesAfter: String, $labelsAfter: String, $statesFirst: Int!, $labelsFirst: Int!) {
-    workflowStates(first: $statesFirst, after: $statesAfter, filter: { team: { id: { in: $teamIds } } }) {
+  /** Linear's `first` is 1 to 250, so a finished side is left out with @include rather than asked for with first: 0. */
+  vocabulary: `query SquadronVocabulary($teamIds: [ID!]!, $statesAfter: String, $labelsAfter: String, $withStates: Boolean!, $withLabels: Boolean!) {
+    workflowStates(first: ${PAGE.vocabulary}, after: $statesAfter, filter: { team: { id: { in: $teamIds } } }) @include(if: $withStates) {
       nodes { id name type } ${pageInfo}
     }
-    issueLabels(first: $labelsFirst, after: $labelsAfter, filter: { or: [{ team: { id: { in: $teamIds } } }, { team: { null: true } }] }) {
+    issueLabels(first: ${PAGE.vocabulary}, after: $labelsAfter, filter: { or: [{ team: { id: { in: $teamIds } } }, { team: { null: true } }] }) @include(if: $withLabels) {
       nodes { id name color } ${pageInfo}
     }
   }`,
 } as const;
-
-/** The largest values the reader passes for variable page sizes. */
-export const LINEAR_QUERY_MAX_VARIABLES: Record<string, number> = { statesFirst: PAGE.vocabulary, labelsFirst: PAGE.vocabulary };

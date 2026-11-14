@@ -38,7 +38,14 @@ function labelMatch(value: string, team: Filter | null): Filter {
   return team ? { and: [byName, { or: [{ team }, { team: { null: true } }] }] } : byName;
 }
 
-/** Variables for SquadronScope: one lookup per key set, skipped otherwise. */
+/** A view URL's slugId. CustomViewFilter can't filter by it, so the reader lists views and matches it. */
+export function viewSlugId(scope: LinearScope): string | null {
+  if (scope.view === undefined || UUID.test(scope.view)) return null;
+  const url = URL_PATH.exec(scope.view);
+  return url && url[1].toLowerCase() === "view" ? url[2].split("-").at(-1) ?? null : null;
+}
+
+/** Variables for SquadronScope: one lookup per key set, skipped otherwise. A view URL is looked up separately. */
 export function scopeLookup(scope: LinearScope) {
   const team = scope.team === undefined ? null : match(scope.team, "team");
   const lookup = <T>(value: string | undefined, filter: (value: string) => T) => value === undefined ? null : filter(value);
@@ -47,7 +54,8 @@ export function scopeLookup(scope: LinearScope) {
     withProject: scope.project !== undefined, project: lookup(scope.project, (value) => match(value, "project")),
     withInitiative: scope.initiative !== undefined, initiative: lookup(scope.initiative, (value) => match(value, "initiative")),
     withLabel: scope.label !== undefined, label: lookup(scope.label, (value) => labelMatch(value, team)),
-    withView: scope.view !== undefined, view: lookup(scope.view, (value) => match(value, "view")),
+    ...(scope.view !== undefined && !viewSlugId(scope)
+      ? { withView: true, view: match(scope.view, "view") } : { withView: false, view: null }),
   };
 }
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { scopeIssueFilter, scopeLookup, resolveScope } from "../lib/linear-scope.js";
+import { scopeIssueFilter, scopeLookup, resolveScope, viewSlugId } from "../lib/linear-scope.js";
 
 const uuid = "0f4b2a52-1d8e-4c55-9e1f-2a6a3c4d5e6f";
 
@@ -18,8 +18,13 @@ test("scope values look Linear up by name, key, URL or id", () => {
       // A named team narrows its labels to that team's and the workspace's.
       { or: [{ team: { or: [{ key: { eqIgnoreCase: "Sizemore" } }, { name: { eqIgnoreCase: "Sizemore" } }] } }, { team: { null: true } }] },
     ] },
-    withView: true, view: { slugId: { eq: "ba9876543210" } },
+    // CustomViewFilter has no slugId: a view URL is matched by listing views instead.
+    withView: false, view: null,
   });
+  assert.equal(viewSlugId({ view: "https://linear.app/fixture/view/agent-work-ba9876543210" }), "ba9876543210");
+  assert.equal(viewSlugId({ view: "Agent work" }), null);
+  assert.deepEqual(scopeLookup({ view: "Agent work" }).view, { name: { eqIgnoreCase: "Agent work" } });
+  assert.deepEqual(scopeLookup({ view: uuid }).view, { id: { eq: uuid } });
   assert.deepEqual(scopeLookup({ team: "https://linear.app/fixture/team/SIZE/active" }).team, { key: { eqIgnoreCase: "SIZE" } });
   assert.deepEqual(scopeLookup({ project: "BB Squadron" }), {
     withTeam: false, team: null, withProject: true, project: { name: { eqIgnoreCase: "BB Squadron" } },

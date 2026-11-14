@@ -2,6 +2,8 @@
 
 Each repo keeps its lane settings in `docs/agents/squadron.md`. Doctor checks them before Start. The board can read a detected tracker without this file or a Doctor pass. The [settings for this repo](agents/squadron.md) are a complete Linear example.
 
+The private owner files are House rules at `~/.bb-squadron/house-rules.md` and This machine at `~/.bb-squadron/machine.md`. Start points the Lead at House rules when present, or at the legacy `~/.bb-squadron/playbook.md` fallback. If both exist, Squadron reads `house-rules.md`. Doctor reports which file it uses and asks the owner to rename an old file; it never renames private files. The starters are [House rules](../templates/house-rules.md) and [This machine](../templates/machine.md).
+
 ## Tracker detection and override
 
 Squadron reads the planning tracker from `docs/agents/issue-tracker.md`: Linear, GitHub or Local markdown. Each BB project reads one tracker. Doctor shows the detected kind and its reason. If detection is ambiguous, add this optional section to `docs/agents/squadron.md`:

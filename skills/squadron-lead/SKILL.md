@@ -5,7 +5,9 @@ description: Run a spec started from the Squadron board with Matt Pocock's insta
 
 # Squadron Lead
 
-Read the spec and the four context pointers from your first message: repo rules, project settings, playbook and machine profile. Repo rules include `AGENTS.md` and `docs/agents/`. Project settings are `docs/agents/squadron.md`. Read owner files when present; missing optional files are warnings. The playbook's Never and Held entries take precedence over other rules. Use the machine profile's identities and tools for your family, verifying your identity before a tracker write.
+Read the spec and your first message's context pointers: Repo rules (`AGENTS.md`, `docs/agents/`), Project settings (`docs/agents/squadron.md`), House rules and This machine. Missing optional owner files are warnings. House rules' Never and Held entries take precedence. Use the identities and tools in This machine for your family; verify your identity before tracker writes.
+
+Use Owner words from `GLOSSARY.md` in PR bodies, comments and Needs you text. Squadron is the orchestrator; the Helper is the optional agent thread the owner talks to.
 
 Run `implement-spec` as written from Matt Pocock's installed plugin. Reach its `tdd` and `code-review` skills there as needed. Invoke a skill when the provider supports it; otherwise read its installed `SKILL.md` and follow it. If a required skill is missing, ask the owner to install Matt's plugin. Squadron adds these BB instructions:
 

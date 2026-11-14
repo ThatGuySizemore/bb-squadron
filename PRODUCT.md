@@ -12,7 +12,7 @@ First user: one owner (Josh) steering several lanes of coding agents on Linear t
 
 ## Product Purpose
 
-BB Squadron turns a Linear spec into a merged PR with as little owner time as possible. The owner plans a spec with an agent, presses Start, and the plugin runs a lane: a Lead thread, worker threads per unblocked ticket, reviews from the other model family, one PR. Success: the owner sees every open issue, which agent is on it, and what waits on him, without opening Linear, GitHub or a thread.
+BB Squadron turns a Linear spec into a merged PR with as little owner time as possible. The owner plans a spec with an agent and presses Start. Squadron starts the lane; the Lead and workers build its tickets with Matt's skills and open one PR. The optional Helper is the agent thread the owner talks to about the project. Success: the owner sees every open issue, which agent is on it, and what needs him, without opening Linear, GitHub or a thread.
 
 ## Positioning
 
@@ -25,7 +25,8 @@ Runs inside the BB desktop app as a plugin page in the left sidebar, beside agen
 ## Capabilities and Constraints
 
 - Linear is v1; GitHub Issues is v2.
-- Vocabulary is fixed by `GLOSSARY.md`: spec, ticket, lane, Lead, worker, reviewer, Needs you, Open issues.
+- Use Owner words from `GLOSSARY.md` on the board, in Doctor messages and whenever writing for the owner. Factory words explain the machinery to agents and contributors.
+- House rules holds the owner's private rules across projects. This machine holds devices, tools and identities for one machine. Repo rules and project settings stay in the repo.
 - The UI must follow BB's theme tokens so it works with any BB theme, light or dark.
 - Plugin UI is React inside BB; no network fonts or external assets at runtime.
 

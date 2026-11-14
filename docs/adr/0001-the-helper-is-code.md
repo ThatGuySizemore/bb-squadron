@@ -1,6 +1,6 @@
 # The Helper is plugin code, not an agent
 
-Status: superseded by ADR-0006.
+Status: superseded by [ADR-0006](0006-squadron-shows-and-starts.md); naming superseded by [ADR-0010](0010-owner-words-and-factory-words.md).
 
 On 13 Nov 2026 we decided the Helper is deterministic code in the plugin's server. It watches Linear, starts Leads for ready specs whose blockers are done, caps how many run, enforces time limits and moves statuses. No model reads rules or keeps clocks.
 

@@ -40,7 +40,7 @@ test("Doctor shows the tracker reason and doesn't ask non-Linear repos for a map
   }
   const linear = doctor({ ...readyInput, settingsMarkdown: noMapping, linearConnected: false });
   assert.equal(linear.ready, false);
-  assert.match(linear.checks.find((check) => check.id === "settings")!.message, /Status mapping/);
+  assert.match(linear.checks.find((check) => check.id === "settings")!.message, /Add the Linear status each state uses/);
   const override = doctor({ ...readyInput, settingsMarkdown: `${noMapping}\n## Tracker\nGitHub\n`, linearConnected: false });
   assert.equal(override.ready, true);
   assert.match(override.checks.find((check) => check.id === "tracker")!.message, /squadron\.md/);

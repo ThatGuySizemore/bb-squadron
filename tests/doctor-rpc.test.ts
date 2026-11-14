@@ -152,3 +152,32 @@ test("Doctor checks gh in the selected repo checkout rather than the plugin chec
     assert.equal(report.checks.find((c) => c.id === "github")?.status, "pass");
   } finally { await harness.lifecycle.dispose(); }
 });
+
+// SQD-202: the Doctor speaks in owner words, in every case it reports.
+test("nothing the Doctor RPC returns uses a retired word", async () => {
+  const { retiredTerms } = await import("./fixtures/owner-text.js");
+  const cases = [{ ownerFiles: true }, { ownerFiles: false, gh: false }, { unavailable: true }, { linked: true }];
+  for (const options of cases) {
+    const { bb, harness } = host(options);
+    try {
+      registerDoctor(bb, async () => ({ status: "connected" }));
+      const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+      const read = [...report.checks.flatMap((check) => [check.name, check.message]), ...report.configurationFiles.map((file) => file.name)];
+      assert.deepEqual(read.flatMap(retiredTerms), [], JSON.stringify(options));
+    } finally { await harness.lifecycle.dispose(); }
+  }
+});
+
+test("the Doctor's settings fixes for a Linear repo use owner words", async () => {
+  const { retiredTerms } = await import("./fixtures/owner-text.js");
+  const { doctor } = await import("../lib/doctor.js");
+  const base = { skills: {}, setupFiles: [], issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8"), linearConnected: true, ghAuthenticated: true, configurationFiles: [] };
+  const noMapping = fixture.replace(/## Status mapping[\s\S]*/, "");
+  const badMapping = fixture.replace(/## Status mapping[\s\S]*/, "## Status mapping\n\n| State | Linear status |\n|---|---|\n| Ready | Todo |\n");
+  for (const settingsMarkdown of [null, fixture, noMapping, badMapping]) {
+    const settings = doctor({ ...base, settingsMarkdown }).checks.find((check) => check.id === "settings")!;
+    assert.deepEqual(retiredTerms(settings.message), [], settings.message);
+    // The owner still learns that a Linear repo lists which Linear status each state uses.
+    if (settingsMarkdown !== fixture) assert.match(settings.message, /Linear status/, settings.message);
+  }
+});

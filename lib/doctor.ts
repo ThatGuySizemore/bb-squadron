@@ -63,9 +63,9 @@ export function doctor(input: DoctorInput): DoctorReport {
     },
     {
       id: "settings", name: "Project settings", status: parsed?.ok && !scopeProblem ? "pass" : "fix",
-      message: scopeProblem ?? (parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? ", scope and status mapping" : ""} are ready.`
+      message: scopeProblem ?? (parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? ", scope and Linear statuses" : ""} are ready.`
         : parsed ? parsed.issues.map((issue) => issue.message).join(" ")
-        : `Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes, Final review${tracker.kind === "linear" ? ", Scope and Status mapping" : ""} sections.`),
+        : `Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes and Final review sections${tracker.kind === "linear" ? ", plus Scope and the Linear status each state uses" : ""}.`),
     },
     ...((tracker.kind === "linear" ? [{
       id: "linear", name: "Linear key", status: input.linearConnected ? "pass" : "fix",
@@ -79,7 +79,7 @@ export function doctor(input: DoctorInput): DoctorReport {
     },
     ...(["playbook", "machine-profile"] as const).map((id): DoctorCheck => {
       const file = input.configurationFiles.find((file) => file.id === id);
-      const name = id === "playbook" ? "Playbook" : "Machine profile";
+      const name = id === "playbook" ? "House rules" : "This machine";
       return { id, name, status: file?.exists ? "pass" : "warning",
         message: file?.exists ? `${name} is present.` : `Optional: create ${file?.path ?? (id === "playbook" ? "~/.bb-squadron/playbook.md" : "~/.bb-squadron/machine.md")} from the bundled starter template. This file doesn't block Start.` };
     }),

@@ -59,7 +59,7 @@ test("in the side panel a flying lane shows its active pegs and an All N tickets
     "only tickets an agent is on, or that need the owner, are pegs");
   const all = /<details class="sq-all"><summary>([^<]+)<\/summary>([\s\S]*?)<\/details>/.exec(panel);
   assert.equal(all?.[1], "All 4 tickets");
-  assert.deepEqual([...(all?.[2] ?? "").matchAll(/<li data-state="([^"]+)"><span class="sq-id">([^<]+)<\/span><span>([^<]+)<\/span><span data-st="[^"]+">([^<]+)</g)]
+  assert.deepEqual([...(all?.[2] ?? "").matchAll(/<li data-state="([^"]+)"><span class="sq-id">([^<]+)<\/span><span>([^<]+)<\/span><span data-st="[^"]+">(?:<span[^>]*data-term="[^"]+"[^>]*>)?([^<]+)</g)]
     .map((m) => m.slice(1)), [
     ["done", "FIX-2", "Ticket FIX-2", "Done"], ["working", "FIX-3", "Ticket FIX-3", "Working"],
     ["question", "FIX-4", "Ticket FIX-4", "Needs you"], ["blocked", "FIX-5", "Ticket FIX-5", "Waiting"],

@@ -32,7 +32,9 @@ test("each missing settings section has its own plain fix", () => {
   for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping", "Scope"] as const) {
     const sample = fixture.replace(new RegExp(`## ${section}\\n[\\s\\S]*?(?=\\n## |$)`), "");
     assert.deepEqual(parseSquadronSettings(sample), {
-      ok: false, issues: [{ section, message: section === "Scope" ? SCOPE_MISSING : `Add the ${section} section to docs/agents/squadron.md.` }],
+      ok: false, issues: [{ section, message: section === "Scope" ? SCOPE_MISSING
+        : section === "Status mapping" ? "Add the Linear status each state uses to docs/agents/squadron.md, as in Squadron's settings template."
+        : `Add the ${section} section to docs/agents/squadron.md.` }],
     });
   }
 });

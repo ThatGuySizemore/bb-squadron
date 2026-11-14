@@ -310,7 +310,7 @@ test("Shaping rows name what's missing and offer the one fixing button", async (
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, planning: "FIX-30",
   }));
-  assert.ok(html.includes(">Shaping</h2>"));
+  assert.match(html, /<h2[^>]*><span[^>]*data-term="Shaping"[^>]*>Shaping</);
   for (const text of ["Being planned", "Planning is still open in its thread.", "Has 2 tickets but no ready-for-agent label.",
     "Starting a planning thread for its tickets"]) assert.ok(html.includes(text), `Shaping shows ${text}`);
   assert.equal((html.match(/>Resume planning<\/button>/g) ?? []).length, 1);

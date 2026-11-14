@@ -14,6 +14,7 @@ import type { BoardAction } from "../lib/fake-board.js";
 import { layoutPixels } from "../lib/pixels.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
+import { Term } from "./Term.js";
 import { currentProject, fleetFlying, pickerMeta, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 import type { ProjectCounts } from "../lib/board-contract.js";
 import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
@@ -183,7 +184,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       <>
         {fill}
         <span className="sq-peg-id">{ticket.id}</span>
-        <span className="sq-peg-state">{TICKET_LABEL[state]}</span>
+        <span className="sq-peg-state"><Term text={TICKET_LABEL[state]} nested={clickable} /></span>
       </>
     );
     const label = `${ticket.id}, ${ticket.title}: ${TICKET_LABEL[state]}`;
@@ -205,7 +206,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
         {/* A waiting peg names its open blockers in the state's place. */}
         {state === "blocked" && waitsOn.length > 0
           ? <span className="sq-peg-after" title={`Waiting after ${waitsOn.join(", ")}`}>after {waitsOn.join(", ")}</span>
-          : <span className="sq-peg-state">{sub}</span>}
+          : <span className="sq-peg-state"><Term text={sub} nested={clickable} /></span>}
       </span>
       <span className="sq-peg-title">{ticket.title}</span>
       {size === "full" ? (
@@ -335,7 +336,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         </button>
         <div className="sq-tail-status">
           <span className="sq-lane-state" data-lane={lane.state}>
-            {LANE_LABEL[lane.state]}
+            <Term text={LANE_LABEL[lane.state]} />
           </span>
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
@@ -379,7 +380,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           {active.length ? <div className="sq-active">{active.map((t) => <Peg key={t.id} ticket={t} lane={lane} />)}</div> : null}
           <details className="sq-all"><summary>{lane.tickets.length === 1 ? "1 ticket" : `All ${lane.tickets.length} tickets`}</summary><ol>
             {lane.tickets.map((t) => (
-              <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}>{TICKET_LABEL[t.state]}</span></li>
+              <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}><Term text={TICKET_LABEL[t.state]} /></span></li>
             ))}
           </ol></details>
           {others}
@@ -785,7 +786,7 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
         return (
           <button key={key} type="button" className="sq-station" data-zero={!n} data-hot={key === "flying" && !!n} onClick={() => onJump(key)}>
             <span className="sq-station-label">
-              {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : label}
+              {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : <Term text={label} nested />}
             </span>
             <span className="sq-station-count sq-num">{n ?? "–"}</span>
             {key !== "landed" ? <Chevron className="sq-station-chev" /> : null}
@@ -800,7 +801,7 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
 function SectionHead({ id, title, count, amber = false }: { id: string; title: string; count: number; amber?: boolean }) {
   return (
     <div className="sq-label">
-      <h2 id={id}>{title}</h2>
+      <h2 id={id}><Term text={title} /></h2>
       {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
     </div>
   );

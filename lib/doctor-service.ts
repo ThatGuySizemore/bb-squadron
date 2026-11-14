@@ -64,8 +64,8 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     ];
     if (inspection) {
       configurationFiles.push(
-        { id: "playbook", name: "Playbook", path: joinHostPath({ rootPath: inspection.homePath, relativePath: ".bb-squadron/playbook.md" })!, hostId, exists: inspection.playbookExists },
-        { id: "machine-profile", name: "Machine profile", path: joinHostPath({ rootPath: inspection.homePath, relativePath: ".bb-squadron/machine.md" })!, hostId, exists: inspection.machineProfileExists },
+        { id: "playbook", name: "House rules", path: joinHostPath({ rootPath: inspection.homePath, relativePath: ".bb-squadron/playbook.md" })!, hostId, exists: inspection.playbookExists },
+        { id: "machine-profile", name: "This machine", path: joinHostPath({ rootPath: inspection.homePath, relativePath: ".bb-squadron/machine.md" })!, hostId, exists: inspection.machineProfileExists },
       );
     }
     const report = doctor({

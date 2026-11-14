@@ -551,12 +551,12 @@ function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: Pl
   return (
     <li>
       {issue.priority !== undefined ? <PriorityDot priority={issue.priority} /> : <span />}
-      <span className="sq-open-issue-id sq-num">{issue.id}</span>
-      <span className="sq-open-issue-main">
-        <IssueTitle title={issue.title} url={issue.url} className="sq-open-issue-title" />
-        {issue.under ? <span className="sq-open-issue-under">{issue.under}</span> : null}
+      <span className="sq-open-issues-id sq-num">{issue.id}</span>
+      <span className="sq-open-issues-main">
+        <IssueTitle title={issue.title} url={issue.url} className="sq-open-issues-title" />
+        {issue.under ? <span className="sq-open-issues-under">{issue.under}</span> : null}
       </span>
-      <span className="sq-open-issue-labels">
+      <span className="sq-open-issues-labels">
         {issue.labels.map((l) => (
           <span key={l} className="sq-tag">
             {l}

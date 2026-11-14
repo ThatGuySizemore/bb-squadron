@@ -9,9 +9,9 @@ related_targets: ["board/Board.tsx", "board/board.css", "board/live.css", "board
 
 Scope: the Squadron nav page in BB (`app.tsx`, route `/plugins/squadron/board`). Visitor mode: Operate.
 
-Audience and job: the owner, glancing between other work. First answer: what needs me, then what is flying. Current live actions: connect and bind Linear, open an issue or planning thread, Plan an unplanned issue, retry a blocked write and check Doctor. Start stays disabled with its reason in Spec A. The demo retains simulated Start / Stop / Resume / Merge controls.
+Audience and job: the owner, glancing between other work. First answer: what needs me, then what is flying. Current live actions: connect and bind Linear, open an issue or planning thread, Plan an open issue, retry a blocked write and check Doctor. Start stays disabled with its reason in Spec A. The demo retains simulated Start / Stop / Resume / Merge controls.
 
-Content: the bound project's real open issues from the Linear mirror, grouped as Ready specs with their tickets' open blockers and Unplanned issues with any parent context. Live is the default. The optional demo is synthetic and labelled "Synthetic data". The existing 3-10 tickets per spec, 0-3 flying lanes, 0-6 needs-you items and 0-30 unplanned issues describe the demo, not live data limits.
+Content: the bound project's real open issues from the Linear mirror, grouped as Ready specs with their tickets' open blockers and Open issues with any parent context. Live is the default. The optional demo is synthetic and labelled "Synthetic data". The existing 3-10 tickets per spec, 0-3 flying lanes, 0-6 needs-you items and 0-30 open issues describe the demo, not live data limits.
 
 Live states: disconnected, unbound, catching up, current and failed. Setup and blocked writes join questions, stopped lanes and owner merges in Needs you. Linear status sits below the header; binding uses native selects. Issue-title links and receipts follow DESIGN.md's live-board controls. Doctor stays in the header and expands into a flat region after Needs you. Connection settings use the same tokens, native disclosure and Mono callback URL.
 
@@ -27,7 +27,7 @@ OWN-WORLD: BB's theme ground and ink as the board face. Low-vis grey bands with 
 
 STORY: The owner sees in one glance what waits on him (amber row pinned on top), which lanes are flying and how far along (pegs filled left to right), and can jump to any thread, issue or PR from the peg. He believes the factory is moving because the pegs visibly move.
 
-FIRST VIEWPORT: Top: page title "Squadron" with the formation mark and lane counts, and a Plan button. Then the NEEDS YOU strip: amber-edged rows, each one line with the item, its lane number and one action. Then FLYING: one sortie line per active lane: big stencil tail number left (e.g. SIZE-412), spec title and Lead chip, progress pegs across the middle in dependency order (each peg a small card: ticket id, short title, AI chip, state), PR chip with checks and time right. Below the fold: READY (specs waiting to start), then UNPLANNED with Plan buttons.
+FIRST VIEWPORT: Top: page title "Squadron" with the formation mark and lane counts, and a Plan button. Then the NEEDS YOU strip: amber-edged rows, each one line with the item, its lane number and one action. Then FLYING: one sortie line per active lane: big stencil tail number left (e.g. SIZE-412), spec title and Lead chip, progress pegs across the middle in dependency order (each peg a small card: ticket id, short title, AI chip, state), PR chip with checks and time right. Below the fold: READY (specs waiting to start), then OPEN ISSUES with Plan buttons.
 
 FORM: Ready-Room Sortie Board, my top-ranked grounded candidate (position 1), taken as Impeccable's pick. seed:11445e314baa87a5
 Signature move: the working peg's border marches in dithered pixels and its fill shimmers through the dither ramp; a merge rolls a pixel burst along the sortie line and the tail number stamps green.

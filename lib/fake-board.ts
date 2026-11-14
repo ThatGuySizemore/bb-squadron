@@ -54,7 +54,7 @@ export function initialBoard(): Board {
       ticket("SQD-16", "Needs-you strip with actions", OPUS, ["SQD-14", "SQD-15"]),
       ticket("SQD-17", "Pixel burst when a spec lands", OPUS, ["SQD-16"]),
       ticket("SQD-18", "PR chip reads checks from BB", SOL, ["SQD-16"]),
-      ticket("SQD-19", "Ready and Unplanned sections", OPUS, ["SQD-17", "SQD-18"]),
+      ticket("SQD-19", "Ready and Open issues sections", OPUS, ["SQD-17", "SQD-18"]),
       ticket("SQD-20", "Board refetches on board-changed", SOL, ["SQD-19"]),
     ],
   };

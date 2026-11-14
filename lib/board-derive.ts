@@ -84,8 +84,12 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
-  /** Waiting, Working, In branch or Done, read from Linear through the status mapping. */
+  /** Local statuses are fixed; Linear uses its configured status mapping. */
   function ticketState(issue: TrackerIssue): Ticket["state"] {
+    if (snapshot.kind === "local-markdown") {
+      if (issue.state.type === "completed") return "done";
+      return ["in-progress", "claimed"].includes(issue.state.name.toLowerCase()) ? "working" : "blocked";
+    }
     const mapping = settings?.statusMapping.ticket;
     if (issue.state.type === "completed" || issue.state.name === mapping?.done) return "done";
     if (issue.state.name === mapping?.inBranch) return "branch";

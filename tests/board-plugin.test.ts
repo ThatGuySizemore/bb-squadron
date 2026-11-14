@@ -202,6 +202,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
+  assert.match(html, /<h2[^>]*>Open issues<\/h2>/, "the section uses the glossary's Open issue term");
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
     "Doctor checks", "Linear webhooks", "Nothing is flying. Start a Ready spec to launch its lane.", "Start FIX-5"]) {
     assert.ok(html.includes(text), `the board shows ${text}`);

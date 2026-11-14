@@ -986,12 +986,12 @@ button.sq-peg:hover {
   border-bottom: 1px solid var(--sq-rule);
   font-size: 13px;
 }
-.sq-open-issue-id {
+.sq-open-issues-id {
   font-family: var(--sq-mono);
   font-size: 12px;
   color: var(--sq-muted);
 }
-.sq-open-issue-labels {
+.sq-open-issues-labels {
   display: flex;
   gap: 6px;
 }

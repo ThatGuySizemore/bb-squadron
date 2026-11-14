@@ -1,6 +1,12 @@
 # Squadron settings for this repo
 
-BB Squadron reads this file before it starts a lane here. The Doctor refuses to start when a section is missing.
+BB Squadron reads this file before it starts a lane here. Doctor requires Quick check, Stop list, Time limits, Routes and Final review. Status mapping is required only for Linear. Reading the board needs neither this file nor a Doctor pass once the tracker is detected.
+
+The optional Tracker section overrides detection from `docs/agents/issue-tracker.md`. Its entire value must be `Linear`, `GitHub` or `Local markdown`. Omit it to use detection. This repo uses Linear. See [settings](../settings.md) for examples and tracker-specific requirements.
+
+## Tracker
+
+Linear
 
 ## Quick check
 
@@ -37,6 +43,8 @@ The first matching label wins. The default row is used when no label matches.
 other
 
 ## Status mapping
+
+Required only for Linear. GitHub and Local markdown use their own issue states and need no mapping table. Linear can use `Default.` for the standard statuses, or a table naming all eight states below. This workspace uses Waiting to Merge for In review and In branch.
 
 | State | Linear status |
 |---|---|

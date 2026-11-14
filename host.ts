@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { lstat, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -7,17 +6,8 @@ import { doctorHostContract } from "./lib/doctor-contract.js";
 import { setupFiles } from "./lib/doctor.js";
 import { localMarkdownHostContract } from "./lib/local-markdown-contract.js";
 import { readLocalMarkdown } from "./lib/local-markdown-host.js";
-
-/** Discard command output. Neither tokens nor gh diagnostics cross the host boundary. */
-async function githubLogin(signal: AbortSignal): Promise<boolean> {
-  return new Promise((resolve) => {
-    const child = spawn("gh", ["auth", "status"], {
-      shell: false, stdio: "ignore", signal, timeout: 10_000,
-    });
-    child.once("error", () => resolve(false));
-    child.once("close", (code) => resolve(code === 0));
-  });
-}
+import { githubHostContract } from "./lib/github-contract.js";
+import { githubLogin, readGithub, runGithubCommand, type GithubCommand } from "./lib/github-host.js";
 
 async function exists(path: string): Promise<boolean> {
   try { return (await stat(path)).isFile(); } catch { return false; }
@@ -37,9 +27,9 @@ async function regularSkillFile(path: string): Promise<boolean> {
   } catch { return false; }
 }
 
-export function createDoctorHost(checkLogin: (signal: AbortSignal) => Promise<boolean> = githubLogin, home: () => string = homedir) {
+export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<boolean | { authenticated: boolean; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand) {
   return experimental_defineHostEntry({
-    contract: { ...doctorHostContract, ...localMarkdownHostContract },
+    contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract },
     handlers: {
       readLocalMarkdown: (input) => readLocalMarkdown(input),
       inspectFiles: async ({ checkoutPath, skillPaths }) => {
@@ -52,8 +42,12 @@ export function createDoctorHost(checkLogin: (signal: AbortSignal) => Promise<bo
         ]);
         return { homePath, repoRulesExists, playbookExists, machineProfileExists, setupFiles: setup.flat(), regularSkillFiles: skills.flat() };
       },
-      githubLogin: async (_input, { signal }) => {
-        try { return { authenticated: await checkLogin(signal) }; }
+      githubRead: (input, { signal }) => readGithub(input, signal, commands),
+      githubLogin: async ({ checkoutPath }, { signal }) => {
+        try {
+          const result = await (checkLogin ? checkLogin(signal, checkoutPath) : githubLogin(signal, checkoutPath, commands));
+          return typeof result === "boolean" ? { authenticated: result } : result;
+        }
         catch { return { authenticated: false }; }
       },
     },

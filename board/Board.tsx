@@ -9,7 +9,7 @@ import { boardChanged, linearOutboxChanged, linearConnectionChanged } from "../l
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
 import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
-import type { laneContract } from "../lib/lane-contract.js";
+import type { LaneStarted, laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
@@ -271,9 +271,9 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
       <div className="sq-tail">
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
         <h3 className="sq-line-title">{lane.title}</h3>
-        <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, `the Lead thread for ${lane.specId}`)}>
+        {lane.leadThreadId ? <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId!, `the Lead thread for ${lane.specId}`)}>
           <AiChip route={lane.lead} prefix="Lead" />
-        </button>
+        </button> : <span className="sq-branch">Lead not confirmed</span>}
         <div className="sq-tail-status">
           <span className="sq-lane-state" data-lane={lane.state}>
             {LANE_LABEL[lane.state]}
@@ -763,7 +763,7 @@ export async function planFromBoard(deps: {
 
 /** Start a lane, open its Lead and refresh the board after success or refusal. */
 export async function startLaneFromBoard(deps: {
-  start: (input: { projectId: string; specId: string }) => Promise<{ laneId: string; threadId: string; branch: string }>;
+  start: (input: { projectId: string; specId: string }) => Promise<LaneStarted>;
   openThread: (threadId: string) => void;
   refresh: () => Promise<void>;
   notify: (text: string) => void;
@@ -771,6 +771,7 @@ export async function startLaneFromBoard(deps: {
   try {
     const started = await deps.start({ projectId, specId });
     deps.openThread(started.threadId);
+    if (started.message) deps.notify(started.message);
   } catch (error) {
     deps.notify(error instanceof Error && error.message ? error.message : "Couldn't start the lane. Refresh the board and try again.");
   }

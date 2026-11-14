@@ -4,13 +4,15 @@ import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { DoctorReport } from "./doctor.js";
 import { helperCore } from "./helper-core.js";
-import { laneContract, laneRunSchema, type LaneRun } from "./lane-contract.js";
+import { laneContract, laneRunSchema, type LaneRun, type LaneStarted } from "./lane-contract.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { registerLinearOutbox } from "./linear-outbox.js";
 import { modelDisplayName } from "./linear-outbox.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import { linearAvatarUrlSchema } from "./linear-avatar.js";
+import { signedCommentAvatarUrl } from "./linear-avatar.js";
+import { LinearRequestError } from "./linear-auth.js";
+import { ACCEPT_OWNER } from "./linear-issues.js";
 
 export interface LaneSources {
   connection(): Promise<LinearConnectionState>;
@@ -42,17 +44,110 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
   const onChange = (listener: (projectId: string) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
   // Serialize each project's starts across different specs; share duplicate clicks.
   const queues = new Map<string, Promise<unknown>>();
-  const starting = new Map<string, Promise<{ laneId: string; threadId: string; branch: string }>>();
+  const starting = new Map<string, Promise<LaneStarted>>();
 
   function avatarUrl(): string | undefined {
-    try {
-      const origin = bb.server.experimental_appUrl;
-      const value = origin ? new URL(`/api/v1/plugins/${bb.pluginId}/http/avatars/planning-thread.svg`, new URL(origin).origin).href : undefined;
-      return linearAvatarUrlSchema.safeParse(value).success ? value : undefined;
-    } catch { return undefined; }
+    return signedCommentAvatarUrl(bb.server.experimental_appUrl, bb.pluginId, "Lead") ?? undefined;
   }
 
-  async function start(projectId: string, specId: string) {
+  function diagnostic(error: unknown): string {
+    if (error instanceof LinearRequestError) return `LinearRequestError:${error.code}`;
+    if (error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name)) return error.name;
+    if (error instanceof TypeError) return "TypeError";
+    if (error instanceof Error && error.message === "The Linear workspace changed before the write was queued.") return "workspace_changed";
+    return error instanceof Error ? "Error" : "unknown failure";
+  }
+  function warn(run: LaneRun, phase: string, error: unknown) {
+    // Provider diagnostics may contain credentials or private prompts. Log only
+    // the operation, safe error class/code and durable lane link.
+    bb.log.warn(`Lane ${run.id} ${phase}: ${diagnostic(error)}`);
+  }
+
+  const advancing = new Map<string, Promise<LaneRun>>();
+  function get(id: string): LaneRun {
+    const row = db.prepare(`SELECT run_json FROM squadron_lanes WHERE id=?`).get(id) as { run_json: string } | undefined;
+    if (!row) throw new Error("This lane no longer exists.");
+    return laneRunSchema.parse(JSON.parse(row.run_json));
+  }
+
+  async function queueStartWrites(run: LaneRun): Promise<LaneRun> {
+    let phase = "queue-status";
+    try {
+      if (!run.startStateId) throw new Error("The lane's In Progress state is unavailable.");
+      // Reusing a key reconciles a call that queued successfully before its
+      // response was lost. Receipt IDs never assert successful delivery.
+      const status = await sources.outbox.enqueue({ bbProjectId: run.bbProjectId, expectedWorkspaceId: run.workspaceId, dedupeKey: `lane:${run.id}:started`,
+        operation: { type: "status", issueId: run.specIssueId, stateId: run.startStateId } });
+      run.startWrites = { ...run.startWrites, status: status.id };
+      save(run);
+      phase = "queue-comment";
+      const avatar = avatarUrl();
+      const comment = await sources.outbox.enqueue({ bbProjectId: run.bbProjectId, expectedWorkspaceId: run.workspaceId, dedupeKey: `lane:${run.id}:started-comment`,
+        operation: { type: "comment", issueId: run.specIssueId,
+          body: `Started lane for ${run.specId}. Lead thread: ${run.leadThreadId}. Integration branch: ${run.branch}.`,
+          author: { role: "Lead", model: modelDisplayName(run.route.model), ...(avatar ? { avatarUrl: avatar } : {}) } } });
+      run.startWrites.comment = comment.id;
+      delete run.writeError;
+      save(run);
+    } catch (error) {
+      if (lifetime.signal.aborted) return run;
+      warn(run, phase, error);
+      run.writeError = `The Helper couldn't queue the ${phase === "queue-status" ? "spec status" : "signed Lead comment"}. The Lead remains active. Check the Linear connection and lane write receipts before retrying.`;
+      save(run);
+    }
+    return run;
+  }
+
+  async function advance(run: LaneRun): Promise<LaneRun> {
+    if (run.state === "flying" && run.writeError) return queueStartWrites(run);
+    if (run.state !== "starting" || !run.leadThreadId) return run;
+    let phase = "provisioning";
+    try {
+      const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(60_000)]);
+      if (!run.environmentId) {
+        const thread = await bb.sdk.threads.get({ threadId: run.leadThreadId, signal });
+        run.environmentId = thread.environmentId;
+        save(run);
+      }
+      if (!run.environmentId) return run;
+      const environment = await bb.sdk.environments.get({ environmentId: run.environmentId, signal });
+      if (environment.status === "creating" || environment.status === "provisioning") return run;
+      phase = `environment-${environment.status}`;
+      if (environment.status !== "ready" || environment.projectId !== run.bbProjectId ||
+        (run.hostId && environment.hostId !== run.hostId) || !environment.branchName) {
+        throw new Error("The Lead's managed integration branch isn't ready.");
+      }
+      run.branch = environment.branchName;
+      run.state = "flying";
+      save(run);
+      return queueStartWrites(run);
+    } catch (error) {
+      if (lifetime.signal.aborted) return run;
+      warn(run, phase, error);
+      if (phase === "provisioning") {
+        // A timeout or failed read says nothing about the Lead's health. A later
+        // pass can observe the same environment; never launch a replacement.
+        return run;
+      }
+      try { await bb.sdk.threads.stop({ threadId: run.leadThreadId }); }
+      catch (stopError) { warn(run, "stop-after-environment-failure", stopError); }
+      run.state = "stopped";
+      run.stopReason = "Lane start didn't finish. Inspect the Lead and Linear writes before resuming.";
+      save(run);
+      throw new Error(run.stopReason);
+    }
+  }
+
+  /** Continue a known Lead's start without spawning another one. B8 may reuse it. */
+  function reconcileStart(laneId: string): Promise<LaneRun> {
+    const existing = advancing.get(laneId);
+    if (existing) return existing;
+    const running = advance(get(laneId)).finally(() => { advancing.delete(laneId); });
+    advancing.set(laneId, running);
+    return running;
+  }
+
+  async function start(projectId: string, specId: string): Promise<LaneStarted> {
     const signal = lifetime.signal;
     const report = await sources.doctor.check(projectId, undefined, signal);
     if (!report.ready) throw new Error(`Open Doctor before starting: ${report.checks.filter((check) => check.status === "fix").map((check) => check.message).join(" ")}`);
@@ -74,7 +169,8 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     signal.throwIfAborted();
     const run: LaneRun = { id: randomUUID(), bbProjectId: projectId, workspaceId: connection.workspace.id,
       specIssueId: spec.id, specId, title: spec.title, route: command.route, state: "starting", startedAt: now(),
-      leadThreadId: null, environmentId: null, branch: null, acceptOwner: spec.labels.some((label) => label.name === "accept:owner") };
+      hostId: checkout.hostId, startStateId: progress.id,
+      leadThreadId: null, environmentId: null, branch: null, acceptOwner: spec.labels.some((label) => label.name === ACCEPT_OWNER) };
     save(run); // Reserve capacity before the first external effect.
     try {
       const thread = await bb.sdk.threads.spawn({
@@ -94,38 +190,18 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
       run.leadThreadId = thread.id;
       run.environmentId = thread.environmentId;
       save(run); // Preserve the spawn link even if provisioning or queuing fails.
-      if (!thread.environmentId) throw new Error("The Lead has no managed environment.");
-      const provisioning = AbortSignal.any([signal, AbortSignal.timeout(60_000)]);
-      let environment = await bb.sdk.environments.get({ environmentId: thread.environmentId, signal: provisioning });
-      while (environment.status === "creating" || environment.status === "provisioning") {
-        await delay(250, undefined, { signal: provisioning });
-        environment = await bb.sdk.environments.get({ environmentId: thread.environmentId, signal: provisioning });
-      }
-      if (environment.status !== "ready" || environment.projectId !== projectId || environment.hostId !== checkout.hostId || !environment.branchName) {
-        throw new Error("The Lead's managed integration branch isn't ready. Open its thread before retrying.");
-      }
-      run.branch = environment.branchName;
-      run.state = "flying";
-      save(run);
-      // Stable per-lane keys make a future reconciliation pass safe to repeat.
-      await sources.outbox.enqueue({ bbProjectId: projectId, expectedWorkspaceId: run.workspaceId, dedupeKey: `lane:${run.id}:started`,
-        operation: { type: "status", issueId: spec.id, stateId: progress.id } });
-      await sources.outbox.enqueue({ bbProjectId: projectId, expectedWorkspaceId: run.workspaceId, dedupeKey: `lane:${run.id}:started-comment`,
-        operation: { type: "comment", issueId: spec.id,
-          body: `Started lane for ${specId}. Lead thread: ${thread.id}. Integration branch: ${run.branch}.`,
-          author: { role: "Lead", model: modelDisplayName(command.route.model), ...(avatar ? { avatarUrl: avatar } : {}) } } });
-      return { laneId: run.id, threadId: thread.id, branch: run.branch };
-    } catch {
-      // An ambiguous spawn is never retried automatically. Keep the reservation.
-      if (run.leadThreadId) {
-        try { await bb.sdk.threads.stop({ threadId: run.leadThreadId }); }
-        catch { bb.log.warn("The Lead couldn't be stopped after its lane failed to start."); }
-      }
+    } catch (error) {
+      if (lifetime.signal.aborted) throw error;
+      warn(run, "spawn", error);
       run.state = "stopped";
-      run.stopReason = "Lane start didn't finish. Inspect the Lead and Linear writes before resuming.";
+      run.stopReason = "The Lead spawn result is unknown. Check BB threads before resuming; this lane's slot stays reserved.";
       save(run);
       throw new Error(run.stopReason);
     }
+    const current = await reconcileStart(run.id);
+    return { laneId: current.id, threadId: current.leadThreadId!, branch: current.branch,
+      ...(current.writeError ? { message: current.writeError }
+        : current.state === "starting" ? { message: "The Lead is still preparing its integration branch. Its lane slot stays reserved." } : {}) };
   }
 
   function startOnce(projectId: string, specId: string) {
@@ -146,6 +222,18 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     if (context.experimental_caller.kind !== "client") throw new Error("Start lanes from the Squadron board.");
     return startOnce(projectId, specId);
   } });
-  return { start: startOnce, list, save, onChange };
+  bb.background.service("lane-starts", { start: async (signal) => {
+    const stop = AbortSignal.any([signal, lifetime.signal]);
+    while (!stop.aborted) {
+      const rows = db.prepare(`SELECT run_json FROM squadron_lanes`).all() as { run_json: string }[];
+      for (const row of rows) {
+        if (stop.aborted) return;
+        const run = laneRunSchema.parse(JSON.parse(row.run_json));
+        if (run.state === "starting" && run.leadThreadId) await reconcileStart(run.id).catch(() => undefined);
+      }
+      try { await delay(15_000, undefined, { signal: stop }); } catch { return; }
+    }
+  } });
+  return { start: startOnce, list, save, onChange, reconcileStart };
 }
 export type LaneService = ReturnType<typeof registerLanes>;

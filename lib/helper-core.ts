@@ -77,17 +77,14 @@ export function helperCore(input: HelperInput): HelperOutput {
       id: blocker.identifier, title: blocker.title, url: blocker.url,
       outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id,
     }));
-  const ready: ReadySpec[] = specs.filter((spec) => !runs.some((run) => run.specIssueId === spec.id && run.leadThreadId)).map((spec) => {
+  const ready: ReadySpec[] = specs.filter((spec) => !runs.some((run) => run.specIssueId === spec.id)).map((spec) => {
     const tickets = open.filter((issue) => issue.parentId === spec.id);
     const specBlockers = openBlockers(spec);
     const ticketBlockers = tickets.map(openBlockers);
     const blockers = [...new Map([...specBlockers, ...ticketBlockers.flat()].map((blocker) => [blocker.id, blocker])).values()]
       .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
     let startReason: string | null;
-    if (active.some((run) => run.specIssueId === spec.id)) {
-      startReason = active.find((run) => run.specIssueId === spec.id)?.stopReason
-        ?? "This lane is already starting. Open its Lead when it appears under Flying.";
-    } else if (specBlockers.length) {
+    if (specBlockers.length) {
       startReason = `Waits on ${list(specBlockers.map((blocker) => blocker.outside ? `${blocker.id} (outside this project)` : blocker.id))}`;
     } else if (!tickets.length) {
       startReason = "Has no open tickets. Plan its tickets first.";
@@ -160,11 +157,11 @@ export function helperCore(input: HelperInput): HelperOutput {
     }
   }
   const lanes: Board["lanes"] = runs.flatMap((run) => {
-    if (!run.leadThreadId) return [];
     return [{ specId: run.specId, title: run.title, lead: run.route, leadThreadId: run.leadThreadId,
       branch: run.branch ?? "Preparing integration branch", state: run.state === "starting" ? "flying" : run.state,
       minutes: Math.max(0, Math.floor((input.now - run.startedAt) / 60_000)), acceptOwner: run.acceptOwner,
       ...(run.stopReason ? { stopReason: run.stopReason } : {}),
+      ...(run.writeError ? { writeError: run.writeError } : {}),
       tickets: snapshot.issues.filter((issue) => issue.parentId === run.specIssueId && issue.inProject).sort(byIdentifier).map((issue) => ({
         id: issue.identifier, title: issue.title, blockedBy: openBlockers(issue).map((blocker) => blocker.id),
         route: settings ? resolveRoute(settings, labels(issue)) : run.route,

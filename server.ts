@@ -7,8 +7,10 @@ import { registerDoctor } from "./lib/doctor-service.js";
 import { registerBoard } from "./lib/board-service.js";
 import { registerPlanning } from "./lib/planning.js";
 import { registerLanes } from "./lib/lane-service.js";
+import { registerSignedCommentAvatars } from "./lib/linear-avatar.js";
 
 export default async function plugin(bb: BbPluginApi) {
+  registerSignedCommentAvatars(bb);
   const linear = registerLinearAuth(bb);
   const outbox = registerLinearOutbox(bb, linear);
   const mirror = registerLinearMirror(bb, linear);

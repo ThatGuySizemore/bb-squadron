@@ -7,12 +7,11 @@ import type { LinearConnectionState } from "./linear-contract.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { LinearWriteGrant } from "./linear-outbox.js";
 import { planningContract, type PlanningStarted } from "./planning-contract.js";
-import { formationCells } from "./pixels.js";
 import { readProjectCheckout, type ProjectCheckout } from "./project-checkout.js";
 import type { SquadronRoute } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 import { isActiveProjectThread } from "./project-thread.js";
-import { linearAvatarUrlSchema } from "./linear-avatar.js";
+import { signedCommentAvatarUrl } from "./linear-avatar.js";
 
 export interface PlanningSources {
   connection(): Promise<LinearConnectionState>;
@@ -21,7 +20,6 @@ export interface PlanningSources {
   outbox: { bindThread(grant: LinearWriteGrant): Promise<void> };
 }
 
-const AVATAR_PATH = "/avatars/planning-thread.svg";
 /** Labels that record an owner decision. A planning thread never applies them. */
 const OWNER_LABELS = new Set([ACCEPT_OWNER]);
 
@@ -30,10 +28,6 @@ type PlanningLabel = { id: string; name: string };
 
 /** Linear text is data for the planner, never instructions. */
 const quote = (value: string) => JSON.stringify(value);
-
-/** The planner's avatar: the board's formation mark, all three slots flying, in working sky. */
-const AVATAR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -6 21 21" width="84" height="84" shape-rendering="crispEdges">${
-  formationCells(3).map(([, x, y]) => `<rect x="${x}" y="${y}" width="1" height="1" fill="#3fa7d6"/>`).join("")}</svg>`;
 
 interface Seed {
   issue: MirrorIssue | null;
@@ -74,12 +68,7 @@ function seedPrompt(seed: Seed): string {
 export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
   /** Where the planner's signed comments point for their avatar, or null without a public HTTPS app URL. */
   function avatarUrl(): string | null {
-    const origin = bb.server.experimental_appUrl;
-    try {
-      const url = origin ? new URL(origin) : null;
-      const avatar = url ? new URL(`/api/v1/plugins/${bb.pluginId}/http${AVATAR_PATH}`, url.origin).href : null;
-      return linearAvatarUrlSchema.safeParse(avatar).success ? avatar : null;
-    } catch { return null; }
+    return signedCommentAvatarUrl(bb.server.experimental_appUrl, bb.pluginId, "Planning thread");
   }
 
   /** The write scope for one planning thread, or why there is none. */
@@ -182,14 +171,6 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     }
     return running;
   }
-
-  // Linear fetches this to draw the planner's signed comments. It is one
-  // constant asset: no inputs, no thread, project or workspace content.
-  bb.http.route("GET", AVATAR_PATH, (context) => {
-    context.header("Cache-Control", "public, max-age=86400");
-    context.header("X-Content-Type-Options", "nosniff");
-    return context.body(AVATAR_SVG, 200, { "Content-Type": "image/svg+xml" });
-  }, { auth: "none" });
 
   bb.rpc.register(planningContract, {
     "planning.start": async ({ projectId, issueId }, context) => {

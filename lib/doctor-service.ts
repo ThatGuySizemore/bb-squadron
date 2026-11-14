@@ -22,8 +22,8 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     if (!checkout) {
       const linear = await getLinearState().catch(() => ({ status: "failed" }));
       const report = doctor({ skills: [], settingsMarkdown: null, linearConnected: linear.status === "connected", ghAuthenticated: false });
-      for (const check of report.checks) {
-        if (check.id !== "linear") check.message = "Choose a ready checkout for this project, then check again.";
+      for (const item of report.checks) {
+        if (item.id !== "linear") item.message = "Choose a ready checkout for this project, then check again.";
       }
       return report;
     }

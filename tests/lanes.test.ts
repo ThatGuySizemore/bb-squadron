@@ -25,6 +25,16 @@ test("an open cross-spec blocker holds Start and a completed blocker releases it
   assert.deepEqual(start(true).start, { allowed: true });
 });
 
+test("Start is blocked by an open spec and released when that spec is done", () => {
+  const start = (done: boolean) => helperCore({ ...input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }),
+    issue("FIX-10", { labels: ["ready-for-agent"], done }), issue("FIX-11", { parent: "FIX-10" }),
+  ], [blocks("FIX-10", "FIX-1")])), action: { type: "start", specId: "FIX-1" } });
+  assert.deepEqual(start(false).start, { allowed: false, reason: "Waits on FIX-10" });
+  assert.deepEqual(start(false).commands, []);
+  assert.deepEqual(start(true).start, { allowed: true });
+});
+
 test("starting, flying and stopped lanes hold capacity; landed lanes free a slot", () => {
   const lanes: LaneRun[] = ["starting", "flying", "stopped"].map((state, i) => ({
     id: `lane-${i}`, bbProjectId: "proj-one", workspaceId: "workspace-one", specIssueId: `other-${i}`,

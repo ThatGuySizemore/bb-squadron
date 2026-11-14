@@ -2,18 +2,20 @@
 import { z } from "zod";
 import { outboxHealthSchema } from "./linear-outbox-contract.js";
 
-const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
+export const routeSchema = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
+const route = routeSchema;
 const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "ready", "working", "question", "review", "branch", "failed", "done"]),
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({
-  specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
+  specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string().nullable(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
   pr: z.object({ number: z.number(), checks: z.enum(["pending", "passing", "failing"]), url: z.string() }).optional(),
   stopReason: z.string().optional(), landedAt: z.number().optional(),
+  writeError: z.string().optional(),
 });
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
 const boardSchema = z.object({
@@ -90,6 +92,8 @@ export function needsYou(board: Board): NeedsYouItem[] {
         : "More Linear writes couldn't go through. Retry the ones above first." });
   }
   for (const lane of board.lanes) {
+    if (lane.writeError) items.push({ key: `lane-write:${lane.specId}`, kind: "write", specId: lane.specId,
+      threadId: lane.leadThreadId, text: lane.writeError });
     if (lane.state === "merge-waits") {
       items.push({
         key: `merge:${lane.specId}`,

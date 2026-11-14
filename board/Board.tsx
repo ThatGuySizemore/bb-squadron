@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useReducer, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
@@ -122,12 +122,26 @@ const LANE_LABEL: Record<LaneState, string> = {
 
 // ---------- navigation ----------
 
+/** Where the board is shown: BB's full page, or a thread's side panel. */
+export type Placement = "page" | "panel";
+const PlacementContext = createContext<Placement>("page");
+
+/** Beside the board on the full page; from a thread's side panel, in the main view the panel sits beside. */
+export function openThread(navigate: { toThread(threadId: string, options?: { split?: boolean }): void }, placement: Placement, threadId: string) {
+  if (placement === "panel") navigate.toThread(threadId);
+  else navigate.toThread(threadId, { split: true });
+}
+
 function useOpen() {
   const navigate = useBbNavigate();
+  const placement = useContext(PlacementContext);
+  const where = placement === "panel" ? "in the main view" : "beside the board";
   return {
+    /** Where a thread link opens, in words for titles and toasts. */
+    where,
     thread(threadId: string, label: string) {
-      if (threadId.startsWith("thr_demo_")) toast(`Prototype: opens ${label} beside the board.`);
-      else navigate.toThread(threadId, { split: true });
+      if (threadId.startsWith("thr_demo_")) toast(`Prototype: opens ${label} ${where}.`);
+      else openThread(navigate, placement, threadId);
     },
     external(url: string, label: string) {
       if (url.includes("example")) toast(`Prototype: opens ${label}.`);
@@ -273,10 +287,40 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
   // The airstream's pace: the lane's working threads. A lane with none working is still.
   const working = lane.tickets.filter((t) => t.state === "working").length;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
+  // At side-panel width the line shows only the pegs being worked, with every ticket behind a disclosure.
+  const narrow = useContext(PlacementContext) === "panel";
+  const air = landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />;
+  const progress = (
+    <div className="sq-progress" role="img" aria-label={`${done} of ${lane.tickets.length} tickets in the branch`}>
+      {lane.tickets.map((t) => (
+        <span key={t.id} data-state={t.state} title={`${t.id}: ${TICKET_LABEL[t.state]}`} />
+      ))}
+      <span className="sq-progress-count sq-num">
+        {done}/{lane.tickets.length} in branch
+      </span>
+      {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working</span> : null}
+    </div>
+  );
+  const others = lane.unmatchedThreads?.length ? (
+    <div className="sq-threads">
+      <span className="sq-threads-label">Other threads</span>
+      <ul>
+        {lane.unmatchedThreads.map((t) => (
+          <li key={t.threadId}>
+            <button type="button" className="sq-issue-link" title={`Open the thread ${open.where}`} onClick={() => open.thread(t.threadId, t.title || "the thread")}>
+              {t.title || "Untitled thread"}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  ) : null;
+  // The pegs a side panel keeps: tickets an agent is on, or that wait on the owner.
+  const active = lane.tickets.filter((t) => t.state === "working" || t.state === "review" || t.state === "question" || t.state === "failed");
   return (
     <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
       <div className="sq-tail">
-        <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
+        <PixelText text={lane.specId} cell={narrow ? 3 : 4} className="sq-tail-number" />
         <h3 className="sq-line-title">
           {lane.url ? (
             <button type="button" className="sq-issue-link" title="Open the spec" onClick={() => open.external(lane.url!, `the spec ${lane.specId}`)}>
@@ -328,20 +372,25 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           </div>
         ) : null}
       </div>
-      <div className="sq-track">
-        <div className="sq-progress" role="img" aria-label={`${done} of ${lane.tickets.length} tickets in the branch`}>
-          {lane.tickets.map((t) => (
-            <span key={t.id} data-state={t.state} title={`${t.id}: ${TICKET_LABEL[t.state]}`} />
-          ))}
-          <span className="sq-progress-count sq-num">
-            {done}/{lane.tickets.length} in branch
-          </span>
-          {working > 0 ? <span className="sq-pace sq-num"><i aria-hidden="true" />{working} working</span> : null}
+      {narrow ? (
+        <div className="sq-track">
+          {progress}
+          <div className="sq-air-band" aria-hidden="true">{air}</div>
+          {active.length ? <div className="sq-active">{active.map((t) => <Peg key={t.id} ticket={t} lane={lane} />)}</div> : null}
+          <details className="sq-all"><summary>{lane.tickets.length === 1 ? "1 ticket" : `All ${lane.tickets.length} tickets`}</summary><ol>
+            {lane.tickets.map((t) => (
+              <li key={t.id} data-state={t.state}><span className="sq-id">{t.id}</span><span>{t.title}</span><span data-st={t.state}>{TICKET_LABEL[t.state]}</span></li>
+            ))}
+          </ol></details>
+          {others}
         </div>
+      ) : (
+      <div className="sq-track">
+        {progress}
         {/* The rail scrolls; the columns inside it are as wide as the pegs, so the airstream runs under all of them. */}
         <div className="sq-rail" data-overflow={overflow} ref={railRef}>
           <div className="sq-columns">
-            {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
+            {air}
             {columns.map((col, i) => (
               <div key={i} className="sq-column">
                 {i > 0 ? <Chevron className="sq-chevron" /> : null}
@@ -354,21 +403,9 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
             ))}
           </div>
         </div>
-        {lane.unmatchedThreads?.length ? (
-          <div className="sq-threads">
-            <span className="sq-threads-label">Other threads</span>
-            <ul>
-              {lane.unmatchedThreads.map((t) => (
-                <li key={t.threadId}>
-                  <button type="button" className="sq-issue-link" title="Open the thread beside the board" onClick={() => open.thread(t.threadId, t.title || "the thread")}>
-                    {t.title || "Untitled thread"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
+        {others}
       </div>
+      )}
     </article>
   );
 }
@@ -789,10 +826,12 @@ interface BoardViewProps {
   /** Lanes flying across every project, for the formation mark; null while unknown. */
   fleet?: number | null;
   footer?: ReactNode;
+  /** The full page, or a thread's side panel: the comp's narrow layout, with thread links opening in the main view. */
+  placement?: Placement;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, fleet = null, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -826,7 +865,8 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
   };
 
   return (
-    <div className="sq" data-reduced={reduced}>
+    <PlacementContext.Provider value={placement}>
+    <div className="sq" data-reduced={reduced} data-layout={placement === "panel" ? "narrow" : "wide"}>
       <div className="sq-page">
         <header className="sq-head">
           <div className="sq-brand">
@@ -951,6 +991,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
         {footer}
       </div>
     </div>
+    </PlacementContext.Provider>
   );
 }
 
@@ -1077,9 +1118,9 @@ export async function mergeFromBoard(deps: {
 /** How often the page reads the project it shows. The server polls only shown projects. */
 const POLL_MS = 30_000;
 
-/** The real board for the project the owner picked, read from the reader. */
-function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
-  const context = useBbContext().projectId;
+/** The real board for the project the owner picked, read from the reader. `context` is the project the
+ * surface opens on: BB's sidebar selection on the full page, the thread's project in its side panel. */
+export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwitch: ReactNode; context: string | null; placement?: Placement }) {
   const rpc = useRpc<typeof boardContract & typeof planningContract & typeof setupContract & typeof laneContract>();
   const open = useOpen();
   const [listed, setListed] = useState<PickerProjects | null>(null);
@@ -1225,6 +1266,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       diagnostic={diagnostic}
       board={board ?? EMPTY_BOARD}
       demo={false}
+      placement={placement}
       modeSwitch={modeSwitch}
       dispatch={(action) => {
         if (action.type === "start") void start(action.specId);
@@ -1246,7 +1288,8 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
 }
 
 export function BoardPage() {
+  const context = useBbContext().projectId;
   const [demo, setDemo] = useState(false);
   const modeSwitch = <DemoSwitch on={demo} onChange={setDemo} />;
-  return demo ? <DemoBoard modeSwitch={modeSwitch} /> : <LiveBoard modeSwitch={modeSwitch} />;
+  return demo ? <DemoBoard modeSwitch={modeSwitch} /> : <LiveBoard modeSwitch={modeSwitch} context={context} />;
 }

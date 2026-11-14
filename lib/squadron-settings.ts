@@ -21,6 +21,33 @@ export interface SquadronSettings {
   };
   /** Which Linear issues the board reads. null for GitHub and Local markdown. */
   scope: LinearScope | null;
+  /** Lowercase labels that hold a ticket: the defaults, then the repo's additions. A trailing `*` matches a prefix. */
+  holdLabels: string[];
+}
+
+/** Matt's triage roles that mean "not for an agent", plus hold. A repo's Hold labels section adds to these. */
+export const DEFAULT_HOLD_LABELS: readonly string[] = ["hold", "needs-triage", "needs-info", "ready-for-human", "wontfix"];
+const HOLD_LABELS_MALFORMED = "List one hold label per bullet under Hold labels, such as - hold or - wayfinder:*. A * may only end a label.";
+
+/** Whether a label holds a ticket, ignoring case. */
+export function isHoldLabel(holdLabels: readonly string[], name: string): boolean {
+  const label = name.trim().toLowerCase();
+  return holdLabels.some((hold) => hold.endsWith("*") ? label.startsWith(hold.slice(0, -1)) : label === hold);
+}
+
+/**
+ * The optional Hold labels section: one label per bullet, other lines are prose. Absent or prose-only means the defaults alone.
+ * A bare one-word line looks like a label that would otherwise be dropped, so it is malformed.
+ */
+function parseHoldLabels(body: string | undefined): string[] | null {
+  if (body === undefined) return [...DEFAULT_HOLD_LABELS];
+  const lines = body.split("\n").filter((line) => line.trim());
+  const bullet = (line: string) => /^\s*[-*+]\s/.test(line);
+  if (lines.some((line) => !bullet(line) && !/\s/.test(line.trim()))) return null;
+  const added = lines.filter(bullet)
+    .map((line) => line.replace(/^\s*[-*+]\s+/, "").trim().replace(/^`(.*)`$/, "$1").trim().toLowerCase());
+  if (added.some((label) => !label || label === "*" || label.includes(",") || label.slice(0, -1).includes("*"))) return null;
+  return [...new Set([...DEFAULT_HOLD_LABELS, ...added])];
 }
 
 /** A Linear Scope as written: names, keys, URLs or ids, resolved through Linear at read time. */
@@ -30,7 +57,7 @@ export type ScopeKey = typeof SCOPE_KEYS[number];
 export const SETTINGS_UNREADABLE = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
 export const SCOPE_MISSING = "Add the Scope section to docs/agents/squadron.md, naming at least one of Team, Project, Initiative, Label or View.";
 
-export type SettingsSection = "Quick check" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope";
+export type SettingsSection = "Quick check" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels";
 export interface SettingsIssue { section: SettingsSection; message: string }
 export type SettingsResult =
   | { ok: true; settings: SquadronSettings }
@@ -109,6 +136,7 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
         ticket: { waiting: "Todo", working: "In Progress", inBranch: "In Review", done: "Done" },
       },
       scope: null,
+      holdLabels: [...DEFAULT_HOLD_LABELS],
   };
   if (!quickCheck) issues.push({ section: "Quick check", message: "Put the quick check command in a fenced code block under Quick check." });
   if (!stopList.length) issues.push({ section: "Stop list", message: "List the problems that stop a merge under Stop list." });
@@ -144,6 +172,9 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
     if (scope.ok) settings.scope = scope.scope;
     else issues.push({ section: "Scope", message: scope.message });
   }
+  const holdLabels = parseHoldLabels(parts.get("Hold labels"));
+  if (holdLabels) settings.holdLabels = holdLabels;
+  else issues.push({ section: "Hold labels", message: HOLD_LABELS_MALFORMED });
   return issues.length ? { ok: false, issues } : { ok: true, settings };
 }
 

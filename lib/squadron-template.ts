@@ -48,4 +48,8 @@ other
 ## Status mapping
 
 Default
+
+## Hold labels
+
+Optional. Tickets carrying Squadron's default hold labels (hold, needs-triage, needs-info, ready-for-human, wontfix) are held: the board shows them as Held and the Lead skips them. List more here, one per bullet, regardless of case. A trailing * matches a prefix. With no bullets, only the defaults apply.
 `;

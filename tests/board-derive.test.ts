@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deriveBoard } from "../lib/board-derive.js";
 import { needsYou } from "../lib/board-model.js";
-import { SCOPE_MISSING } from "../lib/squadron-settings.js";
+import { parseSquadronSettings, SCOPE_MISSING } from "../lib/squadron-settings.js";
+import { readFileSync } from "node:fs";
 import { blocks, input, issue, snapshot } from "./fixtures/board-snapshots.js";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
@@ -351,4 +352,69 @@ test("Doctor problems are setup items in Needs you, and warnings aren't", () => 
     { kind: "setup", text: "Install Matt's plugin in Codex." },
   ]);
   assert.deepEqual(needsYou(deriveBoard(input(snap, { doctor: { ...doctor, ready: true, checks: doctor.checks.slice(1) } })).board), []);
+});
+
+const flyingLead = { specId: "fix-1", route: { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const }, branch: "spec/fix-1",
+  thread: makeThreadResponse({ id: "thr_lead", projectId: "proj-one", status: "active", runtime: { displayStatus: "active" } }) };
+
+test("a held ticket in a lane shows Held, not Waiting or Working, until it is done", () => {
+  const snap = snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1", labels: ["Needs-Info"] }),
+    issue("FIX-3", { parent: "FIX-1", labels: ["hold"], status: "In Progress" }),
+    issue("FIX-4", { parent: "FIX-1" }),
+    issue("FIX-5", { parent: "FIX-1", labels: ["hold"], done: true }),
+  ]);
+  const { board } = deriveBoard(input(snap, { leads: [flyingLead] }));
+  assert.deepEqual(board.lanes[0].tickets.map(({ id, state }) => [id, state]).sort(),
+    [["FIX-2", "held"], ["FIX-3", "held"], ["FIX-4", "blocked"], ["FIX-5", "done"]]);
+});
+
+test("a Status: hold line holds a ticket in trackers without labels", () => {
+  const snap = snapshot([
+    issue("FIX-1", { status: "ready-for-agent" }),
+    issue("FIX-2", { parent: "FIX-1", status: "hold" }), issue("FIX-3", { parent: "FIX-1" }),
+  ]);
+  const { board } = deriveBoard(input(snap, { kind: "local-markdown", leads: [flyingLead] }));
+  assert.deepEqual(board.lanes[0].tickets.map(({ id, state }) => [id, state]), [["FIX-2", "held"], ["FIX-3", "blocked"]]);
+});
+
+test("a spec whose open tickets are all held stays Shaping and says so", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1", labels: ["hold"] }), issue("FIX-3", { parent: "FIX-1", labels: ["ready-for-human"] }),
+    issue("FIX-4", { parent: "FIX-1", done: true }),
+  ])));
+  assert.deepEqual(board.ready, []);
+  assert.deepEqual(board.shaping.map(({ id, ticketCount, missing, action }) => ({ id, ticketCount, missing, action })), [
+    { id: "FIX-1", ticketCount: 2, missing: "Every open ticket is held: FIX-2 and FIX-3.", action: "tickets" },
+  ]);
+});
+
+test("a spec with some held tickets is Ready, lists them, and routes only the tickets that will run", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1", labels: ["ui", "hold"], title: "Held UI" }),
+    issue("FIX-3", { parent: "FIX-1" }),
+    issue("FIX-4", { parent: "FIX-1" }),
+    issue("FIX-6", { labels: ["ready-for-agent"] }),
+    issue("FIX-7", { parent: "FIX-6", labels: ["needs-info"] }), issue("FIX-8", { parent: "FIX-6" }),
+    issue("OUT-9", { outside: true }),
+  ], [blocks("OUT-9", "FIX-8"), blocks("FIX-3", "FIX-4")])));
+  const [row] = board.ready;
+  assert.deepEqual([row.id, row.ticketCount, row.held, row.routes], ["FIX-1", 3, [{ id: "FIX-2", title: "Held UI" }],
+    [{ family: "gpt", model: "gpt-6.1-sol", effort: "high" }]]);
+  assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1"]);
+  assert.deepEqual(board.shaping.map(({ id, missing }) => [id, missing]), [
+    ["FIX-6", "Every ticket that isn't held waits on a blocker: OUT-9"],
+  ]);
+});
+
+test("a repo's own hold labels hold tickets on the board too", () => {
+  const markdown = readFileSync("tests/fixtures/squadron.md", "utf8") + "\n## Hold labels\n\n- wayfinder:*\n";
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent"] }),
+    issue("FIX-2", { parent: "FIX-1", labels: ["Wayfinder:Later"] }),
+  ]), { settings: parseSquadronSettings(markdown) }));
+  assert.deepEqual(board.shaping.map(({ id, missing }) => [id, missing]), [["FIX-1", "Every open ticket is held: FIX-2."]]);
 });

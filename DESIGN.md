@@ -306,6 +306,7 @@ One segment per ticket in lane order, up to 40px wide (22px basis), 6px tall, 2p
 ### Peg (signature component)
 A ticket on the sortie line. Square, ground fill, 190px wide, 1px border at foreground 40%: the id in mono and the state on top, the title in two lines, and for full pegs the AI chip and time at the foot. State is ink plus form:
 - **Waiting:** 168px, 6px 8px padding, dashed hairline, muted id and one-line title; the top line's state place reads "after SIZE-n" (its open blockers) in muted mono, or "Waiting" when none are open.
+- **Held:** sized like Waiting, on a dotted hairline, muted id and one-line title; state "Held". A hold label keeps the ticket from agents.
 - **Ready:** full size, foreground-40% border.
 - **Working:** the border becomes a sky dashed line (2px, 6 on and 4 off) running round the edge at 12px/s over a slow sky grain (7% plus drift); state in sky ink.
 - **Question:** amber border plus amber outline offset 2px, amber grain at 16%; state "Needs you" in amber ink.
@@ -315,7 +316,7 @@ A ticket on the sortie line. Square, ground fill, 190px wide, 1px border at fore
 Pegs with a thread are buttons that open it beside the board.
 
 ### List rows
-- **Ready:** plate, title, then "**N** tickets", "N can start" in sky ink when some wait, the routes' AI chips and `accept:owner`; a disclosure "N wait on blockers" lists each waiting ticket and what it waits on. Start (primary) at the right, with its disabled reason beside it.
+- **Ready:** plate, title, then "**N** tickets", "N can start" in sky ink when some wait or are held, the routes' AI chips and `accept:owner`; a disclosure "N wait on blockers" lists each waiting ticket and what it waits on, and "N held" lists the held tickets the Lead skips. Start (primary) at the right, with its disabled reason beside it.
 - **Shaping:** plate, title, what's missing in amber ink at 600 and the ticket count; Plan tickets or Resume planning (primary).
 - **Open issues:** mono id, title, then a meta line of the priority mark, labels and parent context; Plan (plain).
 - **Landed:** plate with a still green grain and green-ink number, title, then "PR #n merged" for a confirmed merged PR, otherwise "Lane landed", when it landed and how long it flew.

@@ -15,11 +15,14 @@ _Avoid_: dependency (in UI copy), prerequisite
 
 **Frontier**: The tickets of a spec whose blockers are all done and that nobody is working on yet.
 
+**Held ticket**: An open ticket carrying a hold label: `hold`, `needs-triage`, `needs-info`, `ready-for-human`, `wontfix`, or one the repo's settings add. In trackers without labels, a `Status:` line naming one. The Lead skips it, the board shows it as Held, and the lane ends delivered with held tickets, leaving them and the spec open.
+_Avoid_: blocked, paused, skipped ticket
+
 **Open issue**: An open issue that is neither a spec nor one of its tickets. It waits in the board's Open issues section until planning turns it into a spec.
 
-**Shaping**: A spec not yet Ready. It has an open planning thread, has tickets without the ready label, or has the ready label without tickets.
+**Shaping**: A spec not yet Ready. It has an open planning thread, has tickets without the ready label, has the ready label without tickets, or has only held tickets.
 
-**Ready**: A spec carrying `ready-for-agent` with at least one open, unblocked ticket.
+**Ready**: A spec carrying `ready-for-agent` with at least one open, unblocked ticket that isn't held.
 
 ## Roles
 
@@ -46,7 +49,7 @@ _Avoid_: builder, implementer, subagent
 
 **Lane state**: Ready, Flying, In review or Landed. It is read from threads, the tracker and the PR or local merge, and never stored.
 
-**Ticket state**: Waiting, Working, In branch or Done.
+**Ticket state**: Waiting, Held, Working, In branch or Done.
 
 **Status mapping**: The table that names the Linear status for each lane state and ticket state. Only Linear repos need it.
 

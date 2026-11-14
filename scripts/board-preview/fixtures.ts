@@ -151,7 +151,7 @@ const empty: Fixture = {
     ] } },
 };
 
-/** The live states the comp's snapshots don't show: stopped, owner merge, a question, review, a failure, a PR. Synthetic. */
+/** The live states the comp's snapshots don't show: stopped, owner merge, a question, review, a failure, a PR, held tickets. Synthetic. */
 const states: Fixture = {
   name: "states", projectName: "Fixture project", tracker: { kind: "github" }, fleet: 3,
   board: { ...base, doctor: { ...doctorPass, checks: doctorPass.checks.map((c) => c.id === "github" ? { ...c, status: "fix" as const, message: "Run gh auth login for github.com." } : c), ready: false },
@@ -159,7 +159,8 @@ const states: Fixture = {
       { specId: "FIX-10", title: "A lane with an open PR and a question", lead: claude, leadThreadId: "thr_a", branch: "fix-10", state: "pr-open", minutes: 64, acceptOwner: false,
         pr: { number: 42, checks: "pending", url: "https://github.com/example/r/pull/42", state: "open" },
         tickets: [ticket("FIX-11", "Read the thing", [], codex, "done"), ticket("FIX-12", "Ask the owner", ["FIX-11"], claude, "question", { threadId: "thr_q", question: "Which label routes to Claude?", minutes: 12 }),
-          ticket("FIX-13", "Review the slice", ["FIX-11"], codex, "review", { threadId: "thr_r", minutes: 4 }), ticket("FIX-14", "Ready to go", ["FIX-11"], codex, "ready")],
+          ticket("FIX-13", "Review the slice", ["FIX-11"], codex, "review", { threadId: "thr_r", minutes: 4 }), ticket("FIX-14", "Ready to go", ["FIX-11"], codex, "ready"),
+          ticket("FIX-15", "Held for the owner's call", [], codex, "held")],
         unmatchedThreads: [{ threadId: "thr_x", title: "Scratch notes" }] },
       { specId: "FIX-20", title: "A stopped lane whose worker failed", lead: codex, leadThreadId: "thr_b", branch: "fix-20", state: "stopped", stopped: true, minutes: 31, acceptOwner: false,
         stopReason: "The Lead stopped after two strikes.", tickets: [ticket("FIX-21", "Break it", [], codex, "failed", { threadId: "thr_f", failure: "Tests failed twice.", minutes: 18 })] },
@@ -167,8 +168,8 @@ const states: Fixture = {
         pr: { number: 43, checks: "passing", url: "https://github.com/example/r/pull/43", state: "open" },
         tickets: [ticket("FIX-31", "Done one", [], claude, "branch"), ticket("FIX-32", "Done two", ["FIX-31"], claude, "branch")] },
     ],
-    ready: [{ id: "FIX-40", title: "A Ready spec Doctor holds back", ticketCount: 3, routes: [claude], blockedBy: [], acceptOwner: true, startReason: "Doctor: 1 to fix before Start.",
-      waiting: [{ id: "FIX-42", title: "Waits", blockedBy: ["FIX-41", "OUT-9"] }] }],
+    ready: [{ id: "FIX-40", title: "A Ready spec Doctor holds back", ticketCount: 4, routes: [claude], blockedBy: [], acceptOwner: true, startReason: "Doctor: 1 to fix before Start.",
+      waiting: [{ id: "FIX-42", title: "Waits", blockedBy: ["FIX-41", "OUT-9"] }], held: [{ id: "FIX-43", title: "Needs info from the owner" }] }],
     shaping: [{ id: "FIX-50", title: "A spec with an open planning thread", ticketCount: 2, missing: "Planning thread still open", action: "resume" }],
     openIssues: [{ id: "#77", title: "An urgent idea under a parent", labels: ["enhancement"], under: "Under #70 · Board polish", priority: 1 }],
   },

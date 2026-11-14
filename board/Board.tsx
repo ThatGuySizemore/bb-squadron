@@ -101,6 +101,7 @@ function PriorityDot({ priority }: { priority: NonNullable<OpenIssue["priority"]
 
 const TICKET_LABEL: Record<TicketState, string> = {
   blocked: "Waiting",
+  held: "Held",
   ready: "Ready",
   working: "Working",
   question: "Needs you",
@@ -164,7 +165,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   const open = useOpen();
   const reviewer = laneReviewer(lane);
   const state = ticket.state;
-  const fill = state === "blocked" || state === "ready" ? null : <DitherCanvas fx={{ kind: "peg", state }} className="sq-fx" />;
+  const fill = state === "blocked" || state === "held" || state === "ready" ? null : <DitherCanvas fx={{ kind: "peg", state }} className="sq-fx" />;
   const waitsOn = ticket.blockedBy.filter((b) => {
     const blocker = lane.tickets.find((t) => t.id === b);
     return !blocker || (blocker.state !== "branch" && blocker.state !== "done");
@@ -176,7 +177,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
         ? `Review · ${reviewer.model}`
         : TICKET_LABEL[state];
   const clickable = Boolean(ticket.threadId);
-  const size = state === "branch" || state === "done" ? "compact" : state === "blocked" ? "slim" : "full";
+  const size = state === "branch" || state === "done" ? "compact" : state === "blocked" || state === "held" ? "slim" : "full";
   if (size === "compact") {
     const inner = (
       <>
@@ -501,7 +502,8 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
   const blocked = (spec.startReason !== undefined ? spec.startReason : canStart(board, spec))
     ?? (startBusy ? "Wait for the Lead thread to open." : null);
   const waiting = spec.waiting ?? [];
-  const canStartNow = Math.max(0, spec.ticketCount - waiting.length);
+  const held = spec.held ?? [];
+  const canStartNow = Math.max(0, spec.ticketCount - waiting.length - held.length);
   return (
     <li className="sq-row sq-ready" data-blocked={blocked !== null}>
       <Plate id={spec.id} />
@@ -509,7 +511,7 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
         <IssueTitle title={spec.title} url={spec.url} className="sq-row-title" />
         <div className="sq-row-meta">
           <span className="sq-num"><b>{spec.ticketCount}</b> {spec.ticketCount === 1 ? "ticket" : "tickets"}</span>
-          {waiting.length ? <span className="sq-frontier sq-num">{canStartNow} can start</span> : null}
+          {waiting.length || held.length ? <span className="sq-frontier sq-num">{canStartNow} can start</span> : null}
           {spec.routes.length ? (
             <span className="sq-ready-routes">
               {spec.routes.map((r, i) => <AiChip key={i} route={r} />)}
@@ -524,6 +526,18 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false }:
               {waiting.map((ticket) => (
                 <li key={ticket.id} title={ticket.title}>
                   <span className="sq-mono">{ticket.id}</span> waits on {list(ticket.blockedBy)}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+        {held.length ? (
+          <details className="sq-waits">
+            <summary>{held.length} held</summary>
+            <ul className="sq-ready-waiting" aria-label={`Held tickets of ${spec.id}, which the Lead skips`}>
+              {held.map((ticket) => (
+                <li key={ticket.id} title={ticket.title}>
+                  <span className="sq-mono">{ticket.id}</span> {ticket.title}
                 </li>
               ))}
             </ul>

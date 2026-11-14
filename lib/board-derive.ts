@@ -1,7 +1,7 @@
 // Derives the board from a tracker snapshot and project settings.
 import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type TrackerStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
-import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
+import { DEFAULT_HOLD_LABELS, isHoldLabel, resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread, WorkerThread } from "./lead-threads.js";
@@ -64,6 +64,10 @@ const labelNames = (issue: TrackerIssue) => issue.labels.map((label) => label.na
 const readyMarked = (issue: TrackerIssue) => labelNames(issue).includes(READY_FOR_AGENT)
   || issue.state.name.trim().toLowerCase() === READY_FOR_AGENT;
 
+/** An open ticket a hold label keeps from agents, or a matching `Status:` line in trackers without labels. */
+const heldBy = (holdLabels: readonly string[]) => (issue: TrackerIssue) => isOpenIssue(issue) &&
+  [...labelNames(issue), issue.state.name].some((name) => isHoldLabel(holdLabels, name));
+
 /** Open specs: top-level open issues that are marked ready, have open tickets, or are being planned. */
 export function openSpecs(snapshot: TrackerSnapshot, planningIssueIds: ReadonlySet<string>): TrackerIssue[] {
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
@@ -78,6 +82,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const settings = input.settings?.ok ? input.settings.settings : null;
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
   const labels = labelNames;
+  const held = heldBy(settings?.holdLabels ?? DEFAULT_HOLD_LABELS);
   const planning = new Map((input.planning ?? []).map((thread) => [thread.issueId, thread.threadId]));
   const ticketsOf = (spec: TrackerIssue) => open.filter((issue) => issue.parentId === spec.id);
   const specs = openSpecs(snapshot, new Set(planning.keys()));
@@ -134,7 +139,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
         blockedBy: laneSnapshot.relations.filter((relation) => relation.relatedIssueId === issue.id && ids.has(relation.issueId))
           .map((relation) => laneById.get(relation.issueId)!.identifier),
         route: settings ? resolveRoute(settings, labels(issue)) : lead.route,
-        state: snapshot.kind === "local-markdown" && laneSnapshot !== snapshot && issue.state.type === "completed" &&
+        state: held(issue) ? "held" : snapshot.kind === "local-markdown" && laneSnapshot !== snapshot && issue.state.type === "completed" &&
           byId.get(issue.id)?.state.type !== "completed" && !localLanded ? "branch" : ticketState(issue),
         minutes: worker ? Math.max(0, Math.floor((input.now - worker.createdAt) / 60_000)) : 0,
         ...(worker ? { threadId: worker.id } : {}),
@@ -190,7 +195,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   for (const spec of specs.filter((spec) => !leads.has(spec.id))) {
     const tickets = ticketsOf(spec);
     const marked = readyMarked(spec);
-    const ticketBlockers = tickets.map(openBlockers);
+    const heldTickets = tickets.filter(held);
+    const ticketBlockers = tickets.filter((ticket) => !held(ticket)).map(openBlockers);
     const row = { id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length };
     // An open planning thread keeps a spec Shaping; Ready needs an open, unblocked ticket.
     if (planning.has(spec.id)) {
@@ -199,12 +205,17 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       shaping.push({ ...row, missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" });
     } else if (!marked) {
       shaping.push({ ...row, missing: `Has ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} but no ready-for-agent label.`, action: "tickets" });
+    } else if (heldTickets.length === tickets.length) {
+      shaping.push({ ...row, missing: `Every open ticket is held: ${list(heldTickets.map((ticket) => ticket.identifier))}.`, action: "tickets" });
     } else if (ticketBlockers.every((found) => found.length > 0)) {
       const ids = [...new Set(ticketBlockers.flat().map((blocker) => blocker.id))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
-      shaping.push({ ...row, missing: `Every ticket waits on a blocker: ${ids.join(", ")}`, action: "tickets" });
+      const which = heldTickets.length ? "Every ticket that isn't held" : "Every ticket";
+      shaping.push({ ...row, missing: `${which} waits on a blocker: ${ids.join(", ")}`, action: "tickets" });
     } else ready.push(readyRow(spec, tickets));
   }
-  function readyRow(spec: TrackerIssue, tickets: TrackerIssue[]): ReadySpec {
+  function readyRow(spec: TrackerIssue, open: TrackerIssue[]): ReadySpec {
+    // Held tickets don't run, so their routes and blockers don't hold the lane.
+    const tickets = open.filter((ticket) => !held(ticket));
     const specBlockers = openBlockers(spec);
     const ticketBlockers = tickets.map(openBlockers);
     const blockers = [...new Map([...specBlockers, ...ticketBlockers.flat()].map((blocker) => [blocker.id, blocker])).values()]
@@ -230,12 +241,13 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       startReason = input.doctor?.ready ? null : "Check Doctor before starting a lane.";
     }
     return {
-      id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length,
+      id: spec.identifier, title: spec.title, url: spec.url, ticketCount: open.length,
       routes: settings ? uniqueRoutes(tickets.map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
       acceptOwner: labels(spec).includes(ACCEPT_OWNER),
       waiting: tickets.flatMap((ticket, i) => ticketBlockers[i].length
         ? [{ id: ticket.identifier, title: ticket.title, blockedBy: ticketBlockers[i].map((blocker) => blocker.id) }] : []),
+      held: open.filter(held).map((ticket) => ({ id: ticket.identifier, title: ticket.title })),
     };
   }
   // Anything open that isn't a spec or one of its tickets waits here,

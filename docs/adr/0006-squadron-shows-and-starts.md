@@ -1,6 +1,6 @@
 # Squadron shows and starts work; Matt's skills and the agents do it
 
-Status: the stored scope choice is superseded by [ADR-0009](0009-linear-scope-lives-in-the-repo.md); the Linear scope lives in the repo. Naming is superseded by [ADR-0010](0010-owner-words-and-factory-words.md).
+Status: the stored scope choice is superseded by [ADR-0009](0009-linear-scope-lives-in-the-repo.md); the Linear scope lives in the repo. The optional conversational front door and settings-only storage limit are superseded by [ADR-0011](0011-squadron-watches-the-helper-talks.md). Naming is superseded by [ADR-0010](0010-owner-words-and-factory-words.md).
 
 On 13 Nov 2026 we decided BB Squadron is light machinery around Matt Pocock's skills. The plugin shows a board and has buttons to Plan, Start, Stop, Resume and Merge. A Lead runs `implement-spec` as written, with its workers as BB child threads. Agents write to Linear themselves, as each repo's `docs/agents/issue-tracker.md` says, using an identity the owner configures. The plugin stores only the owner's bindings and settings. Lane state, thread links and Linear data are read fresh, so a restart loses nothing. An optional Chief thread running Matt's `chief-of-staff` is the conversational front door, but no lane depends on it.
 

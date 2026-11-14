@@ -193,3 +193,29 @@ test("stale Status lines stay Waiting despite a branch commit claiming completio
   await harness.behavior.callRpc("lane.start", { projectId: "project", specId: "flight" });
   assert.equal((await board()).lanes[0]?.tickets[0]?.state, "blocked");
 });
+
+
+test("CLI local Merge follows board availability before completion, when ready and after landing", async (t) => {
+  const { root, commit, harness, board } = await fixture(t);
+  git(root, "branch", "integration/flight");
+  await harness.behavior.runCli(["start", "flight"], { projectId: "project" });
+  const sent: unknown[] = [];
+  harness.sdk.stub("threads.send", async (input) => { sent.push(input); return { ok: true, delivery: "sent" }; });
+  const merge = () => harness.behavior.runCli(["merge", "flight"], { projectId: "project" });
+  assert.equal(canMerge((await board()).lanes[0]), false);
+  assert.deepEqual(await merge(), { exitCode: 1, stdout: "", stderr: "flight isn't ready for a local merge. Read the board again.\n" });
+  assert.deepEqual(sent, []);
+  await assert.rejects(harness.behavior.callRpc("lane.merge", { projectId: "project", specId: "flight" }),
+    { message: "flight isn't ready for a local merge. Read the board again." });
+  git(root, "checkout", "integration/flight");
+  await writeFile(join(root, ".scratch/flight/issues/01-reader.md"), "# 01: Reader\nStatus: done\n");
+  commit("Ticket in branch");
+  git(root, "checkout", "main");
+  assert.equal(canMerge((await board()).lanes[0]), true);
+  assert.deepEqual(await merge(), { exitCode: 0, stdout: "Asked the Lead for flight to merge locally. @thread:lead\n", stderr: "" });
+  assert.equal(sent.length, 1);
+  git(root, "merge", "--ff-only", "integration/flight");
+  assert.equal((await board()).lanes[0].state, "landed");
+  assert.equal((await merge()).exitCode, 1);
+  assert.equal(sent.length, 1);
+});

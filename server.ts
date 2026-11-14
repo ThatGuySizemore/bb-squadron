@@ -10,22 +10,27 @@ import { readLeadThreads } from "./lib/lead-threads.js";
 import { readPullRequests } from "./lib/pull-requests.js";
 import { registerTracker } from "./lib/tracker-service.js";
 import { createOutsideLaneReader } from "./lib/outside-lanes.js";
+import { registerSquadronCli } from "./lib/squadron-cli.js";
+import { registerHelperNotifier } from "./lib/helper-notifier.js";
+import { registerHelperSummary } from "./lib/helper-summary.js";
+import { registerHelper } from "./lib/helper.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const linear = registerLinearAuth(bb);
-  // The Linear poller reads only projects a board is showing (set once the board registers).
-  let shown: (projectId: string) => boolean = () => false;
   const mirror = registerLinearReader(bb, linear, {
-    laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId),
-    shouldPoll: (projectId) => shown(projectId) });
+    laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId) });
   const doctor = registerDoctor(bb, () => linear.getConnection(), (projectId) => mirror.scopeProblem(projectId));
   const tracker = registerTracker(bb, mirror);
   const outside = createOutsideLaneReader(bb);
-  const board = registerBoard(bb, { connection: () => linear.getConnection(), tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
+  const helper = registerHelper(bb);
+  const notifier = registerHelperNotifier(bb, helper);
+  const summary = registerHelperSummary(bb, helper);
+  const board = registerBoard(bb, { connection: () => linear.getConnection(), observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); }, tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
-  shown = board.isShown;
+  summary.register(board.read);
   registerPlanning(bb, { tracker, doctor: doctor.read });
-  registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
+  const actions = registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
+  registerSquadronCli(bb, board, actions, helper);
   bb.log.info("loaded");
 }

@@ -2,6 +2,7 @@
 // polling, on the SDK's fake plugin host with recorded Linear responses.
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+import { setImmediate } from "node:timers/promises";
 import { readFileSync } from "node:fs";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
@@ -134,45 +135,48 @@ test("the board remembers the last pick across a reload, and forgets a project t
   assert.equal((await harness.behavior.callRpc("board.projects", null) as Listed).lastPick, null);
 });
 
-test("the Linear poller reads only the project a board is showing", async (t) => {
+async function settleWatchers() { for (let i = 0; i < 50; i++) await setImmediate(); }
+
+test("the Linear poller keeps every discovered project current without an open board", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000_000 });
   const linear = workspace();
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
-  const first = host();
-  await plugin(first.bb);
-  await first.harness.behavior.callRpc("board", { projectId: "proj-squadron" });
-  await first.harness.behavior.callRpc("board", { projectId: "proj-wordwell" });
-  const { harness } = await first.harness.lifecycle.reload((api) => plugin(api));
-  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  const { bb, harness } = host();
+  t.after(async () => { await harness.lifecycle.dispose(); fetch.mock.restore(); t.mock.timers.reset(); });
+  await plugin(bb);
   const synced = async (id: string) => (await harness.behavior.callRpc("linear.snapshot", { bbProjectId: id }) as { syncedAt: number | null }).syncedAt;
-
-  await harness.behavior.callRpc("board", { projectId: "proj-squadron" });
-  assert.notEqual(await synced("proj-squadron"), null, "opening a board reads its project");
-  const poll = harness.behavior.runService("linear-reader");
-  t.after(() => poll.controller.abort());
-  const reads = linear.operations.length;
-  for (let i = 0; i < 40 && linear.operations.length === reads; i++) await new Promise((resolve) => setTimeout(resolve, 5));
-  await new Promise((resolve) => setTimeout(resolve, 50));
-  assert.equal(await synced("proj-wordwell"), null, "a bound project no board shows is not polled");
+  harness.behavior.runService("board-watcher");
+  await settleWatchers();
+  assert.notEqual(await synced("proj-squadron"), null, "the watcher discovers an unseen project");
+  assert.notEqual(await synced("proj-wordwell"), null, "the watcher discovers the second unseen project");
+  harness.behavior.runService("linear-reader");
+  await settleWatchers();
+  t.mock.timers.tick(30_000);
+  await settleWatchers();
+  assert.equal(await synced("proj-squadron"), 1_030_000, "the first project keeps polling");
+  assert.equal(await synced("proj-wordwell"), 1_030_000, "the second project keeps polling");
 });
 
-test("the board watcher refreshes only the project a board is showing, not every project it ever showed", async (t) => {
+test("the board watcher refreshes all projects, including projects no page has ever shown", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000_000 });
   const { bb, harness } = host();
-  t.after(() => harness.lifecycle.dispose());
-  let now = 1_000_000;
+  t.after(async () => { await harness.lifecycle.dispose(); t.mock.timers.reset(); });
   const reads: string[] = [];
   const tracker: TrackerReader = { onChange: () => () => undefined,
     getSnapshot: (id) => { reads.push(id); return { ...bbBotSnapshot, bbProjectId: id }; } };
-  let passes = 0;
-  registerBoard(bb, { connection: async () => ({ status: "connected", message: "" }) as never, tracker },
-    { now: () => now, wait: async (_ms, signal) => { passes++; await new Promise((resolve) => setTimeout(resolve, 1)); signal.throwIfAborted(); } });
+  registerBoard(bb, { connection: async () => ({ status: "connected", message: "" }) as never, tracker });
   await harness.behavior.callRpc("board", { projectId: "proj-squadron" });
   await harness.behavior.callRpc("board", { projectId: "proj-wordwell" });
-  now += 80_000; // The owner switched to WordWell; nothing has shown BB Squadron since.
+  t.mock.timers.tick(80_000);
   await harness.behavior.callRpc("board", { projectId: "proj-wordwell" });
   reads.length = 0;
-  const watcher = harness.behavior.runService("board-watcher");
-  t.after(() => watcher.controller.abort());
-  for (let i = 0; i < 100 && passes < 2; i++) await new Promise((resolve) => setTimeout(resolve, 2));
+  harness.behavior.runService("board-watcher");
+  await settleWatchers();
   assert.ok(reads.includes("proj-wordwell"), "the shown project is refreshed");
-  assert.ok(!reads.includes("proj-squadron"), "a project no board shows is not");
+  assert.ok(reads.includes("proj-squadron"), "a formerly shown project is refreshed");
+  assert.ok(reads.includes("proj-bbbot"), "a project never shown is refreshed");
+  reads.length = 0;
+  t.mock.timers.tick(30_000);
+  await settleWatchers();
+  assert.deepEqual([...new Set(reads)].sort(), ["proj-bbbot", "proj-squadron", "proj-wordwell"]);
 });

@@ -34,6 +34,7 @@ test("the live page reads only visible lanes, skips every refresh while hidden a
     lanes: ["FIX-1", "FIX-2"].map((specId) => ({ specId, title: specId, lead: route, leadThreadId: specId,
       branch: "spec", state: "flying", minutes: 1, acceptOwner: false, tickets: [] })) };
   const rpc = { call: async (method: string, value: any) => {
+    if (method === "helper.read") return null;
     if (method === "board.projects") return { projects: [{ id: "proj-one", name: "Fixture" }], lastPick: null };
     assert.equal(method, "board"); calls.push(value); return board;
   } };
@@ -48,16 +49,17 @@ test("the live page reads only visible lanes, skips every refresh while hidden a
     await act(async () => { browser.document.dispatchEvent(new browser.Event("visibilitychange")); });
     assert.ok(calls.length >= 2, "first reads the board, then the on-screen lanes");
     assert.deepEqual(calls.at(-1)?.visibleLaneIds, ["FIX-1"]);
-    const poll = [...intervals.values()].find((entry) => entry.ms === 15_000);
-    assert.ok(poll, "one 15-second poll");
+    const polls = [...intervals.values()].filter((entry) => entry.ms === 15_000);
+    assert.ok(polls.length > 0, "15-second refreshes are registered");
+    const poll = () => { for (const entry of polls) entry.callback(); };
     const before = calls.length;
     hidden = true;
-    await act(async () => { poll.callback(); signals.get("board-changed")!({ projectId: "proj-one" }); });
+    await act(async () => { poll(); signals.get("board-changed")!({ projectId: "proj-one" }); });
     assert.equal(calls.length, before, "neither timer nor signal reads hidden pages");
     hidden = false;
     await act(async () => { signals.get("board-changed")!({ projectId: "proj-one" }); });
     assert.equal(calls.at(-1)?.refreshLive, true);
-    await act(async () => { poll.callback(); });
+    await act(async () => { poll(); });
     assert.equal(calls.at(-1)?.refreshLive, false);
   } finally {
     await act(async () => root.unmount());

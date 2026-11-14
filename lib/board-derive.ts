@@ -4,7 +4,7 @@ import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { DEFAULT_HOLD_LABELS, isHoldLabel, resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
-import type { LeadThread, WorkerThread } from "./lead-threads.js";
+import { isRunningThread, type LeadThread, type WorkerThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
 import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
@@ -41,9 +41,6 @@ function list(ids: string[]): string {
 }
 
 type LaneThread = Pick<WorkerThread, "id" | "status" | "runtime" | "hasPendingInteraction" | "queuedWork">;
-/** BB statuses in which a thread is still doing, or about to do, work. */
-const RUNNING = new Set(["active", "starting", "pending", "stopping"]);
-
 /** Why a lane thread needs the owner, read only from its BB state. */
 function threadNeed(thread: LaneThread, who: string): NonNullable<Lane["needs"]>[number] | null {
   if (thread.hasPendingInteraction) return { threadId: thread.id, kind: "waiting", text: `${who} is waiting on you.` };
@@ -125,8 +122,10 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const workers = lead.workers ?? [];
     const needs = [threadNeed(lead.thread, `The Lead for ${spec.identifier}`),
       ...workers.map((worker) => threadNeed(worker, worker.title ?? "A worker"))].filter((need) => need !== null);
-    // Stopped is only the threads' status (ADR-0008): nothing in the lane is running.
-    const stopped = [lead.thread, ...workers].every((thread) => !RUNNING.has(thread.status));
+    // A normal completed turn can be a plain-text question. An interrupted,
+    // failed or unreadable turn keeps the Stopped fallback (ADR-0011).
+    const noRunningThreads = [lead.thread, ...workers].every((thread) => !isRunningThread(thread));
+    const stopped = noRunningThreads && (lead.idleSince === undefined || needs.some((need) => need.kind !== "waiting"));
     const children = [...workers].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const matched = new Set<string>();
     const tickets: Ticket[] = issues.sort(byIdentifier).map((issue) => {
@@ -148,6 +147,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
     const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt)
+      : spec.state.type === "completed" ? Date.parse(spec.updatedAt)
       : localLanded ? (spec.state.type === "completed" ? Date.parse(spec.updatedAt) : input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt)) : undefined;
     const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
     const acceptOwner = labels(spec).includes(ACCEPT_OWNER);
@@ -157,12 +157,16 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // Squadron holds nothing for an outside lane: it never merges, stops or resumes one.
     const inReview = acceptOwner && localMerge ? "merge-waits"
       : pr?.state === "open" ? (!outside && acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
+    if (!lead.outside && landedAt === undefined && spec.state.type !== "completed" && inReview !== "merge-waits" && !stopped && noRunningThreads &&
+      !needs.length && lead.idleSince !== undefined && input.now - lead.idleSince >= 300_000) {
+      needs.push({ threadId: lead.thread.id, kind: "waiting", text: "The Lead is waiting on you" });
+    }
     return {
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
-      workingThreads: [lead.thread, ...workers].filter((thread) => RUNNING.has(thread.status)).length,
+      workingThreads: [lead.thread, ...workers].filter((thread) => isRunningThread(thread)).length,
       ...(outside ? { outside } : {}),
       ...(noRemote && !outside ? { localMerge } : {}),
       ...(needs.length ? { needs } : {}),

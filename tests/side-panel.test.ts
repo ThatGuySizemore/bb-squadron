@@ -49,7 +49,7 @@ test("Squadron registers a thread side-panel tab alongside its full-page nav pan
   assert.notEqual(tab.component, slots.navPanel![0]!.component, "the tab renders the side-panel board, not the full page");
 });
 
-test("in the side panel a flying lane shows its active pegs and an All N tickets disclosure with its in-branch count", async () => {
+test("in the side panel a flying lane shows its active tickets and an All N tickets disclosure with its in-branch count", async () => {
   const { createElement } = await import("react");
   const { BoardView } = await import("../board/Board.js");
   const props = { board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined };
@@ -57,7 +57,7 @@ test("in the side panel a flying lane shows its active pegs and an All N tickets
   assert.match(panel, /class="sq"[^>]*data-layout="narrow"/);
   const active = /<div class="sq-active">([\s\S]*?)<\/div><details/.exec(panel)?.[1] ?? "";
   assert.deepEqual([...active.matchAll(/class="sq-peg-id">([^<]+)</g)].map((m) => m[1]), ["FIX-3", "FIX-4"],
-    "only tickets an agent is on, or that need the owner, are pegs");
+    "only tickets an agent is on, or that need the owner, stay in view");
   const all = /<details class="sq-all"><summary>([\s\S]*?)<\/summary>([\s\S]*?)<\/details>/.exec(panel);
   assert.equal(all && visibleText(parse(all[1])), "All 4 tickets · 1 in branch", "the in-branch count moves from the progress strip into the summary");
   assert.deepEqual([...(all?.[2] ?? "").matchAll(/<li data-state="([^"]+)"><span class="sq-id">([^<]+)<\/span><span>([^<]+)<\/span><span data-st="[^"]+">(?:<span[^>]*data-term="[^"]+"[^>]*>)?([^<]+)</g)]

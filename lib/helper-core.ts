@@ -1,6 +1,7 @@
 // The Helper core: one deterministic function from the Linear mirror,
 // settings and clock to the board view model and the commands the server
 // should run. Reading a board never starts work without a dispatch action.
+import type { RestartThread } from "./restart-contract.js";
 import type { Blocker, Board, LinearStatus, ReadySpec, Route, UnplannedIssue } from "./board-model.js";
 import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import type { OutboxBlockedReason, OutboxHealth } from "./linear-outbox-contract.js";
@@ -259,4 +260,36 @@ export function helperCore(input: HelperInput): HelperOutput {
     ...(start ? { start } : {}),
     ...(worker ? { worker } : {}),
   };
+}
+
+/** Rebuild disposable links without rebuilding grants, receipts or approval.
+ * A durable lane always wins, including its stopped/landed owner choices. */
+export function rebuildLaneLinks(snapshot: MirrorSnapshot, durable: readonly LaneRun[], threads: readonly RestartThread[]): LaneRun[] {
+  const recovered: LaneRun[] = [];
+  const groups = new Map<string, RestartThread[]>();
+  for (const thread of threads) {
+    if (thread.projectId !== snapshot.binding?.bbProjectId || durable.some((run) => run.id === thread.laneId || run.specIssueId === thread.specIssueId)) continue;
+    const group = groups.get(thread.laneId) ?? []; group.push(thread); groups.set(thread.laneId, group);
+  }
+  for (const [id, group] of groups) {
+    const first = group[0];
+    const spec = snapshot.issues.find((issue) => issue.id === first.specIssueId && issue.identifier === first.specId && issue.inProject);
+    if (!spec || !isOpenIssue(spec)) continue;
+    const leads = group.filter((thread) => thread.role === "Lead" && thread.specIssueId === spec.id && thread.parentThreadId === null);
+    const lead = leads.length === 1 ? leads[0] : null;
+    recovered.push({ id, bbProjectId: first.projectId, workspaceId: "",
+      specIssueId: spec.id, specId: spec.identifier, title: spec.title, route: lead?.route ?? first.route,
+      state: "stopped", startedAt: Math.min(...group.map((thread) => thread.startedAt)), recoveryOnly: true,
+      leadThreadId: lead?.threadId ?? null, environmentId: lead?.environmentId ?? null, branch: lead?.branch ?? null,
+      acceptOwner: spec.labels.some((label) => label.name === ACCEPT_OWNER),
+      stopReason: "Recovered links only. The service binding and prior progress are unproven. Check BB threads and durable state before resuming; this slot stays reserved.",
+      workers: group.filter((thread) => thread.role === "Worker" && thread.specIssueId === spec.id && thread.ticketIssueId && thread.ticketId &&
+        snapshot.issues.some((issue) => issue.id === thread.ticketIssueId && issue.parentId === spec.id)).map((thread) => ({
+          id: thread.workerId ?? thread.threadId, ticketIssueId: thread.ticketIssueId!, ticketId: thread.ticketId!, route: thread.route,
+          state: "failed", startedAt: thread.startedAt, threadId: thread.threadId, branch: thread.branch, environmentId: thread.environmentId,
+          failure: "Recovered link only. This worker's service binding and progress are unproven; its slot stays reserved.",
+        })),
+    });
+  }
+  return recovered;
 }

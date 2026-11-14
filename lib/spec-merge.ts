@@ -45,13 +45,19 @@ export async function readPullRequest(bb: BbPluginApi, environmentId: string, si
 const CHECKS = { passing: "passing", failing: "failing", pending: "pending", no_checks: "none", unknown: "unknown" } as const;
 const MERGED_UNCHECKED = "The PR merged on GitHub without Squadron's merge check. Check it, then cancel the lane or move the spec in Linear.";
 
+export type SpecMerge = ReturnType<typeof registerSpecMerge>;
+
 export function registerSpecMerge(bb: BbPluginApi, sources: Pick<LaneSources, "mirror" | "outbox">, lanes: LaneService,
   workers: { withLane<T>(laneId: string, action: () => Promise<T>): Promise<T>; setMerge(steps: SpecMergeSteps): void },
   lifecycle: { stopInLane(run: LaneRun, reason: string): Promise<LaneRun> }, options: { now?: () => number } = {}) {
   const now = options.now ?? Date.now;
   const host = bb.hosts.experimental_client({ contract: workerHostContract });
   const lifetime = new AbortController();
-  bb.onDispose(() => lifetime.abort());
+  const listeners = new Set<(projectId: string) => void>();
+  bb.onDispose(() => { lifetime.abort(); listeners.clear(); });
+  /** PRs read for recovery-only display links. Memory only: never saved to a
+   * binding, and never an input to the merge check, the owner's Merge or landing. */
+  const displayed = new Map<string, PullRequestObservation>();
 
   function latest(projectId: string, laneId: string): LaneRun {
     const run = lanes.list(projectId).find((item) => item.id === laneId);
@@ -191,13 +197,31 @@ export function registerSpecMerge(bb: BbPluginApi, sources: Pick<LaneSources, "m
     },
   });
 
+  /** A recovered link's actual environment and branch, projected through BB's
+   * pull-request plugin for display. A PR for another branch isn't shown. */
+  async function displayRecovered(run: LaneRun, signal: AbortSignal) {
+    const before = JSON.stringify(displayed.get(run.id) ?? null);
+    const row = run.environmentId && run.branch ? await readPullRequest(bb, run.environmentId, signal) : null;
+    if (row?.outcome === "available" && row.pullRequest.headRefName === run.branch) {
+      const value = row.pullRequest;
+      displayed.set(run.id, { number: value.number, url: value.url, state: value.state, checks: CHECKS[value.checks.state],
+        headRefName: value.headRefName, baseRefName: value.baseRefName, head: null, observedAt: displayed.get(run.id)?.observedAt ?? now() });
+    } else if (row?.outcome !== "unavailable") displayed.delete(run.id);
+    if (JSON.stringify(displayed.get(run.id) ?? null) !== before) for (const listener of listeners) listener(run.bbProjectId);
+  }
+  /** The board's lane list: trusted records as saved, recovered links with their displayed PR. */
+  function listForBoard(projectId: string): LaneRun[] {
+    return lanes.list(projectId).map((run) => run.recoveryOnly && displayed.has(run.id) ? { ...run, pr: displayed.get(run.id)! } : run);
+  }
+
   /** Read PRs for lanes past their whole-branch review, and retry refused landing writes. */
   async function pass(signal: AbortSignal) {
     for (const projectId of lanes.projects()) {
       for (const run of lanes.list(projectId)) {
         if (signal.aborted) return;
         try {
-          if (run.state === "flying" && run.specReview && !run.recoveryOnly) await workers.withLane(run.id, () => observeInLane(run, signal));
+          if (run.recoveryOnly) await displayRecovered(run, signal);
+          else if (run.state === "flying" && run.specReview && !run.recoveryOnly) await workers.withLane(run.id, () => observeInLane(run, signal));
           else if (run.state === "landed" && run.writeError) await workers.withLane(run.id, () => queueLandingWrites(latest(projectId, run.id)));
         } catch (error) { if (!signal.aborted) bb.log.warn(`Lane ${run.id} pull-request pass: ${diagnostic(error)}`); }
       }
@@ -214,5 +238,6 @@ export function registerSpecMerge(bb: BbPluginApi, sources: Pick<LaneSources, "m
 
   const steps: SpecMergeSteps = { checkMerge, observeInLane: (run, signal) => observeInLane(run, signal, true) };
   workers.setMerge(steps);
-  return { ...steps, pass };
+  return { ...steps, pass, listForBoard,
+    onChange: (listener: (projectId: string) => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
 }

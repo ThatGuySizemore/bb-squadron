@@ -11,7 +11,7 @@ import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
 import type { workerContract } from "../lib/worker-contract.js";
 import type { ReviewState } from "../lib/review-state.js";
-import type { LaneStarted, laneContract, laneLifecycleContract } from "../lib/lane-contract.js";
+import type { LaneStarted, laneContract, laneLifecycleContract, laneMergeContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
@@ -73,7 +73,8 @@ function Dither({ levels }: { levels: number[] }) {
 }
 
 /** Pixels sweep along the sortie line when a spec lands. */
-function Burst() {
+/** The landing burst. Under reduced motion the same pixels sit still where the sweep ends. */
+function Burst({ still = false }: { still?: boolean }) {
   const bits = useMemo(
     () =>
       Array.from({ length: 28 }, (_, i) => ({
@@ -85,7 +86,7 @@ function Burst() {
     [],
   );
   return (
-    <span className="sq-burst" aria-hidden="true">
+    <span className="sq-burst" data-still={still ? "true" : undefined} aria-hidden="true">
       {bits.map((b, i) => (
         <span key={i} style={{ "--dx": `${b.dx}px`, "--dy": `${b.dy}px`, width: b.size, height: b.size, animationDelay: `${b.delay}ms` } as CSSProperties} />
       ))}
@@ -298,14 +299,18 @@ function useOverflow<T extends HTMLElement>() {
   return [ref, overflow] as const;
 }
 
-function SortieLine({ lane, dispatch, landing, onRoute, controlling = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; onRoute?: RouteChange; controlling?: Controlling }) {
+const CHECKS_LABEL: Record<NonNullable<Lane["pr"]>["checks"], string> = {
+  passing: "checks pass", failing: "checks fail", pending: "checks running", none: "no checks", unknown: "checks unknown",
+};
+
+function SortieLine({ lane, dispatch, landing, still = false, onRoute, controlling = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; still?: boolean; onRoute?: RouteChange; controlling?: Controlling }) {
   const open = useOpen();
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
   return (
     <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
-      {landing ? <Burst /> : null}
+      {landing ? <Burst still={still} /> : null}
       <div className="sq-tail">
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
         <h3 className="sq-line-title">{lane.title}</h3>
@@ -323,15 +328,17 @@ function SortieLine({ lane, dispatch, landing, onRoute, controlling = null }: { 
           <button type="button" className="sq-pr" data-checks={lane.pr.checks} onClick={() => open.external(lane.pr!.url, `PR #${lane.pr!.number} on GitHub`)}>
             <span className="sq-pr-dot" aria-hidden="true" />
             PR #{lane.pr.number}
-            <span className="sq-pr-checks">{lane.pr.checks === "passing" ? "checks pass" : lane.pr.checks === "failing" ? "checks fail" : "checks running"}</span>
+            <span className="sq-pr-checks">{CHECKS_LABEL[lane.pr.checks]}</span>
           </button>
         ) : null}
+        {lane.prNote ? <span className="sq-plan-why">{lane.prNote}</span> : null}
         <span className="sq-branch">{lane.branch}</span>
         {lane.state !== "landed" ? (
           <div className="sq-actions">
             {lane.state === "merge-waits" ? (
-              <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: lane.specId })}>
-                Merge
+              <Btn tone="amber" disabled={controlling !== null} title={`Approve merging PR #${lane.pr?.number ?? ""} at this exact commit`}
+                onClick={() => dispatch({ type: "merge", specId: lane.specId })}>
+                {controlling?.specId === lane.specId && controlling.action === "merge" ? CONTROL_PENDING.merge : "Merge"}
               </Btn>
             ) : null}
             {lane.state === "stopped" ? (
@@ -389,9 +396,9 @@ function SortieLine({ lane, dispatch, landing, onRoute, controlling = null }: { 
 const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = { setup: "Setup", question: "Question", stopped: "Stopped", write: "Write", merge: "Merge" };
 
 type LaneControl = "stop" | "resume" | "cancel";
-export type Controlling = { specId: string; action: LaneControl } | null;
-const CONTROL_PENDING: Record<LaneControl, string> = { stop: "Stopping…", resume: "Resuming…", cancel: "Canceling…" };
-const CONTROL_STATUS: Record<LaneControl, string> = { stop: "Stopping", resume: "Resuming", cancel: "Canceling" };
+export type Controlling = { specId: string; action: LaneControl | "merge" } | null;
+const CONTROL_PENDING: Record<LaneControl | "merge", string> = { stop: "Stopping…", resume: "Resuming…", cancel: "Canceling…", merge: "Approving…" };
+const CONTROL_STATUS: Record<LaneControl | "merge", string> = { stop: "Stopping", resume: "Resuming", cancel: "Canceling", merge: "Approving the merge for" };
 const UNCONFIRMED_LEAD = "The Lead was never confirmed. Check BB threads, or cancel the lane.";
 
 /** Cancel stops a lane's threads, so it asks once inline; Escape or Keep lane backs out. */
@@ -504,8 +511,8 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry, controlling = null, pl
               </>
             ) : null}
             {item.kind === "merge" ? (
-              <Btn tone="amber" onClick={() => dispatch({ type: "merge", specId: item.specId })}>
-                Merge
+              <Btn tone="amber" disabled={controlling !== null} onClick={() => dispatch({ type: "merge", specId: item.specId })}>
+                {controlling?.specId === item.specId && controlling.action === "merge" ? CONTROL_PENDING.merge : "Merge"}
               </Btn>
             ) : null}
           </span>
@@ -609,18 +616,39 @@ function usePrefersReducedMotion() {
 }
 
 const LANDING_MS = 1600;
+/** A landing older than this when the board first sees it doesn't replay. */
+const LANDING_FRESH_MS = 10 * 60_000;
+const LANDINGS_SEEN = "squadron:landings-seen";
 
-/** Re-renders once a landing's burst window has passed. */
-function useLandingClock(lanes: Lane[]): number {
-  const [now, setNow] = useState(() => Date.now());
-  const pending = lanes.filter((l) => l.landedAt !== undefined && now - l.landedAt < LANDING_MS);
+/** Landings to play now: landed, recent, and not yet played in this browser. Keys are spec and landing time. */
+export function freshLandings(lanes: Lane[], seen: ReadonlySet<string>, now: number): string[] {
+  return lanes.flatMap((lane) => lane.state === "landed" && lane.landedAt !== undefined && now - lane.landedAt < LANDING_FRESH_MS &&
+    !seen.has(`${lane.specId}:${lane.landedAt}`) ? [`${lane.specId}:${lane.landedAt}`] : []);
+}
+
+function readSeen(): Set<string> {
+  try { return new Set(JSON.parse(window.localStorage?.getItem(LANDINGS_SEEN) ?? "[]") as string[]); } catch { return new Set(); }
+}
+
+/** The specs whose landing plays now. Each landing plays once per browser: it's
+ * recorded as seen when it starts, and stops after its burst window. */
+function useLandings(lanes: Lane[]): Set<string> {
+  const [playing, setPlaying] = useState<Map<string, number>>(() => new Map(freshLandings(lanes, readSeen(), Date.now()).map((key) => [key, Date.now()])));
+  const keys = freshLandings(lanes, readSeen(), Date.now()).join("|");
   useEffect(() => {
-    if (pending.length === 0) return;
-    const until = Math.min(...pending.map((l) => l.landedAt! + LANDING_MS));
-    const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, until - Date.now()) + 20);
+    const seen = readSeen();
+    const fresh = freshLandings(lanes, seen, Date.now());
+    const all = [...new Set([...seen, ...fresh, ...playing.keys()])].slice(-50);
+    try { window.localStorage?.setItem(LANDINGS_SEEN, JSON.stringify(all)); } catch { /* private mode: plays once per page instead */ }
+    if (fresh.some((key) => !playing.has(key))) setPlaying((current) => new Map([...current, ...fresh.filter((key) => !current.has(key)).map((key) => [key, Date.now()] as const)]));
+  }, [keys]);
+  useEffect(() => {
+    if (playing.size === 0) return;
+    const until = Math.min(...playing.values()) + LANDING_MS;
+    const t = window.setTimeout(() => setPlaying((current) => new Map([...current].filter(([, at]) => Date.now() - at < LANDING_MS))), Math.max(0, until - Date.now()) + 20);
     return () => window.clearTimeout(t);
-  });
-  return Math.max(now, ...lanes.map((l) => l.landedAt ?? 0));
+  }, [playing]);
+  return new Set([...playing.keys()].map((key) => key.slice(0, key.lastIndexOf(":"))));
 }
 
 /** Where the board's copy of Linear stands, in one muted line under the header. */
@@ -667,8 +695,8 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
   const items = needsYou(board);
-  const now = useLandingClock(board.lanes);
-  const isLanding = (l: Lane) => l.state === "landed" && l.landedAt !== undefined && now - l.landedAt < LANDING_MS;
+  const playing = useLandings(board.lanes);
+  const isLanding = (l: Lane) => l.state === "landed" && playing.has(l.specId);
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || isLanding(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !isLanding(l));
@@ -731,8 +759,9 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           {onLine.length === 0 ? (
             <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
           ) : (
-            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} onRoute={onRoute} controlling={controlling} />)
+            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} still={reduced} onRoute={onRoute} controlling={controlling} />)
           )}
+          <p className="sq-sr" role="status" aria-live="polite">{onLine.filter(isLanding).map((lane) => `${lane.specId} landed.`).join(" ")}</p>
         </section>
 
         <section className="sq-section" aria-labelledby="sq-ready-h">
@@ -886,6 +915,22 @@ export async function laneControlFromBoard(deps: {
   await deps.refresh();
 }
 
+/** The owner's Merge: approve the exact PR head the board shows, then read the board back even after a refusal. */
+export async function mergeFromBoard(deps: {
+  call: (input: { projectId: string; specId: string; number: number; commit: string }) => Promise<unknown>;
+  refresh: () => Promise<void>;
+  notify: (text: string) => void;
+}, projectId: string, lane: Lane): Promise<void> {
+  if (lane.state !== "merge-waits" || !lane.pr || !lane.mergeCommit) deps.notify("This merge isn't waiting on you. Refresh the board.");
+  else {
+    try {
+      await deps.call({ projectId, specId: lane.specId, number: lane.pr.number, commit: lane.mergeCommit });
+      deps.notify(`Merge approved for PR #${lane.pr.number} at ${lane.mergeCommit.slice(0, 8)}. The Lead squash-merges that exact commit.`);
+    } catch (error) { deps.notify(error instanceof Error && error.message ? error.message : "Couldn't approve the merge. Refresh the board and try again."); }
+  }
+  await deps.refresh();
+}
+
 /** Save the project setting, then read back the board even after a refusal. */
 export async function setAutoStartFromBoard(deps: {
   set: (input: { projectId: string; enabled: boolean }) => Promise<{ enabled: boolean }>;
@@ -900,7 +945,7 @@ export async function setAutoStartFromBoard(deps: {
 /** The real board for the BB project in view, read from the Helper. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract & typeof laneContract & typeof laneLifecycleContract & typeof workerContract>();
+  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract & typeof laneContract & typeof laneLifecycleContract & typeof laneMergeContract & typeof workerContract>();
   const [controlling, setControlling] = useState<Controlling>(null);
   const controlRequest = useRef(false);
   const open = useOpen();
@@ -999,6 +1044,15 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       await laneControlFromBoard({ call: (method, input) => rpc.call(method, input), refresh: load, notify: (text) => { toast(text); } }, projectId, action, specId);
     } finally { controlRequest.current = false; setControlling(null); }
   }, [rpc, projectId, load]);
+  const merge = useCallback(async (specId: string) => {
+    const lane = board?.lanes.find((item) => item.specId === specId);
+    if (!projectId || !lane || controlRequest.current) return;
+    controlRequest.current = true;
+    setControlling({ specId, action: "merge" });
+    try {
+      await mergeFromBoard({ call: (input) => rpc.call("lanes.merge", input), refresh: load, notify: (text) => { toast(text); } }, projectId, lane);
+    } finally { controlRequest.current = false; setControlling(null); }
+  }, [rpc, projectId, board, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
@@ -1009,6 +1063,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         if (action.type === "start") void start(action.specId);
         if (action.type === "autoStart") void setAutoStart(action.on);
         if (action.type === "stop" || action.type === "resume" || action.type === "cancel") void control(action.type, action.specId);
+        if (action.type === "merge") void merge(action.specId);
         // The owner's own message in the worker thread clears a question; opening it changes nothing.
         if (action.type === "replan") void plan(action.specId);
       }}

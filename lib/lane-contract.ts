@@ -1,3 +1,4 @@
+import { firstPromptSchema } from "./bound-thread.js";
 import { z } from "zod";
 import type { Route } from "./board-model.js";
 import { commitSchema, reviewRunSchema, workerRunSchema } from "./worker-contract.js";
@@ -27,10 +28,12 @@ export const laneRunSchema = z.object({
   /** Receipt IDs prove queuing only; current delivery state belongs to outbox. */
   startWrites: z.object({ status: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
+  /** Disposable metadata-derived links never grant tools, writes or launches. */
+  recoveryOnly: z.boolean().optional(),
+  firstPrompt: firstPromptSchema.optional(),
+  startFailure: z.enum(["spawn", "prompt", "environment", "lifecycle"]).optional(),
   workers: z.array(workerRunSchema).optional(),
   routeOverrides: z.record(z.string(), routeSchema).optional(),
-  /** Metadata-derived links may be displayed but never grant role authority. */
-  recoveryOnly: z.boolean().optional(),
   /** The whole-branch review, from the family opposite the Lead, bound to the integration head it reviewed. */
   specReview: reviewRunSchema.optional(),
   /** The last pull request BB's pull-request plugin reported for the Lead's environment. */

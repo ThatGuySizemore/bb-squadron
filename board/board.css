@@ -828,6 +828,10 @@ button.sq-peg:hover {
 .sq-pr[data-checks="failing"] .sq-pr-dot {
   background: var(--sq-red);
 }
+/* No checks, or none GitHub could report: a muted square, not an ink. */
+.sq-pr:is([data-checks="none"], [data-checks="unknown"]) .sq-pr-dot {
+  background: var(--sq-muted);
+}
 .sq-pr-checks {
   font-weight: 400;
   color: var(--sq-muted);
@@ -859,6 +863,12 @@ button.sq-peg:hover {
   position: absolute;
   background: var(--sq-green);
   animation: sq-burst 950ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+/* Reduced motion: the burst's pixels rest where the sweep would end, for the same landing window. */
+.sq-burst[data-still] > span {
+  animation: none;
+  transform: translate(var(--dx), var(--dy));
+  opacity: 0.55;
 }
 @keyframes sq-burst {
   0% {
@@ -1095,7 +1105,7 @@ button.sq-peg:hover {
   .sq-dither-layer:first-child {
     opacity: 0.4 !important;
   }
-  .sq-burst {
+  .sq-burst:not([data-still]) {
     display: none;
   }
   .sq-ready::before {

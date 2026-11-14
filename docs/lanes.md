@@ -14,7 +14,7 @@ After the Lead's worktree is ready, the Helper queues the spec's In Progress sta
 
 - `helperCore` accepts fixture snapshots, settings, time, durable `LaneRun` records, the project's auto-start setting and an optional Start or reconcile action. It returns the board, a Start decision and typed commands. Board reads alone never launch agents.
 - `lane-contract.ts` owns the durable record schema and board Start RPC contract.
-- `registerLanes` returns `start`, `list`, `save` and `onChange`. Subsequent worker, reviewer and lifecycle handlers can use these service methods. `save` is trusted server code, never an agent tool or owner approval.
+- `registerLanes` exposes `start`, `list`, `save`, `onChange`, `reconcileStart`, `autoStart` and `reconcile`. Recovery coordinates through `projects`, `setRecoveryGate`, `withProject`, `saveRecovered` and `replaceRecovered`. Lifecycle uses `settleStartWrites` for Cancel ordering and `cancelRecovered` for display-only dismissal. These are trusted server methods, never agent tools or owner approval.
 - `registerDoctor` returns `check`, shared by lane preflight and its existing RPC.
 - The board service reads lane records and subscribes to their changes. Its existing Flying view links the Lead and displays the actual integration branch.
 
@@ -22,13 +22,13 @@ Starts are serialized per BB project, including different specs, and concurrent 
 
 Provisioning reads have a bounded wait. A timeout, failed read or creating/provisioning status leaves the lane starting and the same Lead active. The `lane-starts` service checks known starts every 15 seconds, without spawning another Lead. An explicit environment failure stops the Lead and keeps its link and reason visible. `reconcileStart(laneId)` is also available to trusted lifecycle handlers such as B8.
 
-Once the branch is ready, a refusal to queue a status or comment keeps the lane flying and appears in Needs you. `LaneRun.startWrites` retains any receipt IDs already returned, and `writeError` names the operation that could not be queued. These IDs prove queuing only; the outbox owns pending, blocked and delivered state. `reconcileStart` can retry a flying lane's refused writes with the same keys after its original workspace connection is restored. The start watcher does not automatically retry refused writes.
+Once the branch is ready, a refusal to queue a status or comment keeps the lane flying and appears in Needs you. `LaneRun.startWrites` retains any receipt IDs already returned, and `writeError` names the operation that could not be queued. These IDs prove queuing only; the outbox owns pending, blocked and delivered state. `reconcileStart` can retry a flying lane's refused writes with the same keys after its original workspace connection is restored. The start watcher and restart catch-up retry refused writes automatically with those original keys. A missing durable receipt stays visibly unproven and refuses replacement writes.
 
 `LaneStarted` is derived from its RPC schema. Its branch is null while provisioning continues, and its optional message explains provisioning or refused writes to the owner. `LaneRun` also retains the original host and In Progress state ID so later passes can finish the same start.
 
 The shared signed-comment avatar module provides public origin-only URLs and constant role assets. The Lead has its own mark; planning retains its existing mark. Diagnostics retain the lane, operation and safe error class or known code. Raw provider messages and credentials never enter the log.
 
-Full reconstruction of an interrupted or ambiguous spawn remains in a subsequent Spec B ticket. The owner's Stop, Resume and Cancel are described below.
+Restart catch-up correlates interrupted starts only with exact durable launch intent and matching pending queue evidence. Ambiguous starts stay visible and reserved; metadata-only reconstruction supplies stopped display links with no automatic authority. See [Restart catch-up](restart-recovery.md). The owner's Stop, Resume and Cancel are described below.
 
 ## Auto-start
 
@@ -56,6 +56,10 @@ Canceled and landed lanes grant no tools. Only the owner's board controls change
 `registerNeedsYouNotifications` sees every board the board service computes and sends one BB push through the push-notifications plugin for each new Needs-you item: setup, questions, stopped lanes, blocked or refused writes and, later, merges that wait on the owner. Each item has a `notifyKey`: its board key, plus the question ID for a question and `stoppedAt` for a stopped lane. A durable claim taken before sending keeps repeated reads, concurrent reads and restarts from pushing it twice. When an item leaves Needs you, its claim is released, so a recurrence is a new item. Without an outbox health read, blocked-write claims are kept rather than released. A push that fails is logged with its safe class and is not retried; the item stays on the board.
 
 Nothing else pushes from Squadron. After each Lead is bound, its BB notification level is set once to `input-only`. Ancestors cap their children, so routine finished turns of the Lead and its workers no longer push, while BB's own approval and error prompts still do.
+
+## Review, PR and merge
+
+The whole-branch review, PR reading through BB's pull-request plugin, the merge rule, the owner's Merge for `accept:owner` and landing are in [Whole-branch review, PR and merge](spec-merge.md).
 
 ## Current conventions and open questions
 

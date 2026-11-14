@@ -82,6 +82,7 @@ async function setup(t: import("node:test").TestContext, options: { acceptOwner?
         ({ id: name, name, description: null, manageable: false, pluginId: null, provider: null, registrySkillId: null,
           scope: "shared-project" as const, filePath: `/repo/.agents/skills/${name}/SKILL.md` })) }) },
       threads: {
+        list: async () => [],
         queuedMessages: {
           list: async ({ threadId }) => pending.has(threadId) ? [makeQueueEntry({ id: `queued-${threadId}`, threadId })] : [],
           send: async ({ threadId }) => { pending.delete(threadId); return { ok: true as const, delivery: "sent" as const }; },

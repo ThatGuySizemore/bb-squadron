@@ -1,3 +1,4 @@
+import { firstPromptSchema } from "./bound-thread.js";
 import { z } from "zod";
 import { routeSchema, type Route } from "./board-model.js";
 import { reviewStateSchema } from "./review-state.js";
@@ -25,6 +26,7 @@ export const reviewRunSchema = z.object({
   firstFindings: z.array(findingSchema).optional(),
   verdict: z.object({ commit: commitSchema, outcome: z.enum(["approve", "changes"]), findings: z.array(findingSchema),
     resolvedFindingIds: z.array(z.string()), at: z.number() }).optional(),
+  firstPrompt: firstPromptSchema.optional(), failurePhase: z.enum(["spawn", "prompt"]).optional(),
   failure: z.string().optional(), notifiedVerdict: z.string().optional(),
   defects: z.record(z.string(), z.object({ key: z.string(), normalizedTitle: z.string().optional(), projectId: z.string().optional(),
     issueId: z.string(), receiptId: z.string().optional(), linkReceiptId: z.string().optional() })).optional(),
@@ -38,6 +40,8 @@ export const workerRunSchema = z.object({
   integration: z.object({ commit: commitSchema, head: commitSchema, verifiedAt: z.number() }).optional(),
   writes: z.object({ started: z.string().optional(), integrated: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
+  firstPrompt: firstPromptSchema.optional(),
+  failurePhase: z.enum(["spawn", "prompt", "lifecycle"]).optional(),
   review: reviewRunSchema.optional(),
   /** An open question for the owner. Only the owner's own message in the worker thread clears it. */
   question: z.object({ id: z.string(), text: z.string(), askedAt: z.number() }).optional(),

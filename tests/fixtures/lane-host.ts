@@ -61,6 +61,7 @@ export async function laneHost(t: import("node:test").TestContext, options: { pu
         return { ok: true, channels: ["mobile"] };
       } },
       threads: {
+        list: async () => [],
         queuedMessages: {
           list: async ({ threadId }) => Array.from({ length: queued.get(threadId) ?? 0 }, (_, i) => makeQueueEntry({ id: `queued-${threadId}-${i}`, threadId })),
           send: async ({ threadId }) => {

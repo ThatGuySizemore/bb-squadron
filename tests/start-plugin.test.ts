@@ -683,3 +683,125 @@ test("Autopilot never starts a Shaping spec whose ready-for-agent label remains 
   assert.ok(board.shaping.some((spec) => spec.id === "FIX-5"));
   assert.ok(!board.ready.some((spec) => spec.id === "FIX-5"));
 });
+
+function fourReady() {
+  const base = workspaceIssues.data.issues.nodes;
+  return Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: [...base.map((node) => node.identifier === "FIX-1" ? {
+      ...node, inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+    } : node), ...[7, 10].flatMap((id) => [
+      { ...base[3], id: `fix-${id}`, identifier: `FIX-${id}` },
+      { ...base[4], id: `fix-${id + 1}`, identifier: `FIX-${id + 1}`, parent: { id: `fix-${id}` } },
+    ])],
+  } } });
+}
+
+test("two stopped Squadron lanes pause before the next start and preserve flying lanes", async (t) => {
+  const { harness, native } = await setup(t, fourReady);
+  for (const specId of ["FIX-1", "FIX-5", "FIX-7"]) {
+    await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId });
+  }
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "error" });
+  const first = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(first.autopilot?.consecutiveStops, 1);
+  assert.equal(first.autopilot?.status, "on");
+  native.threads.set("thr_lead_2", { ...native.threads.get("thr_lead_2")!, status: "idle" });
+  const paused = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(paused.autopilot, { status: "paused", laneLimit: 1, consecutiveStops: 2, pauseReason: "Two lanes in a row stopped" });
+  assert.equal(paused.lanes.find((lane) => lane.specId === "FIX-7")?.state, "flying");
+  await watcherCycle(harness);
+  assert.equal(native.count, 3);
+  assert.equal(native.threads.get("thr_lead_3")?.status, "active");
+  assert.equal(harness.inspection.sdk.callsTo("threads.sendMessage").length, 0);
+});
+
+test("pause and outcome deduplication survive reload; only owner Resume clears the brake", async (t) => {
+  const { harness, native } = await setup(t, fourReady);
+  for (const specId of ["FIX-1", "FIX-5", "FIX-7"]) await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  const once = await harness.lifecycle.reload(plugin);
+  t.after(() => once.harness.lifecycle.dispose());
+  await watcherCycle(once.harness);
+  let board = await once.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.autopilot?.consecutiveStops, 1, "historical stop isn't counted after reload");
+  native.threads.set("thr_lead_2", { ...native.threads.get("thr_lead_2")!, status: "error" });
+  board = await once.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.autopilot?.status, "paused");
+  const twice = await once.harness.lifecycle.reload(plugin);
+  t.after(() => twice.harness.lifecycle.dispose());
+  board = await twice.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.autopilot, { status: "paused", laneLimit: 1, consecutiveStops: 2, pauseReason: "Two lanes in a row stopped" });
+  await assert.rejects(twice.harness.behavior.callRpc("autopilot.resume", { projectId: "proj-one" },
+    { experimental_caller: { kind: "plugin", pluginId: "other" } }), /board/);
+  assert.deepEqual(await twice.harness.behavior.callRpc("autopilot.resume", { projectId: "proj-one" }),
+    { status: "on", laneLimit: 1, consecutiveStops: 0, pauseReason: null });
+  for (let i = 0; i < 3; i++) {
+    board = await twice.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+    assert.equal(board.autopilot?.consecutiveStops, 0, "Resume retains markers for old stopped lanes");
+  }
+  native.threads.set("thr_lead_3", { ...native.threads.get("thr_lead_3")!, status: "idle" });
+  board = await twice.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.autopilot?.consecutiveStops, 1);
+  assert.equal(board.autopilot?.status, "on");
+  await watcherCycle(twice.harness);
+  assert.equal(native.count, 4, "Resume allows the next Ready spec to start");
+  assert.deepEqual(await twice.harness.behavior.callRpc("autopilot.get", { projectId: "proj-two" }),
+    { status: "off", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+});
+
+test("a Landed lane between stops resets the count even when several outcomes arrive in one read", async (t) => {
+  const { harness, native } = await setup(t, fourReady);
+  for (const specId of ["FIX-1", "FIX-5", "FIX-7"]) await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  // Completion order differs from board/spec order: FIX-5 stopped, FIX-7 landed, FIX-1 stopped.
+  native.threads.set("thr_lead_2", { ...native.threads.get("thr_lead_2")!, status: "error", updatedAt: 100 });
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle", updatedAt: 300 });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_3: { outcome: "available", pullRequest: {
+    number: 7, title: "FIX-7", state: "merged", url: "https://github.com/fixture/repo/pull/7", baseRefName: "main",
+    headRefName: "spec/fix-7", updatedAt: "1970-01-01T00:00:00.200Z", autoMerge: false, inMergeQueue: null,
+    checks: { state: "passing", totalCount: 1, passedCount: 1, failedCount: 0, pendingCount: 0 },
+    review: { state: "none", reviewRequestCount: 0 },
+    mergeability: { state: "unknown", mergeStateStatus: null, mergeable: null }, attention: "none",
+  } } }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes.find((lane) => lane.specId === "FIX-7")?.state, "landed");
+  assert.equal(board.autopilot?.status, "on");
+  assert.equal(board.autopilot?.consecutiveStops, 1);
+});
+
+test("Outside outcomes never increment or reset the Squadron brake, and owner questions keep their slot", async (t) => {
+  const { harness, native } = await setup(t, fourReady);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-1" });
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  native.threads.set("outside", makeThreadResponse({ id: "outside", title: "Lead FIX-7", environmentId: "env_outside", projectId: "proj-one", status: "error" }));
+  let waiting = true;
+  native.threads.set("thr_lead_2", { ...native.threads.get("thr_lead_2")!, status: "idle" });
+  harness.sdk.stub("threads.list", async () => [...native.threads.values()].map((thread) => ({ ...thread,
+    environmentBranchName: "spec/fix-5", hasPendingInteraction: thread.id === "thr_lead_2" && waiting })));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  let board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes.find((lane) => lane.specId === "FIX-7")?.outside, true);
+  assert.equal(board.autopilot?.consecutiveStops, 0);
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "error" });
+  board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.autopilot?.consecutiveStops, 1);
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_outside: { outcome: "available", pullRequest: {
+    number: 8, title: "FIX-7", state: "merged", url: "https://github.com/fixture/repo/pull/8", baseRefName: "main",
+    headRefName: "outside", updatedAt: "2026-11-14T22:00:00Z", autoMerge: false, inMergeQueue: null,
+    checks: { state: "passing", totalCount: 1, passedCount: 1, failedCount: 0, pendingCount: 0 },
+    review: { state: "none", reviewRequestCount: 0 },
+    mergeability: { state: "unknown", mergeStateStatus: null, mergeable: null }, attention: "none",
+  } } }));
+  board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes.find((lane) => lane.specId === "FIX-7")?.state, "landed");
+  assert.equal(board.autopilot?.consecutiveStops, 1, "Outside landing doesn't reset a Squadron stop");
+  waiting = false;
+  native.threads.set("thr_lead_2", { ...native.threads.get("thr_lead_2")!, status: "error" });
+  await watcherCycle(harness);
+  const state = await harness.behavior.callRpc("autopilot.get", { projectId: "proj-one" });
+  assert.deepEqual(state, { status: "paused", laneLimit: 1, consecutiveStops: 2, pauseReason: "Two lanes in a row stopped" });
+  assert.equal(native.count, 2, "watcher applies the brake before filling the newly free slot");
+});

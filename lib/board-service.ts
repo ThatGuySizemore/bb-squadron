@@ -112,7 +112,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
     if (sources.autopilot) {
-      board.autopilot = await sources.autopilot.get(projectId);
+      board.autopilot = snapshot.error || snapshot.syncedAt === null
+        ? await sources.autopilot.get(projectId) : await sources.autopilot.observe(projectId, board);
       board.laneCapacity = board.autopilot.laneLimit;
       board.autoStart = board.autopilot.status === "on";
     }

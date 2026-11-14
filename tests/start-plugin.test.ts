@@ -17,7 +17,8 @@ function nativeThreads() {
   return { count: 0, threads: new Map<string, ReturnType<typeof makeThreadResponse>>(),
     metadata: new Map<string, Record<string, unknown>>(), routes: new Map<string, { model: string; reasoningLevel: string }>() };
 }
-function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile) {
+function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile,
+  mainCheck: (input: unknown) => unknown = () => ({ passed: true, logPath: "/scratch/check.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) })) {
   const { threads, metadata, routes } = native;
   return { native, ...createFakePluginHost({
     pluginId: "squadron", experimental_hostEntry: true,
@@ -54,7 +55,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
         },
       },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "githubLogin" ? { authenticated: true } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       ...(ownerHost ? await ownerHost.experimental_call("inspectFiles", { checkoutPath: "/repo", skillPaths: [] }) as Record<string, unknown> : {}),
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
@@ -913,4 +914,97 @@ test("an un-held spec with an open PR keeps its existing Lead and never returns 
   await watcherCycle(harness);
   assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
   assert.equal(native.count, 1);
+});
+
+test("merged main failure pauses before any next start, links its host log, and deduplicates through refresh and reload", async (t) => {
+  const linear = workspace({ issues: fourReady });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  let finish!: (value: unknown) => void;
+  let entered!: () => void;
+  const checking = new Promise<void>((resolve) => { entered = resolve; });
+  const result = new Promise<unknown>((resolve) => { finish = resolve; });
+  const calls: unknown[] = [];
+  const { bb, harness, native } = host(undefined, undefined, settingsFile, async (input) => {
+    calls.push(input); entered(); return result;
+  });
+  t.after(async () => { finish({ passed: false, logPath: "/scratch/main.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) }); fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await Promise.race([checking, new Promise((_, reject) => setTimeout(() => reject(new Error("main check never started")), 2000))]);
+  assert.equal(native.count, 1, "no next lane may start while the main check runs");
+  assert.deepEqual(calls, [{ checkoutPath: "/repo", prNumber: 7, quickCheck: "npm run check" }]);
+  finish({ passed: false, logPath: "/scratch/main.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.autopilot?.status, "paused");
+  assert.equal(board.autopilot?.pauseReason, "Main fails its quick check");
+  const { needsYou } = await import("../lib/board-model.js");
+  assert.deepEqual((needsYou(board)[0] as any).log, { hostId: "repo-machine", path: "/scratch/main.log" });
+  await watcherCycle(harness);
+  assert.equal(native.count, 1);
+  const next = await harness.lifecycle.reload(plugin);
+  t.after(() => next.harness.lifecycle.dispose());
+  next.harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  await next.harness.behavior.callRpc("board", { projectId: "proj-one" });
+  await next.harness.behavior.callRpc("autopilot.resume", { projectId: "proj-one" });
+  await watcherCycle(next.harness);
+  assert.equal(calls.length, 1, "Resume and reload retain the merge receipt");
+  assert.equal(native.count, 2);
+});
+
+test("main checks skip Off projects; a pass while Paused preserves the stop brake and deduplicates later reads", async (t) => {
+  const linear = workspace({ issues: fourReady });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const calls: unknown[] = [];
+  const { bb, harness, native } = host(undefined, undefined, settingsFile, (input) => {
+    calls.push(input);
+    return { passed: true, logPath: "/scratch/pass.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) };
+  });
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  for (const specId of ["FIX-1", "FIX-5", "FIX-7"]) await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_3: lanePr("merged") }));
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  assert.equal(calls.length, 0);
+  // Stop the two other lanes, then observe their stops before the merge appears.
+  harness.sdk.stub("plugins.callRpc", async () => ({}));
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "error" });
+  native.threads.set("thr_lead_2", { ...native.threads.get("thr_lead_2")!, status: "error" });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  const stopped = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(stopped.autopilot?.pauseReason, "Two lanes in a row stopped");
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_3: lanePr("merged") }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(calls.length, 1);
+  assert.equal(board.autopilot?.status, "paused");
+  assert.equal(board.autopilot?.pauseReason, "Two lanes in a row stopped");
+  assert.equal(board.autopilot?.pauseLog, undefined);
+  await Promise.all([1, 2, 3].map(() => harness.behavior.callRpc("board", { projectId: "proj-one" })));
+  assert.equal(calls.length, 1);
+});
+
+test("a returning Lead cannot hide the previous lane's unchecked merge from the main brake", async (t) => {
+  const linear = workspace();
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  let checks = 0;
+  const { bb, harness, native } = host(undefined, undefined, settingsFile, () => {
+    checks++;
+    return { passed: false, logPath: "/scratch/old.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) };
+  });
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  assert.equal(native.count, 2);
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(checks, 1);
+  assert.equal(board.autopilot?.status, "paused");
+  assert.equal(board.lanes[0].leadThreadId, "thr_lead_2");
+  assert.equal(native.threads.get("thr_lead_2")?.status, "active");
 });

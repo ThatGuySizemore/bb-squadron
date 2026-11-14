@@ -31,3 +31,11 @@ Before scheduling, the board observes derived outcomes for Squadron lanes while 
 The client-only `autopilot.resume` RPC uses the trusted `resume(projectId)` control, clearing the reason and stop count. `needsYou(board)` emits one `autopilot-paused` item with key `autopilot-paused`, no spec or thread target, and the pause reason as text. The board's Resume calls that RPC and refreshes. SQD-220 connects the CLI to trusted controls; SQD-196's notifier consumes the Needs you item after Lead reconciles the branches. Neither is implemented here.
 
 [ADR-0011](adr/0011-autopilot-brakes-and-local-lifetime.md) records the brakes and local BB lifetime.
+
+## Merged-main quick-check brake (SQD-212)
+
+While Autopilot is On or Paused, a merged Squadron lane PR triggers the project's quick check before the watcher considers another start. The host reads the PR's merged commit, fetches remote main into its own temporary repository, verifies that the merge belongs to main, and checks that commit in a detached throwaway worktree. The owner's checkout supplies only read-only repo metadata; no fetch, checkout or worktree registration changes it. A later main commit cannot replace the PR's merge commit. The check receives `SQUADRON_BASE`, the merged commit's first parent, for diff-based checks. Lanes don't set it.
+
+The host retains stdout and stderr in `quick-check.log` under its own temporary root, removes its scratch worktree and repository, and returns the log's host path. Failure pauses with `Main fails its quick check`; Needs you links the log beside Resume. Passing checks clear neither another pause nor the stop count. A host/setup read that cannot complete blocks scheduling rather than treating unknown main as passing.
+
+Private `checkedMerges` receipts, keyed by PR URL, share the controls' serialized queue and KV key with the stop markers. The queue awaits each host result and saves the receipt together with any pause, so concurrent refreshes and reloads don't recheck a completed merge. Resume retains receipts and clears the failure log. An interrupted check without a saved result is retried. Paused projects remain watched; Off projects run no check. Outside and local-only lanes don't trigger the remote-main check.

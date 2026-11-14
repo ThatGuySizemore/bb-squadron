@@ -3,11 +3,13 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { autopilotContract, autopilotStateSchema, type AutopilotState } from "./autopilot-contract.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
+import { mainCheckResultSchema } from "./main-check-contract.js";
 
 const PREFIX = "autopilot.project.";
 const defaults = (): AutopilotState => ({ status: "off", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
 const storedSchema = autopilotStateSchema.extend({
   observedOutcomes: z.record(z.string(), z.enum(["stopped", "landed"])).default({}),
+  checkedMerges: z.record(z.string(), mainCheckResultSchema).default({}),
 });
 type StoredState = z.infer<typeof storedSchema>;
 
@@ -17,7 +19,7 @@ export async function registerAutopilot(bb: BbPluginApi) {
   const pending = new Map<string, Promise<unknown>>();
   const readStored = async (projectId: string): Promise<StoredState> => {
     const parsed = storedSchema.safeParse(await bb.storage.kv.get(PREFIX + projectId));
-    return parsed.success ? parsed.data : { ...defaults(), observedOutcomes: {} };
+    return parsed.success ? parsed.data : { ...defaults(), observedOutcomes: {}, checkedMerges: {} };
   };
   const get = async (projectId: string): Promise<AutopilotState> => {
     const state = autopilotStateSchema.parse(await readStored(projectId));
@@ -26,10 +28,11 @@ export async function registerAutopilot(bb: BbPluginApi) {
   };
   for (const key of await bb.storage.kv.list(PREFIX)) await get(key.slice(PREFIX.length));
   /** Serialize read/modify/write so a brake or owner action cannot overwrite another control. */
-  function changeStored(projectId: string, change: (state: StoredState) => StoredState): Promise<AutopilotState> {
+  function changeStored(projectId: string, change: (state: StoredState) => StoredState | Promise<StoredState>): Promise<AutopilotState> {
     const run = (pending.get(projectId) ?? Promise.resolve()).catch(() => undefined).then(async () => {
       const previous = await readStored(projectId);
-      const stored = storedSchema.parse(change(previous));
+      const stored = storedSchema.parse(await change(previous));
+      if (stored.pauseLog === undefined) delete stored.pauseLog;
       const state = autopilotStateSchema.parse(stored);
       if (JSON.stringify(previous) === JSON.stringify(stored)) return state;
       await bb.storage.kv.set(PREFIX + projectId, stored);
@@ -44,10 +47,25 @@ export async function registerAutopilot(bb: BbPluginApi) {
   const update = (projectId: string, change: (state: AutopilotState) => AutopilotState) =>
     changeStored(projectId, (state) => ({ ...state, ...change(autopilotStateSchema.parse(state)) }));
   const set = (projectId: string, patch: { status?: "on" | "off"; laneLimit?: number }) => update(projectId, (state) => ({
-    ...state, ...patch, ...(patch.status ? { pauseReason: null } : {}),
+    ...state, ...patch, ...(patch.status ? { pauseReason: null, pauseLog: undefined } : {}),
   }));
   const pause = (projectId: string, reason: string) => update(projectId, (state) => ({ ...state, status: "paused", pauseReason: reason }));
-  const resume = (projectId: string) => update(projectId, (state) => ({ ...state, status: "on", pauseReason: null, consecutiveStops: 0 }));
+  const resume = (projectId: string) => update(projectId, (state) => ({ ...state, status: "on", pauseReason: null, ...(state.pauseLog ? { pauseLog: undefined } : {}), consecutiveStops: 0 }));
+  /** Hold the same project queue through the host result, before a scheduler can see a free slot. */
+  const checkMain = (projectId: string, merges: { number: number; url: string }[], check: (prNumber: number) => Promise<z.infer<typeof mainCheckResultSchema> & { hostId: string }>) =>
+    changeStored(projectId, async (state) => {
+      if (state.status === "off") return state;
+      const checkedMerges = { ...state.checkedMerges };
+      let next = state;
+      for (const pr of merges) {
+        if (checkedMerges[pr.url]) continue;
+        const result = await check(pr.number);
+        checkedMerges[pr.url] = mainCheckResultSchema.parse(result);
+        if (!result.passed) next = { ...next, status: "paused", pauseReason: "Main fails its quick check",
+          pauseLog: { hostId: result.hostId, path: result.logPath } };
+      }
+      return { ...next, checkedMerges };
+    });
   const observe = (projectId: string, board: Board) => changeStored(projectId, (state) => {
     if (state.status === "off") return state;
     const observedOutcomes = { ...state.observedOutcomes };
@@ -71,7 +89,8 @@ export async function registerAutopilot(bb: BbPluginApi) {
     return { ...state, observedOutcomes, consecutiveStops, status, pauseReason };
   });
   const isOn = (projectId: string) => states.get(projectId)?.status === "on";
-  const enabledProjectIds = () => [...states].filter(([, state]) => state.status === "on").map(([id]) => id);
+  const isEnabled = (projectId: string) => states.has(projectId) && states.get(projectId)?.status !== "off";
+  const enabledProjectIds = () => [...states].filter(([, state]) => state.status !== "off").map(([id]) => id);
   bb.rpc.register(autopilotContract, {
     "autopilot.get": ({ projectId }) => get(projectId),
     "autopilot.resume": ({ projectId }, context) => {
@@ -83,7 +102,7 @@ export async function registerAutopilot(bb: BbPluginApi) {
       return set(projectId, patch);
     },
   });
-  return { get, set, update, pause, resume, observe, isOn, enabledProjectIds };
+  return { get, set, update, pause, resume, observe, checkMain, isOn, isEnabled, enabledProjectIds };
 }
 export type AutopilotControls = Awaited<ReturnType<typeof registerAutopilot>>;
 

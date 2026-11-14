@@ -100,6 +100,7 @@ export interface NeedsYouItem {
   text: string;
   threadId: string | null;
   localMerge?: boolean;
+  log?: { hostId: string; path: string };
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
@@ -107,7 +108,8 @@ export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
   if (board.autopilot?.status === "paused") {
     items.push({ key: "autopilot-paused", kind: "autopilot-paused", specId: "", threadId: null,
-      text: board.autopilot.pauseReason ?? "Autopilot is paused." });
+      text: board.autopilot.pauseReason ?? "Autopilot is paused.",
+      ...(board.autopilot.pauseLog ? { log: board.autopilot.pauseLog } : {}) });
   }
   const fixes = (board.doctor?.checks ?? []).filter((check) => check.status === "fix");
   // A Scope problem Doctor already names needs one row, not two.

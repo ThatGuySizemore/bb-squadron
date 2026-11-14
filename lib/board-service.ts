@@ -18,6 +18,7 @@ import type { PullRequestRow } from "./pull-requests.js";
 import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
+import { mainCheckHostContract } from "./main-check-contract.js";
 
 export interface BoardSources {
   autopilot?: AutopilotControls;
@@ -103,17 +104,34 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const leads = await lanesOf(projectId, snapshot, planning);
     const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
     const environments = leads.flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
+    const pullRequests = environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined;
     const { board } = deriveBoard({
       snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
       leads, planning,
       ...progress,
-      pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
+      pullRequests,
     });
     if (sources.autopilot) {
       board.autopilot = snapshot.error || snapshot.syncedAt === null
         ? await sources.autopilot.get(projectId) : await sources.autopilot.observe(projectId, board);
+      if (!snapshot.error && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
+        // Check all Squadron environments, including an older Lead hidden by a returning lane.
+        const merges = leads.filter((lead) => !lead.outside).flatMap(({ thread }) => {
+          const row = thread.environmentId ? pullRequests?.[thread.environmentId] : undefined;
+          return row?.outcome === "available" && row.pullRequest.state === "merged" ? [row.pullRequest] : [];
+        });
+        board.autopilot = await sources.autopilot.checkMain(projectId, merges, async (prNumber) => {
+          const checkout = await readProjectCheckout(bb, projectId, lifetime.signal);
+          const quickCheck = checkout?.settings?.ok ? checkout.settings.settings.quickCheck : null;
+          if (!checkout || !quickCheck) throw new Error("Main quick check setup is unavailable.");
+          const result = await bb.hosts.experimental_client({ contract: mainCheckHostContract }).call("runMainQuickCheck",
+            { checkoutPath: checkout.path, prNumber, quickCheck },
+            { hostId: checkout.hostId, signal: lifetime.signal, timeoutMs: 32 * 60_000 });
+          return { ...result, hostId: checkout.hostId };
+        });
+      }
       board.laneCapacity = board.autopilot.laneLimit;
       board.autoStart = board.autopilot.status === "on";
     }
@@ -175,10 +193,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return at !== undefined && now() - at < SHOWN_MS;
   }
 
-  const isWatched = (id: string) => isShown(id) || sources.autopilot?.isOn(id) === true;
+  const isWatched = (id: string) => isShown(id) || sources.autopilot?.isEnabled(id) === true;
   bb.onDispose(sources.tracker.onChange((projectId) => { if (isWatched(projectId)) void refresh(projectId); }));
   bb.onDispose(onSquadronSignal(bb.realtime, boardChanged, ({ projectId }) => {
-    if (!publishing && sources.autopilot?.isOn(projectId)) void refresh(projectId);
+    if (!publishing && sources.autopilot?.isEnabled(projectId)) void refresh(projectId);
   }));
 
   bb.background.service("board-watcher", { start: async (signal) => {

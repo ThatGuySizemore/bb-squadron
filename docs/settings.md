@@ -30,6 +30,11 @@ Every tracker needs these sections before Start:
 | Routes | A Label / Family / Model / Effort table with one `(default)` row. Families are Claude or GPT; effort is medium or high. |
 | Final review | `other` or `same`, relative to the Lead's model family. |
 
+## Quick check
+
+After a merge, Squadron runs the quick check on main with SQUADRON_BASE set to the commit before the merge.
+Quick checks that select tests from changed files should compare against `$SQUADRON_BASE` when it is set. Lanes do not set it.
+
 ## Lead and worker routes
 
 Routes may include one `Lead` row, such as `| Lead | GPT | gpt-6.1-sol | medium |`. It selects the Lead regardless of spec labels. The Lead coordinates and merges; workers build tickets, including UI. Without a Lead row, Start keeps the existing behaviour: the first matching spec label wins, then the default row.

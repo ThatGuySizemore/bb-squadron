@@ -98,3 +98,18 @@ test("the live paused row resumes Autopilot through RPC, waits while saving, and
     }
   }
 });
+
+test("a main-check pause exposes its retained host log beside Resume", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const board: Board = { tick: 0, laneCapacity: 3, workersPerLane: 0, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [],
+    autopilot: { status: "paused", laneLimit: 3, consecutiveStops: 0, pauseReason: "Main fails its quick check",
+      pauseLog: { hostId: "repo-machine", path: "/scratch/main.log" } } };
+  const html = renderToStaticMarkup(createElement(BoardView, { board, demo: false, modeSwitch: null,
+    dispatch: () => undefined, onPlan: () => undefined }));
+  assert.match(html, /href="\/scratch\/main.log"[^>]*>Check log<\/a>/);
+  assert.match(html, /Main fails its quick check/);
+  assert.match(html, />Resume<\/button>/);
+});

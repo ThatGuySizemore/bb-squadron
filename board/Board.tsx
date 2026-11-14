@@ -5,7 +5,7 @@ import { isActiveTicket } from "../lib/ticket-activity.js";
 import type { LiveStep } from "../lib/live-step.js";
 import { LIVE_STEP_MS } from "../lib/live-step.js";
 import type { ReactNode, Ref } from "react";
-import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_FileLink as FileLink, experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
 import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
@@ -616,6 +616,7 @@ export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = n
             {item.text}
           </span>
           <span className="sq-need-actions">
+            {item.log ? <FileLink target={{ kind: "host", hostId: item.log.hostId, path: item.log.path }}>Check log</FileLink> : null}
             {item.kind === "autopilot-paused" ? <Btn tone="amber" disabled={autopilotSaving} onClick={onAutopilotResume}>Resume</Btn> : null}
             {item.key === setUpKey ? setUp : null}
             {item.kind === "waiting" && item.threadId ? (

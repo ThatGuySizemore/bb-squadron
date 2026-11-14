@@ -1,8 +1,6 @@
 # Issue tracker: Linear
 
-Issues and specs for this repo live in Linear: team **Sizemore**, project **BB Squadron**. Until BB Squadron can run itself, agents write with the Linear MCP tools as their own verified identity (Claude as Claude Local, Codex as Codex Local).
-
-A planning thread started from the Squadron board publishes through Squadron's own tools instead; see `skills/squadron-planner/SKILL.md`.
+Issues and specs for this repo live in Linear: team **Sizemore**, project **BB Squadron**. Agents write with the Linear MCP tools as their own verified identity (Claude as Claude Local, Codex as Codex Local).
 
 ## Conventions
 

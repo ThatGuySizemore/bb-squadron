@@ -1,4 +1,4 @@
-// Synthetic mirror snapshots for Helper core tests. Invented issues only.
+// Synthetic snapshots for board derivation tests. Invented issues only.
 import type { MirrorIssue, MirrorSnapshot } from "../../lib/linear-mirror-contract.js";
 import { parseSquadronSettings } from "../../lib/squadron-settings.js";
 import { readFileSync } from "node:fs";
@@ -45,8 +45,8 @@ export const settings = parsed;
 
 export const connected = { status: "connected" as const, message: "Connected to Fixture workspace." };
 
-/** Helper core input after a sync during this run of the plugin. */
+/** Board input after a sync during this run of the plugin. */
 export function input(snap: MirrorSnapshot, overrides: Record<string, unknown> = {}) {
-  return { snapshot: snap, connection: connected, settings, writes: null,
-    startedAt: SYNCED_AT - 60_000, now: SYNCED_AT + 5_000, ...overrides };
+  return { snapshot: snap, connection: connected, settings,
+    now: SYNCED_AT + 5_000, ...overrides };
 }

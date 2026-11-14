@@ -13,7 +13,6 @@ npm run check
 A merge stops only for these:
 
 - The plugin fails to build or to load in BB.
-- A write to Linear that is not made by the Helper.
 - An agent action that bypasses an owner approval: merging an `accept:owner` spec, deploying, releasing, or deleting something it didn't create.
 - A test or assertion weakened to get a pass.
 

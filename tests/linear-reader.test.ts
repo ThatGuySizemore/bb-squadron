@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { registerLinearAuth } from "../lib/linear-auth.js";
-import { registerLinearMirror } from "../lib/linear-mirror.js";
+import { registerLinearReader } from "../lib/linear-reader.js";
 
 const binding = { bbProjectId: "proj-one", teamId: "team-one", projectId: "linear-one" };
 const target = { data: {
@@ -15,7 +15,7 @@ const target = { data: {
 test("a binding belongs to one BB project and survives a plugin restart", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
-  const install = (api: typeof bb) => registerLinearMirror(api,
+  const install = (api: typeof bb) => registerLinearReader(api,
     registerLinearAuth(api, { fetch: async () => Response.json(target) }));
   let mirror = install(bb);
   await mirror.bind(binding);
@@ -36,7 +36,7 @@ test("a complete recorded issue walk exposes labels, states and sub-issues throu
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
   const pages = [target, issuePageOne, issuePageTwo];
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const body = JSON.parse(String(init?.body));
     if (body.query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (body.query.includes("SquadronIssues")) {
@@ -68,7 +68,7 @@ import { blockedSpec, remainingBlockers, end } from "./fixtures/linear-mirror.js
 test("blocking links keep both directions and paginated external blockers with their states", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (query.includes("SquadronBinding")) return Response.json(target);
@@ -94,7 +94,7 @@ import { specIssue, label, ready, done } from "./fixtures/linear-mirror.js";
 test("a label on a later page remains available with the mirrored state vocabulary", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (query.includes("SquadronBinding")) return Response.json(target);
@@ -116,7 +116,7 @@ test("an incomplete later page retains the last complete snapshot and reports a 
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
   let failing = false;
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (query.includes("SquadronBinding")) return Response.json(target);
@@ -139,7 +139,7 @@ test("an incomplete later page retains the last complete snapshot and reports a 
 test("the binding catalog follows all team, project and membership pages without exposing auth", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-private-key" } });
   t.after(() => harness.lifecycle.dispose());
-  registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     assert.ok(query.startsWith("query "), "the catalog is read-only");
@@ -163,13 +163,13 @@ test("the binding catalog follows all team, project and membership pages without
   });
 });
 
-test("polling tiers stay within a minute and every service start catches up in full", async (t) => {
+test("polling reads every 30 seconds and every service start catches up in full", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
   let now = 1_000_000;
   const delays: number[] = [];
   let hasIssue = true;
-  const install = (api: typeof bb) => registerLinearMirror(api, registerLinearAuth(api, {
+  const install = (api: typeof bb) => registerLinearReader(api, registerLinearAuth(api, {
     now: () => now,
     fetch: async (_url, init) => {
       const { query, variables } = JSON.parse(String(init?.body));
@@ -187,16 +187,16 @@ test("polling tiers stay within a minute and every service start catches up in f
   let mirror = install(bb);
   await mirror.bind(binding);
   let stop = () => {};
-  const run = harness.behavior.runService("linear-mirror");
+  const run = harness.behavior.runService("linear-reader");
   stop = () => run.controller.abort();
   await run.done;
-  assert.deepEqual(delays, [10_000, 30_000, 60_000, 10_000]);
+  assert.deepEqual(delays, [30_000, 30_000, 30_000, 30_000]);
   assert.deepEqual(mirror.getSnapshot("proj-one").issues, []);
-  assert.equal(mirror.getSnapshot("proj-one").syncedAt, 1_100_000);
+  assert.equal(mirror.getSnapshot("proj-one").syncedAt, 1_090_000);
   const replacement = await harness.lifecycle.reload((api) => { mirror = install(api); });
   t.after(() => replacement.harness.lifecycle.dispose());
   hasIssue = true;
-  const restarted = replacement.harness.behavior.runService("linear-mirror");
+  const restarted = replacement.harness.behavior.runService("linear-reader");
   stop = () => restarted.controller.abort();
   await restarted.done;
   assert.equal(mirror.getSnapshot("proj-one").issues[0].identifier, "FIX-1");
@@ -209,7 +209,7 @@ test("a slow sync from the previous binding cannot overwrite the owner's new pro
   let release!: (response: Response) => void;
   let started!: () => void;
   const start = new Promise<void>((resolve) => { started = resolve; });
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const { query, variables } = JSON.parse(String(init?.body));
     if (query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (query.includes("SquadronBinding")) return Response.json({ data: {
@@ -236,7 +236,7 @@ test("the poller shares auth's rate budget and retries only after its reset", as
   let now = 1_000_000;
   let requests = 0;
   const delays: number[] = [];
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, {
     now: () => now,
     fetch: async (_url, init) => {
       const { query } = JSON.parse(String(init?.body));
@@ -258,10 +258,10 @@ test("the poller shares auth's rate budget and retries only after its reset", as
   } });
   await mirror.bind(binding);
   let stop = () => {};
-  const run = harness.behavior.runService("linear-mirror");
+  const run = harness.behavior.runService("linear-reader");
   stop = () => run.controller.abort();
   await run.done;
-  assert.deepEqual(delays, [120_000, 10_000]);
+  assert.deepEqual(delays, [120_000, 30_000]);
   assert.equal(requests, 2);
   assert.equal(mirror.getSnapshot("proj-one").error, null);
 });
@@ -271,7 +271,7 @@ test("disposing the plugin cancels a mirror request without committing a partial
   let started!: () => void;
   const start = new Promise<void>((resolve) => { started = resolve; });
   let requestSignal: AbortSignal | undefined;
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const { query } = JSON.parse(String(init?.body));
     if (query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (query.includes("SquadronBinding")) return Response.json(target);
@@ -298,7 +298,7 @@ test("overlapping reads of one bound project share a single complete walk", asyn
   let started!: () => void;
   const start = new Promise<void>((resolve) => { started = resolve; });
   let issueReads = 0;
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const { query } = JSON.parse(String(init?.body));
     if (query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (query.includes("SquadronBinding")) return Response.json(target);
@@ -319,7 +319,7 @@ test("overlapping reads of one bound project share a single complete walk", asyn
 test("team labels and states on later vocabulary pages survive even when no open issue uses them", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const request = JSON.parse(String(init?.body));
     if (request.query.includes("SquadronBinding")) return Response.json(target);
     if (request.query.includes("SquadronIssues")) return Response.json({ data: { issues: { nodes: [], pageInfo: end } } });
@@ -347,7 +347,7 @@ test("team labels and states on later vocabulary pages survive even when no open
 test("the owner binding RPC syncs immediately and rejects a project outside the selected team", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
-  registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const request = JSON.parse(String(init?.body));
     if (request.query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);
     if (request.query.includes("SquadronIssues")) return Response.json({ data: { issues: { nodes: [specIssue], pageInfo: end } } });
@@ -369,7 +369,7 @@ import { closedBlockerGraph } from "./fixtures/linear-mirror.js";
 test("completed and canceled project blockers retain their status without entering open board rows", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
-  const mirror = registerLinearMirror(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
+  const mirror = registerLinearReader(bb, registerLinearAuth(bb, { fetch: async (_url, init) => {
     const request = JSON.parse(String(init?.body));
     if (request.query.includes("SquadronBinding")) return Response.json(target);
     if (request.query.includes("SquadronVocabulary")) return Response.json(vocabularyResponse);

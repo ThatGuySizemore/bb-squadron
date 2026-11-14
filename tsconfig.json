@@ -25,7 +25,6 @@
     "host.ts",
     "app.tsx",
     "board",
-    "components",
     "lib",
     "hooks"
   ]

@@ -5,9 +5,8 @@ import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, ReadySpec, Route, Ticket, TicketState, UnplannedIssue } from "../lib/board-model.js";
 import { dependencyColumns, formatMinutes, needsYou, reviewerFor } from "../lib/board-model.js";
 import type { boardContract } from "../lib/board-contract.js";
-import { boardChanged, linearOutboxChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
+import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
-import type { linearOutboxContract } from "../lib/linear-outbox-contract.js";
 import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
@@ -344,17 +343,15 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
   );
 }
 
-const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = { setup: "Setup", question: "Question", stopped: "Stopped", write: "Write", merge: "Merge" };
+const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = { setup: "Setup", question: "Question", stopped: "Stopped", merge: "Merge" };
 
-function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
+function NeedsYouStrip({ items, dispatch, setup }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
   /** Controls for a setup item, such as choosing the Linear project. */
   setup?: ReactNode;
-  onRetry?: (writeId: string) => Promise<void>;
 }) {
   const open = useOpen();
-  const [retrying, setRetrying] = useState<string | null>(null);
   if (items.length === 0) {
     return <p className="sq-clear">Nothing needs you. Every lane is flying on its own.</p>;
   }
@@ -364,34 +361,16 @@ function NeedsYouStrip({ items, dispatch, setup, onRetry }: {
         <li key={item.key} className="sq-need" data-kind={item.kind}>
           <Dither levels={[3, 6, 3]} />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
-          {item.issueId ? (
-            <span className="sq-need-issue sq-num">{item.issueId}</span>
-          ) : item.ticketId ?? item.specId ? (
+          {item.ticketId ?? item.specId ? (
             <PixelText text={item.ticketId ?? item.specId} cell={2} className="sq-need-id" />
           ) : (
             <span />
           )}
           <span className="sq-need-text">
             {item.text}
-            {item.writeId ? <span className="sq-need-receipt"> Receipt <span className="sq-mono">{item.writeId}</span></span> : null}
           </span>
           <span className="sq-need-actions">
             {item.kind === "setup" ? setup : null}
-            {item.kind === "write" && item.writeId && onRetry ? (
-              <Btn
-                tone="amber"
-                disabled={retrying === item.writeId}
-                onClick={() => {
-                  setRetrying(item.writeId!);
-                  void onRetry(item.writeId!).finally(() => setRetrying(null));
-                }}
-              >
-                {retrying === item.writeId ? "Retrying" : "Retry"}
-              </Btn>
-            ) : null}
-            {item.kind === "write" && item.threadId ? (
-              <Btn onClick={() => open.thread(item.threadId!, "the thread that asked for this write")}>Open thread</Btn>
-            ) : null}
             {item.kind === "question" && item.threadId ? (
               <Btn
                 tone="amber"
@@ -436,7 +415,7 @@ function IssueTitle({ title, url, className }: { title: string; url?: string; cl
 }
 
 function ReadyRow({ spec, board, dispatch }: { spec: ReadySpec; board: Board; dispatch: (a: BoardAction) => void }) {
-  // Real specs carry the Helper core's reason; the demo computes its own.
+  // Real specs carry the board model's reason; the demo computes its own.
   const blocked = spec.startReason !== undefined ? spec.startReason : canStart(board, spec);
   return (
     <li className="sq-ready" data-blocked={blocked !== null}>
@@ -537,12 +516,10 @@ function LinearLine({ board, now }: { board: Board; now: number }) {
   if (!linear || linear.state === "disconnected" || linear.state === "unbound") return null;
   const age = linear.syncedAt === null ? null : Math.max(0, Math.round((now - linear.syncedAt) / 60_000));
   const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
-  const pending = board.writes?.pendingCount ?? 0;
   return (
     <p className="sq-linear" data-state={linear.state} role="status" aria-live="polite">
       <span className="sq-linear-project">{linear.project}</span>
       <span>{linear.state === "current" ? read : linear.state === "failed" ? `${linear.message} ${read}` : linear.message}</span>
-      {pending > 0 ? <span className="sq-num">{pending} Linear {pending === 1 ? "write" : "writes"} waiting to send.</span> : null}
     </p>
   );
 }
@@ -557,14 +534,13 @@ interface BoardViewProps {
   /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
   planning?: string | null;
   setup?: ReactNode;
-  onRetry?: (writeId: string) => Promise<void>;
   /** Replaces Ready and Unplanned while the board can't show them. */
   notice?: ReactNode;
   footer?: ReactNode;
 }
 
-/** The board page, fed by the live Helper or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, setup, onRetry, notice, footer }: BoardViewProps) {
+/** The board page, fed by the live reader or by the synthetic simulation. */
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, setup, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -623,7 +599,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           <h2 id="sq-needs-h">
             Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
           </h2>
-          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} onRetry={onRetry} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} />
         </section>
         <DoctorPanel open={doctorOpen} id={doctorId} />
 
@@ -743,7 +719,7 @@ export function liveNotice(state: { projectId: string | null; board: Board | nul
   return null;
 }
 
-/** Start or reopen a planning thread, open it beside the board, and say when it can't write to Linear. */
+/** Start or reopen a planning thread, open it beside the board, and report a start failure. */
 export async function planFromBoard(deps: {
   start: (input: { projectId: string; issueId?: string }) => Promise<PlanningStarted>;
   openThread: (threadId: string) => void;
@@ -752,17 +728,16 @@ export async function planFromBoard(deps: {
   try {
     const started = await deps.start(issueId ? { projectId, issueId } : { projectId });
     deps.openThread(started.threadId);
-    if (!started.writes) deps.notify(`This planning thread can't publish to Linear: ${started.message ?? "Squadron's Linear writes are unavailable."}`);
   } catch (error) {
     // The server's refusals are written for the owner.
     deps.notify(error instanceof Error && error.message ? error.message : "Couldn't start planning. Try again.");
   }
 }
 
-/** The real board for the BB project in view, read from the Helper. */
+/** The real board for the BB project in view, read from the reader. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof linearOutboxContract & typeof planningContract>();
+  const rpc = useRpc<typeof boardContract & typeof planningContract>();
   const open = useOpen();
   const [planning, setPlanning] = useState<string | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
@@ -788,7 +763,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     void load();
     return () => { request.current++; };
   }, [load]);
-  // The outbox can announce the same parked write several times; read once per burst.
+  // Coalesce connection-change signals.
   const pending = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(pending.current), []);
   const loadSoon = useCallback(() => {
@@ -798,21 +773,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   useSquadronSignal(boardChanged, (payload) => {
     if (payload.projectId === projectId) void load();
   });
-  useSquadronSignal(linearOutboxChanged, (payload) => {
-    if (payload.bbProjectId === projectId) loadSoon();
-  });
   useSquadronSignal(linearConnectionChanged, () => { loadSoon(); });
-  const retry = useCallback(async (id: string) => {
-    if (!projectId) return;
-    try {
-      const receipt = await rpc.call("linear.outboxResume", { bbProjectId: projectId, id });
-      if (receipt.status === "blocked") toast("The write still couldn't go through. Its reason is on the board.");
-    } catch (error) {
-      // The server's refusals are written for the owner, such as reconnecting the original workspace.
-      toast(error instanceof Error && error.message ? error.message : "Couldn't retry the write. Try again.");
-    }
-    await load();
-  }, [rpc, projectId, load]);
   const plan = useCallback(async (issueId?: string) => {
     if (!projectId || planning !== null) return;
     setPlanning(issueId ?? "");
@@ -840,7 +801,6 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
         </>
       ) : undefined}
       setup={board?.linear?.state === "unbound" && projectId ? <BindProject projectId={projectId} onBound={() => void load()} /> : null}
-      onRetry={retry}
     />
   );
 }

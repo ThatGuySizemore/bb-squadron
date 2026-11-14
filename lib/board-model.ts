@@ -1,6 +1,5 @@
 // The board runtime schema is also the source of its public TypeScript types.
 import { z } from "zod";
-import { outboxHealthSchema } from "./linear-outbox-contract.js";
 
 const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
 const ticket = z.object({
@@ -32,9 +31,6 @@ const boardSchema = z.object({
     state: z.enum(["disconnected", "unbound", "catching-up", "current", "failed"]), message: z.string(),
     syncedAt: z.number().nullable(), project: z.string().nullable(),
   }).optional(),
-  writes: outboxHealthSchema.extend({
-    blocked: z.array(outboxHealthSchema.shape.blocked.element.extend({ issueIdentifiers: z.array(z.string()), reasonText: z.string() })),
-  }).optional(),
 });
 
 export { boardSchema };
@@ -50,11 +46,7 @@ export type Board = z.infer<typeof boardSchema>;
 export type ReadySpec = Board["ready"][number];
 export type UnplannedIssue = Board["unplanned"][number];
 export type LinearStatus = NonNullable<Board["linear"]>;
-export type BoardBlockedWrite = NonNullable<Board["writes"]>["blocked"][number];
-/** Public type retained; delivery failures are WriteDeliveryBlocked errors. */
-export type BlockedWrite = BoardBlockedWrite;
-
-export type NeedsYouKind = "setup" | "question" | "stopped" | "write" | "merge";
+export type NeedsYouKind = "setup" | "question" | "stopped" | "merge";
 
 export interface NeedsYouItem {
   key: string;
@@ -64,10 +56,6 @@ export interface NeedsYouItem {
   ticketId?: string;
   text: string;
   threadId: string | null;
-  /** The outbox receipt to retry, for a blocked write. */
-  writeId?: string;
-  /** The issue a blocked write touches. It may be a ticket, so it isn't set in pixel type. */
-  issueId?: string;
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
@@ -75,19 +63,6 @@ export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
   if (board.linear?.state === "disconnected" || board.linear?.state === "unbound") {
     items.push({ key: "setup", kind: "setup", specId: "", text: board.linear.message, threadId: null });
-  }
-  for (const write of board.writes?.blocked ?? []) {
-    items.push({
-      key: `write:${write.id}`, kind: "write", specId: "", writeId: write.id, threadId: write.threadId,
-      ...(write.issueIdentifiers[0] ? { issueId: write.issueIdentifiers[0] } : {}),
-      text: `A Linear write${write.issueIdentifiers.length ? ` for ${write.issueIdentifiers.join(", ")}` : ""} couldn't go through. ${write.reasonText}`,
-    });
-  }
-  if (board.writes?.hasMore) {
-    const more = Math.max(0, board.writes.blockedCount - board.writes.blocked.length);
-    items.push({ key: "write:more", kind: "write", specId: "", threadId: null,
-      text: more > 0 ? `${more} more Linear ${more === 1 ? "write" : "writes"} couldn't go through. Retry the ones above first.`
-        : "More Linear writes couldn't go through. Retry the ones above first." });
   }
   for (const lane of board.lanes) {
     if (lane.state === "merge-waits") {
@@ -121,7 +96,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { setup: 0, stopped: 1, question: 2, write: 3, merge: 4 };
+  const order: Record<NeedsYouKind, number> = { setup: 0, stopped: 1, question: 2, merge: 3 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 

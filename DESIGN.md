@@ -253,15 +253,15 @@ The board is a single BB nav page; it adds no navigation of its own. Every peg, 
 
 The live Linear board is the default. The demo switch opts into the existing simulation and shows the amber "Synthetic data" tag. Spec A keeps Start disabled with its reason; lane controls and animated lane examples belong to the demo until live lane execution ships.
 
-- **Linear status line:** a wrapping line under the header in 12px muted ink. The bound "Team · Project" uses board ink at 600; a failed read uses red ink. It shows connection, binding, catch-up or current state and the time of the last read. Pending-write counts use tabular figures.
-- **Setup and blocked-write rows:** the existing amber Needs-you row and kind tag. Setup offers connection or binding controls. A blocked write names its issue in the Mono token, explains the safe reason, shows "Receipt" with the stable ID in Mono, and offers Retry and a link to its originating thread when present. A capped list says when more writes await recovery. A write's issue can be a ticket, so it never uses pixel type.
+- **Linear status line:** a wrapping line under the header in 12px muted ink. The bound "Team · Project" uses board ink at 600; a failed read uses red ink. It shows connection, binding, catch-up or current state and the time of the last read.
+- **Setup rows:** the existing amber Needs-you row and kind tag, with connection or binding controls.
 - **Issue-title links:** Ready and Unplanned titles are plain text at rest, underlined on hover with a 3px underline offset and a 1px rule-ink underline. They retain the global 2px sky focus outline. Ready titles are 13.5px at 600; Unplanned titles are 13px. Unplanned parent context wraps beside the title in 12px muted ink and leaves the Linear parent unchanged.
 - **Binding picker:** native team and project selects, 28px high, 2px corners, ground fill and hairline border, 12px at 600, maximum width 220px. Controls wrap with 6px gaps. Disabled controls use 42% opacity. Progress is muted text; errors wrap on their own line in red ink. The global sky focus outline applies.
 - **Doctor:** a quiet header button with `aria-expanded` and `aria-controls`. Open checks occupy a full-width, flat region after Needs you, with 12px padding and a hairline border. Each row shows the check name, a Pass or Fix tag and a plain explanation. Fix tags have dashed borders; their text uses board ink. At 650px the explanation moves below the name and tag. Loading and error text and Check again use the existing body and button styles. No popover, shadow or header restyling.
 
 ### Linear connection settings
 
-The settings page uses the same ground, ink, type and quiet controls. Workspace names use Title; connection state sits in an announced status region. Actions wrap with 8px gaps. OAuth setup is a native disclosure with a wrapping callback URL in Mono, including its 650 weight and tabular figures. BB owns the secret-setting inputs; the page receives only public identity and setup readiness.
+The settings page uses the same ground, ink, type and quiet controls. Workspace names use Title; connection state sits in an announced status region. Check connection uses the quiet button style. BB owns the personal API key secret input; the page receives only public identity and connection status.
 
 ### Peg (signature component)
 A ticket on the sortie line. Square, ground fill, 1px hairline, 190px wide with id and state on top, title (two lines), and AI chip and time at the foot. State is ink plus form:

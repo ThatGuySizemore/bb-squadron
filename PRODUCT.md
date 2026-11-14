@@ -16,7 +16,7 @@ BB Squadron turns a Linear spec into a merged PR with as little owner time as po
 
 ## Positioning
 
-Built on Matt Pocock's engineering skills (`grill-with-docs`, `to-spec`, `to-tickets`, `implement-spec`, `tdd`, `code-review`) and Squadron's rules (one owner, two strikes, a stop list, the other family reviews). The Helper that dispatches work is plain code, not an agent, and Linear stays the only record. The board makes every ticket, thread and PR visible live in one place.
+Built on Matt Pocock's engineering skills (`grill-with-docs`, `to-spec`, `to-tickets`, `implement-spec`, `tdd`, `code-review`) and Squadron's rules (one owner, two strikes, a stop list, the other family reviews). A Lead runs the spec with Matt's skills, and Linear stays the only record. The board makes every ticket, thread and PR visible live in one place.
 
 ## Operating Context
 
@@ -25,7 +25,7 @@ Runs inside the BB desktop app as a plugin page in the left sidebar, beside agen
 ## Capabilities and Constraints
 
 - Linear is v1; GitHub Issues is v2.
-- Vocabulary is fixed by `GLOSSARY.md`: spec, ticket, lane, Helper, Lead, worker, reviewer, Needs you, Unplanned.
+- Vocabulary is fixed by `GLOSSARY.md`: spec, ticket, lane, Lead, worker, reviewer, Needs you, Unplanned.
 - The UI must follow BB's theme tokens so it works with any BB theme, light or dark.
 - Plugin UI is React inside BB; no network fonts or external assets at runtime.
 
@@ -36,7 +36,7 @@ Runs inside the BB desktop app as a plugin page in the left sidebar, beside agen
 
 ## Evidence on Hand
 
-The board defaults to the bound Linear project's mirror. No real lane execution data exists yet. The optional demo uses labelled synthetic specs and tickets. Adapter tests use synthetic response fixtures; live OAuth, delivery and visual acceptance still need separate proof. The UI must not invent customers, metrics or claims.
+The board defaults to the bound Linear project's mirror. No real lane execution data exists yet. The optional demo uses labelled synthetic specs and tickets. Adapter tests use synthetic response fixtures; live workspace and visual acceptance still need separate proof. The UI must not invent customers, metrics or claims.
 
 ## Product Principles
 

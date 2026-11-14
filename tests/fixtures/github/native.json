@@ -1,0 +1,264 @@
+[
+  {
+    "data": {
+      "repository": {
+        "nameWithOwner": "fixture/repo",
+        "issues": {
+          "nodes": [
+            {
+              "id": "I_1",
+              "number": 1,
+              "title": "GitHub spec",
+              "body": "A spec",
+              "url": "https://github.example/fixture/repo/issues/1",
+              "updatedAt": "2026-11-14T07:00:00Z",
+              "state": "OPEN",
+              "labels": {
+                "nodes": [
+                  {
+                    "id": "L_ready",
+                    "name": "ready-for-agent",
+                    "color": "00ff00"
+                  }
+                ]
+              },
+              "assignees": {
+                "nodes": []
+              },
+              "linkedBranches": {
+                "totalCount": 0
+              },
+              "parent": null,
+              "blockedBy": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "I_2",
+              "number": 2,
+              "title": "Assigned ticket",
+              "body": "Part of #99\nBlocked by: #99",
+              "url": "https://github.example/fixture/repo/issues/2",
+              "updatedAt": "2026-11-14T07:00:00Z",
+              "state": "OPEN",
+              "labels": {
+                "nodes": []
+              },
+              "assignees": {
+                "nodes": [
+                  {
+                    "id": "U_1",
+                    "login": "worker"
+                  }
+                ]
+              },
+              "linkedBranches": {
+                "totalCount": 0
+              },
+              "parent": {
+                "id": "I_1",
+                "number": 1,
+                "title": "GitHub spec",
+                "body": "A spec",
+                "url": "https://github.example/fixture/repo/issues/1",
+                "updatedAt": "2026-11-14T07:00:00Z",
+                "state": "OPEN",
+                "labels": {
+                  "nodes": [
+                    {
+                      "id": "L_ready",
+                      "name": "ready-for-agent",
+                      "color": "00ff00"
+                    }
+                  ]
+                },
+                "assignees": {
+                  "nodes": []
+                },
+                "linkedBranches": {
+                  "totalCount": 0
+                }
+              },
+              "blockedBy": {
+                "nodes": [
+                  {
+                    "id": "I_3",
+                    "number": 3,
+                    "title": "Closed blocker",
+                    "body": "",
+                    "url": "https://github.example/fixture/repo/issues/3",
+                    "updatedAt": "2026-11-14T07:00:00Z",
+                    "state": "CLOSED",
+                    "labels": {
+                      "nodes": []
+                    },
+                    "assignees": {
+                      "nodes": []
+                    },
+                    "linkedBranches": {
+                      "totalCount": 0
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": true,
+            "endCursor": "page-2"
+          }
+        }
+      }
+    }
+  },
+  {
+    "data": {
+      "repository": {
+        "nameWithOwner": "fixture/repo",
+        "issues": {
+          "nodes": [
+            {
+              "id": "I_3",
+              "number": 3,
+              "title": "Closed blocker",
+              "body": "",
+              "url": "https://github.example/fixture/repo/issues/3",
+              "updatedAt": "2026-11-14T07:00:00Z",
+              "state": "CLOSED",
+              "labels": {
+                "nodes": []
+              },
+              "assignees": {
+                "nodes": []
+              },
+              "linkedBranches": {
+                "totalCount": 1
+              },
+              "parent": {
+                "id": "I_1",
+                "number": 1,
+                "title": "GitHub spec",
+                "body": "A spec",
+                "url": "https://github.example/fixture/repo/issues/1",
+                "updatedAt": "2026-11-14T07:00:00Z",
+                "state": "OPEN",
+                "labels": {
+                  "nodes": [
+                    {
+                      "id": "L_ready",
+                      "name": "ready-for-agent",
+                      "color": "00ff00"
+                    }
+                  ]
+                },
+                "assignees": {
+                  "nodes": []
+                },
+                "linkedBranches": {
+                  "totalCount": 0
+                }
+              },
+              "blockedBy": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "I_4",
+              "number": 4,
+              "title": "Branch ticket",
+              "body": "",
+              "url": "https://github.example/fixture/repo/issues/4",
+              "updatedAt": "2026-11-14T07:00:00Z",
+              "state": "OPEN",
+              "labels": {
+                "nodes": []
+              },
+              "assignees": {
+                "nodes": []
+              },
+              "linkedBranches": {
+                "totalCount": 1
+              },
+              "parent": {
+                "id": "I_1",
+                "number": 1,
+                "title": "GitHub spec",
+                "body": "A spec",
+                "url": "https://github.example/fixture/repo/issues/1",
+                "updatedAt": "2026-11-14T07:00:00Z",
+                "state": "OPEN",
+                "labels": {
+                  "nodes": [
+                    {
+                      "id": "L_ready",
+                      "name": "ready-for-agent",
+                      "color": "00ff00"
+                    }
+                  ]
+                },
+                "assignees": {
+                  "nodes": []
+                },
+                "linkedBranches": {
+                  "totalCount": 0
+                }
+              },
+              "blockedBy": {
+                "nodes": []
+              }
+            },
+            {
+              "id": "I_5",
+              "number": 5,
+              "title": "Waiting ticket",
+              "body": "",
+              "url": "https://github.example/fixture/repo/issues/5",
+              "updatedAt": "2026-11-14T07:00:00Z",
+              "state": "OPEN",
+              "labels": {
+                "nodes": []
+              },
+              "assignees": {
+                "nodes": []
+              },
+              "linkedBranches": {
+                "totalCount": 0
+              },
+              "parent": {
+                "id": "I_1",
+                "number": 1,
+                "title": "GitHub spec",
+                "body": "A spec",
+                "url": "https://github.example/fixture/repo/issues/1",
+                "updatedAt": "2026-11-14T07:00:00Z",
+                "state": "OPEN",
+                "labels": {
+                  "nodes": [
+                    {
+                      "id": "L_ready",
+                      "name": "ready-for-agent",
+                      "color": "00ff00"
+                    }
+                  ]
+                },
+                "assignees": {
+                  "nodes": []
+                },
+                "linkedBranches": {
+                  "totalCount": 0
+                }
+              },
+              "blockedBy": {
+                "nodes": []
+              }
+            }
+          ],
+          "pageInfo": {
+            "hasNextPage": false,
+            "endCursor": null
+          }
+        }
+      }
+    }
+  }
+]

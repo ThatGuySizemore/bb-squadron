@@ -9,18 +9,20 @@ export function isOwnerWord(text: string): text is OwnerWord {
 /**
  * A label that may be an owner word. An owner word shows its glossary definition
  * on hover and keyboard focus; any other text renders as it is.
+ * `word` names the owner word when the shown text differs, as "ready" in a sentence.
  * `nested` marks a label inside a button or link: the control keeps the only tab
  * stop, and its own keyboard focus shows the definition.
  */
-export function Term({ text, nested = false }: { text: string; nested?: boolean }) {
-  return isOwnerWord(text) ? <OwnerTerm word={text} nested={nested} /> : <>{text}</>;
+export function Term({ text, word, nested = false }: { text: string; word?: OwnerWord; nested?: boolean }) {
+  const defined = word ?? (isOwnerWord(text) ? text : null);
+  return defined ? <OwnerTerm word={defined} text={text} nested={nested} /> : <>{text}</>;
 }
 
 const GAP = 6;
 const EDGE = 8;
 const HIDE_MS = 120;
 
-function OwnerTerm({ word, nested }: { word: OwnerWord; nested: boolean }) {
+function OwnerTerm({ word, text, nested }: { word: OwnerWord; text: string; nested: boolean }) {
   const id = useId();
   const term = useRef<HTMLSpanElement>(null);
   const tip = useRef<HTMLSpanElement>(null);
@@ -51,7 +53,8 @@ function OwnerTerm({ word, nested }: { word: OwnerWord; nested: boolean }) {
         window.addEventListener("scroll", hide, true);
       }
       // Below the word, or above it near the bottom; always inside the window.
-      const a = anchor.getBoundingClientRect();
+      // A word inside a control opens under the whole control, so it never covers the control's own content.
+      const a = host.getBoundingClientRect();
       const t = popover.getBoundingClientRect();
       const width = document.documentElement.clientWidth;
       const height = document.documentElement.clientHeight;
@@ -82,7 +85,7 @@ function OwnerTerm({ word, nested }: { word: OwnerWord; nested: boolean }) {
 
   return (
     <span ref={term} className="sq-term" data-term={word} tabIndex={nested ? undefined : 0} aria-describedby={nested ? undefined : id}>
-      {word}
+      {text}
       {/* In the top layer, so a scrolling rail or a narrow panel never clips it. A click on it stays off the control it sits in. */}
       <span ref={tip} id={id} role="tooltip" popover="manual" className="sq-term-tip" onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}>
         {OWNER_WORDS[word]}

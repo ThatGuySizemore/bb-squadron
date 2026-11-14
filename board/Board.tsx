@@ -4,16 +4,17 @@ import { experimental_ProviderIcon as ProviderIcon, experimental_useProviders as
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
 import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
-import type { boardContract } from "../lib/board-contract.js";
+import type { boardContract, PickerProjects } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
-import type { PlanningStarted, planningContract } from "../lib/planning-contract.js";
+import type { PlanningStarted, planningContract, setupContract } from "../lib/planning-contract.js";
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { DITHER_VARS, formationCells, layoutPixels } from "../lib/pixels.js";
 import { BindProject } from "./BindProject.js";
 import { DoctorPanel } from "./Doctor.js";
+import { currentProject, ProjectButton, ProjectListLoader } from "./ProjectPicker.js";
 
 // ---------- pixel primitives ----------
 
@@ -406,15 +407,18 @@ const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
   setup: "Setup", waiting: "Waiting", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
 };
 
-export function NeedsYouStrip({ items, dispatch, setup, demo = false, acting = null }: {
+export function NeedsYouStrip({ items, dispatch, setup, setUp, demo = false, acting = null }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
   /** Controls for the Linear setup item, such as choosing the Linear project. */
   setup?: ReactNode;
+  /** The Set up button, shown once, on the first missing-setup row. */
+  setUp?: ReactNode;
   demo?: boolean;
   acting?: LaneAction | null;
 }) {
   const open = useOpen();
+  const setUpKey = setUp ? items.find((item) => item.key === "setup:setup" || item.key === "setup:settings")?.key : undefined;
   if (items.length === 0) {
     return <p className="sq-clear">Nothing needs you. Every lane is flying on its own.</p>;
   }
@@ -434,6 +438,7 @@ export function NeedsYouStrip({ items, dispatch, setup, demo = false, acting = n
           </span>
           <span className="sq-need-actions">
             {item.key === "setup" ? setup : null}
+            {item.key === setUpKey ? setUp : null}
             {item.kind === "waiting" && item.threadId ? (
               <Btn
                 tone="amber"
@@ -589,6 +594,22 @@ function LinearLine({ board, now }: { board: Board; now: number }) {
   );
 }
 
+/** Set up is offered when Matt's setup files or docs/agents/squadron.md are missing.
+ * A squadron.md that exists but needs a fix stays Doctor's job. */
+export function needsSetup(board: Board): boolean {
+  const doctor = board.doctor;
+  if (!doctor) return false;
+  return doctor.checks.some((check) => check.id === "setup" && check.status === "fix")
+    || doctor.configurationFiles.some((file) => file.id === "project-settings" && !file.exists);
+}
+
+/** Doctor's verdict in a word or two, for the header. */
+function doctorStatus(board: Board): { text: string; tone: "pass" | "fix" } | null {
+  if (!board.doctor) return null;
+  const fixes = board.doctor.checks.filter((check) => check.status === "fix").length;
+  return fixes ? { text: `${fixes} to fix`, tone: "fix" } : { text: "Ready", tone: "pass" };
+}
+
 interface BoardViewProps {
   board: Board;
   dispatch: (a: BoardAction) => void;
@@ -602,13 +623,23 @@ interface BoardViewProps {
   /** A Stop or Resume on its way to a Lead. */
   acting?: LaneAction | null;
   setup?: ReactNode;
+  /** Starts the Set up thread; the button shows when needsSetup(board). */
+  onSetUp?: () => void;
+  settingUp?: boolean;
   /** Replaces Ready and Open issues while the board can't show them. */
   notice?: ReactNode;
+  /** A safe, visible note about an update the board couldn't use. */
+  diagnostic?: string | null;
+  /** The live board's project picker: its header button and its open list. */
+  projectButton?: ReactNode;
+  projectList?: ReactNode;
+  /** The project Doctor checks; defaults to BB's context project. */
+  projectId?: string | null;
   footer?: ReactNode;
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -618,6 +649,15 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
   const onLine = board.lanes.filter((l) => l.state !== "landed" || isLanding(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !isLanding(l));
   const openTickets = flying.reduce((n, l) => n + l.tickets.filter((t) => t.state !== "branch" && t.state !== "done").length, 0);
+  const doctor = doctorStatus(board);
+  const setUpButton = onSetUp && needsSetup(board) ? (
+    <>
+      {settingUp ? <span className="sq-plan-why" role="status">Starting the setup thread</span> : null}
+      <Btn tone="amber" disabled={settingUp} title={settingUp ? "Opening the setup thread" : "Start a thread that sets this project up for Squadron"} onClick={onSetUp}>
+        {settingUp ? "Opening…" : "Set up"}
+      </Btn>
+    </>
+  ) : null;
 
   return (
     <div className="sq" style={DITHER_VARS as CSSProperties} data-reduced={reduced}>
@@ -625,6 +665,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
         <header className="sq-head">
           <div className="sq-head-title">
             <h1>Squadron</h1>
+            {projectButton}
             {demo ? <FormationMark flying={flying.length} capacity={board.laneCapacity} /> : null}
             {demo ? (
               <span className="sq-tag" data-tone="amber">
@@ -655,20 +696,23 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
             <Btn tone="primary" disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : undefined} onClick={() => onPlan()}>
               {planning === "" ? "Opening…" : "Plan a spec"}
             </Btn>
-            <button type="button" className="sq-btn" aria-expanded={doctorOpen} aria-controls={doctorId} onClick={() => setDoctorOpen((open) => !open)}>
-              Doctor
+            <button type="button" className="sq-btn sq-doctor-button" aria-expanded={doctorOpen} aria-controls={doctorId} onClick={() => setDoctorOpen((open) => !open)}>
+              Doctor{doctor ? <span className="sq-sr">: </span> : null}
+              {doctor ? <span className="sq-doctor-status" data-status={doctor.tone}>{doctor.text}</span> : null}
             </button>
           </div>
         </header>
+        {projectList}
         <LinearLine board={board} now={Date.now()} />
+        {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <h2 id="sq-needs-h">
             Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
           </h2>
-          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} demo={demo} acting={acting} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} setUp={setUpButton} demo={demo} acting={acting} />
         </section>
-        <DoctorPanel open={doctorOpen} id={doctorId} />
+        <DoctorPanel open={doctorOpen} id={doctorId} projectId={projectId} />
 
         <section className="sq-section" aria-labelledby="sq-flying-h">
           <h2 id="sq-flying-h">Flying</h2>
@@ -848,11 +892,36 @@ export async function mergeFromBoard(deps: {
   } finally { await deps.refresh(); }
 }
 
-/** The real board for the BB project in view, read from the reader. */
+/** How often the page reads the project it shows. The server polls only shown projects. */
+const POLL_MS = 30_000;
+
+/** The real board for the project the owner picked, read from the reader. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
-  const { projectId } = useBbContext();
-  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof laneContract>();
+  const context = useBbContext().projectId;
+  const rpc = useRpc<typeof boardContract & typeof planningContract & typeof setupContract & typeof laneContract>();
   const open = useOpen();
+  const [listed, setListed] = useState<PickerProjects | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerId = useId();
+  // A new route context replaces an earlier pick in this page.
+  useEffect(() => { setPicked(null); }, [context]);
+  const projectId = currentProject({ picked, context, lastPick: listed?.lastPick ?? null });
+  useEffect(() => {
+    let current = true;
+    rpc.call("board.projects", null).then((next) => { if (current) setListed(next); })
+      .catch(() => { if (current) setListed({ projects: [], lastPick: null }); });
+    return () => { current = false; };
+  }, [rpc]);
+  // With nothing to open, the picker is open and asking.
+  const asking = listed !== null && projectId === null;
+  const pick = useCallback((id: string) => {
+    setPicked(id); setPickerOpen(false);
+    setListed((value) => value && { ...value, lastPick: id });
+    void rpc.call("board.pick", { projectId: id }).catch(() => undefined);
+  }, [rpc]);
+  const [settingUp, setSettingUp] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<string | null>(null);
   const [planning, setPlanning] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
   const [acting, setActing] = useState<LaneAction | null>(null);
@@ -879,6 +948,12 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     void load();
     return () => { request.current++; };
   }, [load]);
+  // Poll only the project this page shows, and only while the page is visible.
+  useEffect(() => {
+    if (!projectId) return;
+    const id = window.setInterval(() => { if (document.visibilityState !== "hidden") void load(); }, POLL_MS);
+    return () => window.clearInterval(id);
+  }, [load, projectId]);
   // Coalesce connection-change signals.
   const pending = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(pending.current), []);
@@ -886,10 +961,23 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     window.clearTimeout(pending.current);
     pending.current = window.setTimeout(() => { void load(); }, 400);
   }, [load]);
+  // A signal that fails validation is shown, and the board is read again in case it mattered.
+  const invalid = useCallback((text: string) => { setDiagnostic(text); loadSoon(); }, [loadSoon]);
   useSquadronSignal(boardChanged, (payload) => {
+    setDiagnostic(null);
     if (payload.projectId === projectId) void load();
-  });
-  useSquadronSignal(linearConnectionChanged, () => { loadSoon(); });
+  }, invalid);
+  useSquadronSignal(linearConnectionChanged, () => { loadSoon(); }, invalid);
+  const setUp = useCallback(async () => {
+    if (!projectId || settingUp) return;
+    setSettingUp(true);
+    try {
+      const started = await rpc.call("planning.setup", { projectId });
+      open.thread(started.threadId, "the setup thread");
+    } catch (error) {
+      toast(error instanceof Error && error.message ? error.message : "Couldn't start the setup thread. Try again.");
+    } finally { setSettingUp(false); }
+  }, [rpc, projectId, settingUp, open]);
   const plan = useCallback(async (issueId?: string) => {
     if (!projectId || planning !== null) return;
     setPlanning(issueId ?? "");
@@ -924,8 +1012,15 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
     } finally { setActing(null); }
   }, [rpc, projectId, acting, load]);
   const notice = liveNotice({ projectId, board, failed });
+  const projectName = listed?.projects.find((item) => item.id === projectId)?.name ?? null;
   return (
     <BoardView
+      projectId={projectId}
+      projectButton={listed ? <ProjectButton name={projectName} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
+      projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} /> : null}
+      onSetUp={() => void setUp()}
+      settingUp={settingUp}
+      diagnostic={diagnostic}
       board={board ?? EMPTY_BOARD}
       demo={false}
       modeSwitch={modeSwitch}

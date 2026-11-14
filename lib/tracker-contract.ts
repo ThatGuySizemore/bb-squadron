@@ -34,6 +34,10 @@ export type TrackerRelation = z.infer<typeof trackerRelationSchema>;
 /** Reader implementations may load from a remote host. No write operations. */
 export interface TrackerReader {
   getSnapshot(bbProjectId: string): TrackerSnapshot | Promise<TrackerSnapshot>;
+  /** Optional fresh read for a project no poller keeps current, such as the
+   * picker's counts or a board that starts showing a project. Readers that
+   * read on every getSnapshot don't need it. */
+  refresh?(bbProjectId: string): Promise<TrackerSnapshot>;
   onChange(listener: (bbProjectId: string) => void): () => void;
 }
 

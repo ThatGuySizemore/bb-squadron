@@ -63,7 +63,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
       ghHostname: github.status === "fulfilled" ? github.value.hostname : undefined,
     });
     if (skills.status === "rejected" || !inspection) report.checks[0].message = "Couldn't check this repo's installed plugins. Make sure its machine is online, then check again.";
-    if (config.settingsMarkdown === null) report.checks[2].message = "Make sure docs/agents/squadron.md exists and this repo's machine is online, then check again.";
+    if (config.settingsMarkdown === null) report.checks[2].message = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
     return report;
   }
   bb.rpc.register(doctorContract, { doctor: ({ projectId, environmentId }, context) => read(projectId, context.experimental_signal, environmentId) });

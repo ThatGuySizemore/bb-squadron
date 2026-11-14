@@ -14,7 +14,7 @@ Read `GLOSSARY.md` before naming anything, and read `docs/adr/` before changing 
 
 ### Issue tracker
 
-Issues live in Linear: team Sizemore, project BB Squadron. See `docs/agents/issue-tracker.md`.
+Issues live in Linear: team Squadron (`SQD`), project BB Squadron. Tickets from before 14 Nov 2026 also answer to their old `SIZE-…` IDs. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

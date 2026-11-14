@@ -68,22 +68,22 @@ export function helperCore(input: HelperInput): HelperOutput {
   const binding = snapshot.binding;
   const runs = input.lanes ?? [];
   const active = runs.filter((run) => run.state !== "landed");
-  /** Open blockers of one issue, in identifier order. Unknown endpoints are skipped. */
-  const openBlockers = (issue: MirrorIssue): Blocker[] => snapshot.relations
+  /** One resolution rule for Ready, dispatch and cards. Unknown endpoints stay
+   * blocked with a public label; relation UUIDs never enter the board. */
+  const unresolvedBlockers = (issue: MirrorIssue, run?: LaneRun): Blocker[] => snapshot.relations
     .filter((relation) => relation.relatedIssueId === issue.id)
     .flatMap((relation) => {
       const blocker = byId.get(relation.issueId);
-      return blocker && isOpenIssue(blocker) ? [blocker] : [];
-    })
-    .sort(byIdentifier)
-    .map((blocker) => ({
-      id: blocker.identifier, title: blocker.title, url: blocker.url,
-      outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id,
-    }));
+      if (!blocker) return [{ id: "Unknown blocker", title: "This blocker isn't in the current Linear mirror. Refresh Linear before starting.", url: "", outside: false }];
+      const integrated = run && blocker.parentId === run.specIssueId && blocker.teamId === binding?.team.id && blocker.projectId === binding?.project.id &&
+        run.workers?.some((worker) => worker.ticketIssueId === blocker.id && worker.state === "integrated" && worker.integration && worker.integration.commit === worker.commit);
+      return !isOpenIssue(blocker) || integrated ? [] : [{ id: blocker.identifier, title: blocker.title, url: blocker.url,
+        outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id }];
+    }).sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
   const ready: ReadySpec[] = specs.filter((spec) => !runs.some((run) => run.specIssueId === spec.id)).map((spec) => {
     const tickets = open.filter((issue) => issue.parentId === spec.id);
-    const specBlockers = openBlockers(spec);
-    const ticketBlockers = tickets.map(openBlockers);
+    const specBlockers = unresolvedBlockers(spec);
+    const ticketBlockers = tickets.map((ticket) => unresolvedBlockers(ticket));
     const externalTicketBlockers = ticketBlockers.flat().filter((blocker) => !tickets.some((ticket) => ticket.identifier === blocker.id));
     const blockers = [...new Map([...specBlockers, ...externalTicketBlockers].map((blocker) => [blocker.id, blocker])).values()]
       .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
@@ -162,38 +162,30 @@ export function helperCore(input: HelperInput): HelperOutput {
       commands.push({ type: "start-lead", specIssueId: spec.id, specId: spec.identifier, route: resolveRoute(settings, labels(spec)) });
     }
   }
-  // A verified in-lane merge advances the lane before its final PR marks
-  // tickets Done. Other lanes and external blockers still require Linear Done.
-  const workerBlockers = (run: LaneRun, issue: MirrorIssue): Blocker[] => snapshot.relations
-    .filter((relation) => relation.relatedIssueId === issue.id)
-    .flatMap((relation) => {
-      const blocker = byId.get(relation.issueId);
-      if (!blocker) return [{ id: relation.issueId, title: "Unknown blocker", url: "", outside: true }];
-      const integrated = blocker.parentId === run.specIssueId && blocker.teamId === binding?.team.id && blocker.projectId === binding?.project.id &&
-        run.workers?.some((worker) => worker.ticketIssueId === blocker.id && worker.state === "integrated" && worker.integration?.commit === worker.commit);
-      return blocker.state.type === "completed" || integrated ? [] : [{ id: blocker.identifier, title: blocker.title, url: blocker.url,
-        outside: blocker.teamId !== binding?.team.id || blocker.projectId !== binding?.project.id }];
-    }).sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
   let worker: StartDecision | undefined;
   if (action?.type === "spawn-worker") {
     const run = runs.find((item) => item.id === action.laneId);
     const spec = run ? byId.get(run.specIssueId) : undefined;
     const ticket = snapshot.issues.find((item) => item.identifier === action.ticketId && item.parentId === run?.specIssueId && item.inProject);
+    const specBlockers = run && spec ? unresolvedBlockers(spec, run) : [];
+    const ticketBlockers = run && ticket ? unresolvedBlockers(ticket, run) : [];
     let reason: string | null = null;
     if (!run || run.state !== "flying" || !run.branch || !run.leadThreadId) reason = "This lane isn't ready for workers.";
     else if (linear !== "current") reason = message;
     else if (!settings) reason = "Fix Squadron settings before starting workers.";
     else if (!spec?.inProject || !isOpenIssue(spec)) reason = "This spec isn't active in this project's current board.";
-    else if (workerBlockers(run, spec).length) reason = `Waits on ${list(workerBlockers(run, spec).map((blocker) => blocker.id))}`;
+    else if (specBlockers.length) reason = `Waits on ${list(specBlockers.map((blocker) => blocker.id))}`;
     else if (!ticket || !isOpenIssue(ticket)) reason = "This ticket isn't open in this lane.";
     else if (run.workers?.some((item) => item.ticketIssueId === ticket.id)) reason = "Work has already started on this ticket.";
-    else if (workerBlockers(run, ticket).length) reason = `Waits on ${list(workerBlockers(run, ticket).map((blocker) => blocker.id))}`;
+    else if (ticketBlockers.length) reason = `Waits on ${list(ticketBlockers.map((blocker) => blocker.id))}`;
     else if ((run.workers ?? []).filter((item) => item.state !== "reported" && item.state !== "integrated").length >= settings.limits.workersPerLane) reason = "All worker slots are full.";
     worker = reason ? { allowed: false, reason } : { allowed: true };
     if (worker.allowed && run && ticket && settings) commands.push({ type: "spawn-worker", laneId: run.id,
       ticketIssueId: ticket.id, ticketId: ticket.identifier, route: run.routeOverrides?.[ticket.id] ?? resolveRoute(settings, labels(ticket)) });
   }
   const lanes: Board["lanes"] = runs.flatMap((run) => {
+    const spec = byId.get(run.specIssueId);
+    const specBlockers = spec ? unresolvedBlockers(spec, run) : [];
     return [{ specId: run.specId, title: run.title, lead: run.route, leadThreadId: run.leadThreadId,
       branch: run.branch ?? "Preparing integration branch", state: run.state === "starting" ? "flying" : run.state,
       minutes: Math.max(0, Math.floor((input.now - run.startedAt) / 60_000)), acceptOwner: run.acceptOwner,
@@ -202,7 +194,7 @@ export function helperCore(input: HelperInput): HelperOutput {
       tickets: snapshot.issues.filter((issue) => issue.parentId === run.specIssueId &&
         (issue.inProject || run.workers?.some((worker) => worker.ticketIssueId === issue.id))).sort(byIdentifier).map((issue) => {
         const work = run.workers?.find((worker) => worker.ticketIssueId === issue.id);
-        const blockers = workerBlockers(run, issue);
+        const blockers = [...new Map([...specBlockers, ...unresolvedBlockers(issue, run)].map((blocker) => [blocker.id, blocker])).values()];
         return { id: issue.identifier, title: issue.title, blockedBy: blockers.map((blocker) => blocker.id),
           route: work?.route ?? run.routeOverrides?.[issue.id] ?? (settings ? resolveRoute(settings, labels(issue)) : run.route),
           ...(!work && settings && run.state === "flying" ? { routeChoices: uniqueRoutes(settings.routes) } : {}),

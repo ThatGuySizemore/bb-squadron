@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { createFakePluginHost, makeQueueEntry, makeThreadResponse, makePluginAgentConfigurationContext, makeMessageDispatchHookContext } from "@get-bb/plugin-sdk/testing";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import plugin from "../server.js";
+import { LinearRequestError } from "../lib/linear-auth.js";
 import type { Board } from "../lib/board-model.js";
 import { binding, workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { end, ready } from "./fixtures/linear-mirror.js";
@@ -11,7 +12,7 @@ import { end, ready } from "./fixtures/linear-mirror.js";
 const settings = readFileSync("tests/fixtures/squadron.md", "utf8");
 const commit = "a".repeat(40);
 const head = "b".repeat(40);
-async function setup(t: import("node:test").TestContext, options: { verify?: boolean; spawnFails?: boolean; provisioning?: boolean; releaseFails?: "lead" | "worker"; reviewName?: string; workerReleaseGate?: Promise<void> } = {}) {
+async function setup(t: import("node:test").TestContext, options: { verify?: boolean; spawnFails?: boolean; provisioning?: boolean; releaseFails?: "lead" | "worker"; reviewName?: string; workerReleaseGate?: Promise<void>; deferWorkerEnvironment?: boolean; onEnvironmentRead?: (id: string) => Promise<void> } = {}) {
   const nodes = structuredClone(workspaceIssues.data.issues.nodes);
   const original = nodes.find((issue) => issue.id === "fix-6")!;
   for (const i of [7, 8, 10, 11]) nodes.push({ ...structuredClone(original), id: `fix-${i}`, identifier: `FIX-${i}`, title: `Ticket ${i}` });
@@ -53,7 +54,7 @@ async function setup(t: import("node:test").TestContext, options: { verify?: boo
             if (options.releaseFails === (threadId === "thr_lead" ? "lead" : "worker")) throw new Error("fake-private-release-error");
             if (threadId !== "thr_lead" && options.workerReleaseGate) await options.workerReleaseGate;
             const value = threads.get(threadId)!;
-            threads.set(threadId, { ...value, environmentId: `env-${threadId}` });
+            if (!options.deferWorkerEnvironment || threadId === "thr_lead") threads.set(threadId, { ...value, environmentId: `env-${threadId}` });
             return { ok: true as const, delivery: "sent" as const };
           },
         },
@@ -65,13 +66,15 @@ async function setup(t: import("node:test").TestContext, options: { verify?: boo
         },
         get: async ({ threadId }) => threads.get(threadId) ?? makeThreadResponse({ id: threadId, projectId: "proj-one" }),
       },
-      environments: { get: async ({ environmentId }) => ({ id: environmentId, projectId: "proj-one", hostId: "repo-host",
+      environments: { get: async ({ environmentId }) => {
+        await options.onEnvironmentRead?.(environmentId);
+        return ({ id: environmentId, projectId: "proj-one", hostId: "repo-host",
         status: options.provisioning && environmentId !== "env-thr_lead" ? "provisioning" as const : "ready" as const,
         branchName: environmentId === "env-thr_lead" ? "bb/integration" : `bb/${environmentId}`, path: "/worktree",
         baseBranch: environmentId === "env-thr_lead" ? "main" : "bb/integration", defaultBranch: "main", mergeBaseBranch: "main", name: null, createdAt: 0, updatedAt: 0,
         environmentProviderId: "environment-git-worktree", environmentProviderInstanceKey: "fixture", environmentProviderSelection: null,
         hostLifecycle: "active", isGitRepo: true, isWorktree: true, managed: true, workspaceProvisionType: "managed-worktree",
-        lifecycle: { phase: "active", retireAt: null, teardown: null } }) },
+        lifecycle: { phase: "active", retireAt: null, teardown: null } }); } },
     },
   });
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
@@ -99,6 +102,8 @@ test("SDK host end-to-end: Start -> Lead worker spawn -> worker report -> verifi
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["codex", "gpt-6.1-sol", "high", "default"]);
   assert.deepEqual([args.pluginMetadata?.role, args.pluginMetadata?.ticketId, args.pluginMetadata?.specId], ["Worker", "FIX-6", "FIX-5"]);
   assert.match(args.prompt ?? "", /tdd/);
+  assert.match(args.prompt ?? "", /Merge the latest integration branch tip into your own branch before reporting done\./);
+  assert.match(args.prompt ?? "", /Do not merge into the integration branch or open or merge the PR\./);
   await call("squadron_report", { type: "done", commit, summary: "Built with tests." }, { threadId: worker.threadId, projectId: "proj-one" });
   await assert.rejects(call("squadron_spawn_worker", { ticketId: "FIX-7" }), /Waits on FIX-6/);
   await call("squadron_report", { type: "integrated", ticketId: "FIX-6", commit });
@@ -212,6 +217,7 @@ test("a worker report reaches its Lead, and a refused status preserves progress 
   await call("squadron_report", { type: "integrated", ticketId: "FIX-6", commit });
   const ticket = (await board()).lanes[0].tickets.find((item) => item.id === "FIX-6")!;
   assert.equal(ticket.state, "branch"); assert.match(ticket.writeError ?? "", /couldn't queue/);
+  assert.ok(harness.inspection.logEntries.some((entry) => /Lane .* worker .* queue-integrated: workspace_changed/.test(entry.message)));
   restoreWrites(); at += 60_001; // The connection's documented identity reuse expires.
   await call("squadron_report", { type: "integrated", ticketId: "FIX-6", commit });
   assert.equal((await board()).writes?.pendingCount, 5);
@@ -289,4 +295,53 @@ test("auto-start's concurrent timer preserves a bound worker waiting on its firs
   assert.equal(result.lanes[0].tickets.find((ticket) => ticket.id === "FIX-6")?.state, "branch");
   assert.equal(result.lanes[0].tickets.find((ticket) => ticket.id === "FIX-7")?.state, "ready");
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 2);
+});
+
+test("environment refresh preserves a newer worker reservation and the refreshed worker's newer done state", async (t) => {
+  let entered!: () => void;
+  let release!: () => void;
+  const refreshing = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let reads = 0;
+  const { start, call, board, threads } = await setup(t, { deferWorkerEnvironment: true,
+    onEnvironmentRead: async (id) => {
+      if (id === "env-thr_worker_2" && ++reads === 1) { entered(); await gate; }
+    },
+  });
+  await start();
+  const first = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  assert.equal(first.branch, null);
+  threads.set(first.threadId, { ...threads.get(first.threadId)!, environmentId: "env-thr_worker_2" });
+  const workerContext = { threadId: first.threadId, projectId: "proj-one" };
+  const pendingStatus = call("squadron_status", {}, workerContext);
+  try {
+    await refreshing;
+    const next = await call("squadron_spawn_worker", { ticketId: "FIX-8" });
+    await call("squadron_report", { type: "done", commit, summary: "Finished while status waited." }, workerContext);
+    release();
+    await pendingStatus;
+    const cards = (await board()).lanes[0].tickets;
+    assert.equal(cards.find((ticket) => ticket.id === "FIX-8")?.threadId, next.threadId, "the later child must retain its reservation and link");
+    assert.equal(cards.find((ticket) => ticket.id === "FIX-6")?.state, "review", "refresh must preserve the newer done report");
+    assert.equal((await call("squadron_status", {})).reports.find((report: { ticketId: string }) => report.ticketId === "FIX-6")?.commit, commit);
+    await assert.rejects(call("squadron_spawn_worker", { ticketId: "FIX-8" }), /already started/);
+  } finally { release(); await pendingStatus; }
+});
+
+test("worker diagnostics retain safe classes and codes without leaking provider messages", async (t) => {
+  const cases = [
+    { name: "timeout", error: new DOMException("fake-private-diagnostic-detail", "TimeoutError"), expected: "TimeoutError" },
+    { name: "abort", error: new DOMException("fake-private-diagnostic-detail", "AbortError"), expected: "AbortError" },
+    { name: "Linear code", error: new LinearRequestError("rate_limited"), expected: "LinearRequestError:rate_limited" },
+    { name: "type", error: new TypeError("fake-private-diagnostic-detail"), expected: "TypeError" },
+  ];
+  for (const item of cases) await t.test(item.name, async (t) => {
+    const { start, call, harness } = await setup(t, { onEnvironmentRead: async (id) => {
+      if (id !== "env-thr_lead") throw item.error;
+    } });
+    await start();
+    await call("squadron_spawn_worker", { ticketId: "FIX-6" });
+    assert.ok(harness.inspection.logEntries.some((entry) => entry.message.startsWith("Lane ") && entry.message.includes(" worker ") && entry.message.endsWith(`provisioning: ${item.expected}`)));
+    assert.ok(!JSON.stringify(harness.inspection.logEntries).includes("fake-private-diagnostic-detail"));
+  });
 });

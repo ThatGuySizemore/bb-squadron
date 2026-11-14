@@ -262,6 +262,7 @@ The live Linear board is the default. The demo switch opts into the existing sim
 - **Setup and blocked-write rows:** the existing amber Needs-you row and kind tag. Setup offers connection or binding controls. A blocked write names its issue in the Mono token, explains the safe reason, shows "Receipt" with the stable ID in Mono, and offers Retry and a link to its originating thread when present. A capped list says when more writes await recovery. A write's issue can be a ticket, so it never uses pixel type.
 - **Issue-title links:** Ready and Unplanned titles are plain text at rest, underlined on hover with a 3px underline offset and a 1px rule-ink underline. They retain the global 2px sky focus outline. Ready titles are 13.5px at 600; Unplanned titles are 13px. Unplanned parent context wraps beside the title in 12px muted ink and leaves the Linear parent unchanged.
 - **Binding picker:** native team and project selects, 28px high, 2px corners, ground fill and hairline border, 12px at 600, maximum width 220px. Controls wrap with 6px gaps. Disabled controls use 42% opacity. Progress is muted text; errors wrap on their own line in red ink. The global sky focus outline applies.
+- **Ticket route:** before work starts, Ready and Waiting pegs offer a native model/effort select in their foot. It reuses the binding picker's 28px height, ground fill, hairline, 2px corners, 600 weight and sky focus outline, with 11px text and 4px inline padding to fit the peg. Saving disables the select and inserts "Saving route…" in a persistent status region; an empty status region remains in the accessibility tree while visually clipped. Errors appear in a toast and refresh the board. Once a worker is reserved, the select is replaced by its fixed route chip and the card opens the linked worker.
 - **Doctor:** a quiet header button with `aria-expanded` and `aria-controls`. Open checks occupy a full-width, flat region after Needs you, with 12px padding and a hairline border. Each row shows the check name, a Pass or Fix tag and a plain explanation. Fix tags have dashed borders; their text uses board ink. At 650px the explanation moves below the name and tag. Loading and error text and Check again use the existing body and button styles. No popover, shadow or header restyling.
 
 ### Linear connection settings
@@ -270,11 +271,11 @@ The settings page uses the same ground, ink, type and quiet controls. Workspace 
 
 ### Peg (signature component)
 A ticket on the sortie line. Square, ground fill, 1px hairline, 190px wide with id and state on top, title (two lines), and AI chip and time at the foot. State is ink plus form:
-- **Waiting:** slim (168px, one-line title, no foot), dashed border, muted id and title, "after SQD-n" in mono.
+- **Waiting:** slim (168px, one-line title, no foot unless the ticket still offers its route select), dashed border, muted id and title, "after SQD-n" in mono.
 - **Ready:** full size, border at foreground 40%, state in board ink.
 - **Working:** border replaced by a sky 2px-dash march (6px period) that steps round the edge every 600ms; inside, sky dither at levels 2, 3, 5 cycles every 2.4s.
 - **Needs you:** amber border plus amber outline offset 2px (the doubled edge), amber dither 2, 4, 6, 4 cycling.
-- **In review:** solid 1px sky border, still sky dither at level 2 (32%); state reads "Review · model" with the reviewer's chip.
+- **In review:** solid 1px sky border, still sky dither at level 2 (32%); state reads "Review · model" with the reviewer's chip. Before a reviewer exists, a worker's done report uses "Reported done", the worker's chip and its worker-thread link with the same review border and dither.
 - **In branch / Done:** compact (84px, id and state only), green border (70% for in branch, full for done), still green dither at 22%.
 - **Stopped:** 2px red border, red dither at level 4 (26%), and one 460ms stepped glitch (horizontal shifts and slice clips) when it fails.
 

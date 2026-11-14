@@ -10,10 +10,10 @@ _Avoid_: epic, feature issue, PRD
 **Ticket**: A sub-issue of a spec: one tracer-bullet slice that one worker can finish in one sitting.
 _Avoid_: task, story, slice (except when describing the shape)
 
-**Blocker**: An issue that must be Done before another may start, from Linear's native "blocks" relation. Specs block specs; tickets block tickets, across specs too.
+**Blocker**: A spec or ticket that holds another of its kind through Linear's native "blocks" relation, within or across specs. Done or canceled resolves it in Linear; within the same lane, approved work verified in the integration branch also resolves it before the spec PR marks it Done.
 _Avoid_: dependency (in UI copy), prerequisite
 
-**Frontier**: The tickets of a spec whose blockers are all done and that nobody is working on yet.
+**Frontier**: The unstarted tickets of a spec whose blockers are resolved, including approved predecessors verified in that lane's integration branch.
 
 **Follow-up**: An issue filed during a lane for something worth doing that should not hold the merge, labelled `follow-up` and linked to its spec.
 

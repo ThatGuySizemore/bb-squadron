@@ -12,7 +12,7 @@ import type { registerLinearOutbox } from "./linear-outbox.js";
 import { modelDisplayName } from "./linear-outbox.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { signedCommentAvatarUrl } from "./linear-avatar.js";
-import { LinearRequestError } from "./linear-auth.js";
+import { diagnostic } from "./diagnostic.js";
 import { ACCEPT_OWNER } from "./linear-issues.js";
 import type { SettingsResult } from "./squadron-settings.js";
 
@@ -120,13 +120,6 @@ export function registerLanes(bb: BbPluginApi, sources: LaneSources, options: { 
     return signedCommentAvatarUrl(bb.server.experimental_appUrl, bb.pluginId, "Lead") ?? undefined;
   }
 
-  function diagnostic(error: unknown): string {
-    if (error instanceof LinearRequestError) return `LinearRequestError:${error.code}`;
-    if (error instanceof DOMException && ["TimeoutError", "AbortError"].includes(error.name)) return error.name;
-    if (error instanceof TypeError) return "TypeError";
-    if (error instanceof Error && error.message === "The Linear workspace changed before the write was queued.") return "workspace_changed";
-    return error instanceof Error ? "Error" : "unknown failure";
-  }
   function warn(run: LaneRun, phase: string, error: unknown) {
     // Provider diagnostics may contain credentials or private prompts. Log only
     // the operation, safe error class/code and durable lane link.

@@ -58,6 +58,9 @@ test("SIZE-932: Ready separates internal ordering from external blockers with a 
   assert.deepEqual(dispatch("FIX-2").worker, { allowed: true });
   assert.deepEqual(dispatch("FIX-3").worker, { allowed: false, reason: "Waits on FIX-2" });
   assert.deepEqual(dispatch("FIX-4").worker, { allowed: false, reason: "Waits on OUT-9" });
+  assert.deepEqual(dispatch("FIX-2").board.lanes[0].tickets.map((ticket) => [ticket.id, ticket.state, ticket.blockedBy]), [
+    ["FIX-2", "ready", []], ["FIX-3", "blocked", ["FIX-2"]], ["FIX-4", "blocked", ["OUT-9"]],
+  ]);
 });
 
 test("a spec blocker added to a flying lane still needs Linear Done before another worker starts", () => {
@@ -67,4 +70,52 @@ test("a spec blocker added to a flying lane still needs Linear Done before anoth
   assert.deepEqual(dispatch().worker, { allowed: false, reason: "Waits on FIX-10" });
   snap.issues.find((issue) => issue.id === "fix-10")!.state = { id: "done", name: "Done", type: "completed" };
   assert.deepEqual(dispatch().worker, { allowed: true });
+});
+
+test("cancelled blockers resolve consistently for Ready, dispatch and lane cards", () => {
+  const cancelled = issue("OUT-9", { outside: true });
+  cancelled.state = { id: "cancelled", name: "Canceled", type: "canceled" };
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" }), cancelled], [blocks("OUT-9", "FIX-2")]);
+  const ready = helperCore({ ...input(snap), action: { type: "start", specId: "FIX-1" } });
+  assert.deepEqual(ready.start, { allowed: true });
+  assert.deepEqual(ready.board.ready[0].blockedBy, []);
+  const result = helperCore({ ...input(snap), lanes: [lane], action: { type: "spawn-worker", laneId: "lane", ticketId: "FIX-2" } });
+  assert.deepEqual(result.worker, { allowed: true });
+  assert.deepEqual(result.board.lanes[0].tickets.map((ticket) => [ticket.id, ticket.state, ticket.blockedBy]), [["FIX-2", "ready", []]]);
+});
+
+test("unknown blockers fail closed in Ready, dispatch and cards without exposing the relation UUID", () => {
+  const unknownId = "11111111-2222-4333-8444-555555555555";
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })], [blocks(unknownId, "FIX-2")]);
+  const ready = helperCore({ ...input(snap), action: { type: "start", specId: "FIX-1" } });
+  assert.deepEqual(ready.start, { allowed: false, reason: "Every ticket waits on a blocker: Unknown blocker" });
+  assert.deepEqual(ready.board.ready[0].blockedBy, ["Unknown blocker"]);
+  const result = helperCore({ ...input(snap), lanes: [lane], action: { type: "spawn-worker", laneId: "lane", ticketId: "FIX-2" } });
+  assert.deepEqual(result.worker, { allowed: false, reason: "Waits on Unknown blocker" });
+  assert.deepEqual(result.board.lanes[0].tickets.map((ticket) => [ticket.id, ticket.state, ticket.blockedBy]), [["FIX-2", "blocked", ["Unknown blocker"]]]);
+  assert.ok(!JSON.stringify([ready, result]).includes(unknownId));
+  // An independent ticket still supplies a frontier; it does not resolve the
+  // unknown blocker on its sibling or turn internal ordering into a spec hold.
+  snap.issues.push(issue("FIX-3", { parent: "FIX-1" }));
+  const partial = helperCore({ ...input(snap), action: { type: "start", specId: "FIX-1" } });
+  assert.deepEqual(partial.start, { allowed: true });
+  const available = helperCore({ ...input(snap), lanes: [lane], action: { type: "spawn-worker", laneId: "lane", ticketId: "FIX-3" } });
+  assert.deepEqual(available.worker, { allowed: true });
+  assert.deepEqual(available.board.lanes[0].tickets.map((ticket) => [ticket.id, ticket.state, ticket.blockedBy]), [
+    ["FIX-2", "blocked", ["Unknown blocker"]], ["FIX-3", "ready", []],
+  ]);
+});
+
+test("spec-level unknown and cancelled blockers use the same rule on Ready, dispatch and all cards", () => {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })], [blocks("missing-endpoint", "FIX-1")]);
+  const ready = () => helperCore({ ...input(snap), action: { type: "start", specId: "FIX-1" } });
+  const dispatch = () => helperCore({ ...input(snap), lanes: [lane], action: { type: "spawn-worker", laneId: "lane", ticketId: "FIX-2" } });
+  assert.deepEqual(ready().start, { allowed: false, reason: "Waits on Unknown blocker" });
+  assert.deepEqual(dispatch().worker, { allowed: false, reason: "Waits on Unknown blocker" });
+  assert.deepEqual(dispatch().board.lanes[0].tickets.map((ticket) => [ticket.state, ticket.blockedBy]), [["blocked", ["Unknown blocker"]]]);
+  const cancelled = { ...issue("OUT-9", { outside: true }), id: "missing-endpoint", state: { id: "cancelled", name: "Canceled", type: "canceled" } };
+  snap.issues.push(cancelled);
+  assert.deepEqual(ready().start, { allowed: true });
+  assert.deepEqual(dispatch().worker, { allowed: true });
+  assert.deepEqual(dispatch().board.lanes[0].tickets.map((ticket) => [ticket.state, ticket.blockedBy]), [["ready", []]]);
 });

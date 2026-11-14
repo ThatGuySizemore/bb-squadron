@@ -1,0 +1,117 @@
+/* ---------- project picker: a button naming the project, its tracker and counts, over a list of every BB project ---------- */
+
+.sq-pick {
+  position: relative;
+  min-width: 0;
+}
+.sq-picker-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  height: 32px;
+  padding: 0 10px 0 11px;
+  border: 1px solid var(--sq-rule);
+  border-radius: 2px;
+  color: var(--foreground);
+  background: var(--background);
+  cursor: pointer;
+  transition: background-color 130ms ease-out;
+}
+.sq-picker-button:hover {
+  background: color-mix(in oklab, var(--foreground) 5%, var(--background));
+}
+.sq-picker-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 620;
+}
+.sq-picker-meta {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--sq-muted);
+}
+.sq-picker-chevron {
+  flex: none;
+  fill: var(--sq-muted);
+}
+
+/* The open list drops from the button. Flat: a hairline box on the ground, no shadow. */
+.sq-picker {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 330px;
+  max-width: min(480px, calc(100cqw - 28px));
+  padding: 4px;
+  border: 1px solid var(--sq-rule);
+  background: var(--background);
+}
+.sq-picker .sq-clear {
+  margin: 8px;
+}
+.sq-picker-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sq-picker-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 10px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--foreground);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 130ms ease-out;
+}
+.sq-picker-row:hover {
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+.sq-picker-mark {
+  width: 6px;
+  height: 6px;
+}
+.sq-picker-row[aria-current="true"] .sq-picker-mark {
+  background: var(--foreground);
+}
+.sq-picker-row-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 620;
+}
+.sq-picker-kind {
+  grid-column: 2;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--sq-muted);
+}
+.sq-picker-counts {
+  grid-row: 1 / span 2;
+  grid-column: 3;
+  max-width: 190px;
+  text-align: right;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.sq-picker-counts[data-unknown="true"] {
+  font-weight: 400;
+  color: var(--sq-muted);
+}
+.sq-picker-error {
+  margin: 8px 8px 4px;
+  font-size: 12px;
+  color: var(--sq-red-ink);
+}

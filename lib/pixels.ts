@@ -1,5 +1,5 @@
-// Pixel material for the board: a 5x7 cell font for spec numbers and the
-// Bayer 4x4 ordered-dither masks every fill is cut from.
+// Pixel material for the board: a 5x7 cell font for spec numbers. Every
+// dither is drawn on canvas by dither.ts.
 
 const G = (rows: string[]) => rows;
 
@@ -65,38 +65,4 @@ export function layoutPixels(text: string): PixelRun {
     x += w + 1;
   }
   return { cells, width: Math.max(0, x - 1), height: 7 };
-}
-
-const BAYER4 = [
-  [0, 8, 2, 10],
-  [12, 4, 14, 6],
-  [3, 11, 1, 9],
-  [15, 7, 13, 5],
-];
-
-/** An 8px tile (4x4 cells of 2px) with `level` of 16 cells inked. */
-function ditherTile(level: number): string {
-  const rects: string[] = [];
-  for (let y = 0; y < 4; y++) {
-    for (let x = 0; x < 4; x++) {
-      if (BAYER4[y]![x]! < level) rects.push(`<rect x='${x * 2}' y='${y * 2}' width='2' height='2'/>`);
-    }
-  }
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='8' height='8' shape-rendering='crispEdges'>${rects.join("")}</svg>`;
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}")`;
-}
-
-/** CSS custom properties --sq-d0 … --sq-d16, set once on the board root. */
-export const DITHER_VARS: Record<string, string> = Object.fromEntries(
-  Array.from({ length: 17 }, (_, level) => [`--sq-d${level}`, ditherTile(level)]),
-);
-
-/** The formation mark: one pixel chevron per lane slot, three slots in a V. */
-export const FORMATION_CHEVRON = ["  #  ", " # # ", "#   #"];
-export const FORMATION_SLOTS: ReadonlyArray<readonly [number, number]> = [[7, 0], [0, 5], [14, 5]];
-
-/** Inked cells of the formation mark's slots, in its 21x9 cell box. */
-export function formationCells(slots: number): Array<[slot: number, x: number, y: number]> {
-  return FORMATION_SLOTS.slice(0, slots).flatMap(([ox, oy], slot) =>
-    FORMATION_CHEVRON.flatMap((row, y) => [...row].flatMap((c, x) => c === "#" ? [[slot, ox + x + 1, oy + y + 1] as [number, number, number]] : [])));
 }

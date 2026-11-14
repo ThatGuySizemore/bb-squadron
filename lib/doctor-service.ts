@@ -2,8 +2,9 @@ import { experimental_joinHostPath as joinHostPath } from "@get-bb/plugin-sdk";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { doctor, type ConfigurationFile } from "./doctor.js";
 import { doctorContract, doctorHostContract } from "./doctor-contract.js";
-import { selectProjectCheckout, squadronSettingsPath } from "./project-checkout.js";
+import { readTrackerConfiguration, selectProjectCheckout, squadronSettingsPath } from "./project-checkout.js";
 import type { Family } from "./board-model.js";
+import { repositoryHostContract } from "./repository-contract.js";
 
 function mattSkill(skill: { name: string; pluginId: string | null; scope: string; filePath: string; provider: string | null }): { name: string; family: Family; path: string } | null {
   const prefix = "mattpocock-skills:";
@@ -18,11 +19,11 @@ function mattSkill(skill: { name: string; pluginId: string | null; scope: string
 
 export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ status: string }>) {
   const host = bb.hosts.experimental_client({ contract: doctorHostContract });
+  const repository = bb.hosts.experimental_client({ contract: repositoryHostContract });
   async function read(projectId: string, signal?: AbortSignal, environmentId?: string) {
     const checkout = await selectProjectCheckout(bb, projectId, signal, environmentId).catch(() => null);
     if (!checkout) {
-      const linear = await getLinearState().catch(() => ({ status: "failed" }));
-      const report = doctor({ skills: {}, setupFiles: [], configurationFiles: [], settingsMarkdown: null, linearConnected: linear.status === "connected", ghAuthenticated: false });
+      const report = doctor({ skills: {}, setupFiles: [], configurationFiles: [], settingsMarkdown: null, issueTrackerMarkdown: null, linearConnected: false, ghAuthenticated: false });
       for (const check of report.checks) {
         if (check.status === "fix" && check.id !== "linear") check.message = "Choose a ready checkout for this project, then check again.";
       }
@@ -31,11 +32,14 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     const { path, hostId } = checkout;
     const settingsPath = squadronSettingsPath(path);
     if (!settingsPath) throw new Error("Choose a repo with an absolute checkout path.");
-    const [skills, settings, linear, github] = await Promise.allSettled([
+    const config = await readTrackerConfiguration(bb, checkout, signal);
+    const localOnly = config.tracker.kind === "local-markdown" && await repository.call("readRepositoryState",
+      { checkoutPath: path, branches: [] }, { hostId, signal, timeoutMs: 15_000 }).then((state) => !state.hasRemote).catch(() => false);
+    const [skills, linear, github] = await Promise.allSettled([
       bb.sdk.skills.list({ projectId, environmentId: environmentId ?? null, signal }),
-      bb.sdk.files.read({ hostId, path: settingsPath, rootPath: path, signal }),
-      getLinearState(),
-      host.call("githubLogin", {}, { hostId, signal, timeoutMs: 15_000 }),
+      config.tracker.kind === "linear" ? getLinearState() : Promise.resolve({ status: "not-needed" }),
+      localOnly ? Promise.resolve({ authenticated: false, hostname: undefined })
+        : host.call("githubLogin", { checkoutPath: path }, { hostId, signal, timeoutMs: 15_000 }),
     ]);
     const candidates = skills.status === "fulfilled" ? skills.value.skills.flatMap((skill) => {
       const found = mattSkill(skill);
@@ -48,7 +52,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     }
     const configurationFiles: ConfigurationFile[] = [
       { id: "repo-rules", name: "Repo rules", path: joinHostPath({ rootPath: path, relativePath: "AGENTS.md" })!, hostId, exists: inspection?.repoRulesExists ?? false },
-      { id: "project-settings", name: "Project settings", path: settingsPath, hostId, exists: settings.status === "fulfilled" },
+      { id: "project-settings", name: "Project settings", path: settingsPath, hostId, exists: config.settingsMarkdown !== null },
     ];
     if (inspection) {
       configurationFiles.push(
@@ -58,12 +62,14 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
     }
     const report = doctor({
       skills: installed, setupFiles: inspection?.setupFiles ?? [], configurationFiles,
-      settingsMarkdown: settings.status === "fulfilled" && settings.value.contentEncoding === "utf8" ? settings.value.content : null,
+      settingsMarkdown: config.settingsMarkdown, issueTrackerMarkdown: config.issueTrackerMarkdown,
       linearConnected: linear.status === "fulfilled" && linear.value.status === "connected",
       ghAuthenticated: github.status === "fulfilled" && github.value.authenticated,
+      ghHostname: github.status === "fulfilled" ? github.value.hostname : undefined,
+      ghRequired: !localOnly,
     });
     if (skills.status === "rejected" || !inspection) report.checks[0].message = "Couldn't check this repo's installed plugins. Make sure its machine is online, then check again.";
-    if (settings.status === "rejected") report.checks[2].message = "Make sure docs/agents/squadron.md exists and this repo's machine is online, then check again.";
+    if (config.settingsMarkdown === null) report.checks[2].message = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
     return report;
   }
   bb.rpc.register(doctorContract, { doctor: ({ projectId, environmentId }, context) => read(projectId, context.experimental_signal, environmentId) });

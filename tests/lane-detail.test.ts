@@ -26,6 +26,22 @@ const laneIssues = () => [
   issue("FIX-12", { title: "Third slice", parent: "FIX-1" }),
 ];
 
+test("a lane's motion counts running Lead and child threads even when every ticket is Waiting", async () => {
+  const laneLead = lead();
+  laneLead.workers = ["active", "starting", "pending", "stopping", "idle", "error"].map((status, i) =>
+    makeThreadResponse({ id: `worker-${i}`, title: `Child ${i}`, projectId: "proj-one", parentThreadId: "thr_lead",
+      status: status as "active" | "starting" | "pending" | "stopping" | "idle" | "error" }));
+  const board = deriveBoard(input(snapshot(laneIssues()), { leads: [laneLead] })).board;
+  assert.equal(board.lanes[0].workingThreads, 5);
+  assert.ok(board.lanes[0].tickets.every((ticket) => ticket.state === "blocked"));
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const html = renderToStaticMarkup(createElement(BoardView, { board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
+  assert.match(html, /5 working threads/);
+});
+
 test("a worker child whose title holds a ticket identifier links its card, and an unmatched child still shows", () => {
   const { board } = deriveBoard(input(snapshot(laneIssues()), { leads: [lead([
     { id: "thr_w2", title: "Worker FIX-2" },
@@ -155,7 +171,7 @@ test("the lane row links the Lead, the spec and the PR, labels In review, and li
     board: derived, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
   assert.match(html, /class="sq-lane-state" data-lane="pr-open">In review</);
-  assert.match(html, /<button[^>]*title="Open the spec in Linear"[^>]*>Lane spec<\/button>/);
+  assert.match(html, /<button[^>]*title="Open the spec"[^>]*>Lane spec<\/button>/);
   assert.match(html, /aria-label="PR #42, no checks. Open on GitHub."/);
   assert.match(html, /<span class="sq-threads-label">Other threads<\/span>.*Scratch notes<\/button>/s);
   assert.match(html, /aria-label="FIX-2, First slice: Waiting\. Open thread\."/);
@@ -240,7 +256,11 @@ test("a landing is a still state under reduced motion", async () => {
   const css = readFileSync("board/board.css", "utf8");
   const reduced = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
   assert.match(reduced, /\.sq \*,[\s\S]*?animation: none !important;/, "the stamp and every other animation stop");
-  assert.match(reduced, /\.sq-burst \{\s*display: none;/, "the burst's pixels never show");
+  // Under reduced motion the renderer draws each surface once, at its still moment; the burst's is its end.
+  const { burst, BURST_SECONDS, createSurface } = await import("../lib/dither.js");
+  const surface = createSurface(600, 80, 2);
+  burst({ ink: 0xff00ff00 })(surface, BURST_SECONDS);
+  assert.equal(surface.buf.filter((pixel) => pixel !== 0).length, 0, "the burst's pixels never show");
 });
 
 test("a spec the Lead closed after its merge stays a Landed lane with its done tickets", () => {
@@ -252,7 +272,7 @@ test("a spec the Lead closed after its merge stays a Landed lane with its done t
   assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.state]), [["FIX-1", "landed"]]);
   assert.deepEqual(ticketStates(board), [["FIX-2", "done"], ["FIX-3", "done"]]);
   assert.deepEqual(board.ready, []);
-  assert.deepEqual(board.unplanned, [], "closed issues stay off Unplanned");
+  assert.deepEqual(board.openIssues, [], "closed issues stay off Open issues");
 
   const elsewhere = deriveBoard(input(snapshot([{ ...withStatus(spec, "Done", "completed"), projectId: "project-other" }]),
     { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;
@@ -272,29 +292,56 @@ test("Cancel is a demo-only control and never appears on a live lane", async () 
   assert.match(html(true), />Cancel<\/button>/, "the synthetic simulation keeps Cancel");
 });
 
-test("the live header counts lanes on the board without a capacity or empty formation mark", async () => {
+test("the path strip counts lanes on the board without a capacity; its formation mark counts the fleet across projects", async () => {
   await import("./fixtures/app-runtime.js");
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardView } = await import("../board/Board.js");
   const board = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()] })).board;
-  const header = (lanes: typeof board.lanes, demo = false) => {
-    const html = renderToStaticMarkup(createElement(BoardView, {
-      board: { ...board, lanes, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null,
-      dispatch: () => undefined, onPlan: () => undefined,
-    }));
-    return /<header[\s\S]*?<\/header>/.exec(html)![0];
-  };
-  assert.match(header([]), /0 lanes on the board/);
-  assert.match(header(board.lanes), /1 lane on the board/);
+  const page = (lanes: typeof board.lanes, demo = false, fleet: number | null = null) => renderToStaticMarkup(createElement(BoardView, {
+    board: { ...board, lanes, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null, fleet,
+    dispatch: () => undefined, onPlan: () => undefined,
+  }));
+  const header = (...args: Parameters<typeof page>) => /<header[\s\S]*?<\/header>/.exec(page(...args))![0];
+  const station = (html: string, label: string) => new RegExp(`${label}</span><span class="sq-station-count sq-num">(\\d+)<`).exec(html)?.[1];
+  assert.equal(station(page([]), "Flying"), "0");
+  assert.equal(station(page(board.lanes), "Flying"), "1");
   const mixed = [board.lanes[0],
     { ...board.lanes[0], specId: "FIX-10", state: "pr-open" as const },
     { ...board.lanes[0], specId: "FIX-20", state: "stopped" as const },
     { ...board.lanes[0], specId: "FIX-30", state: "landed" as const }];
-  assert.match(header(mixed), /3 lanes on the board/);
+  assert.equal(station(page(mixed), "Flying"), "3", "In review and stopped lanes are still on the line");
+  assert.equal(station(page(mixed), "Landed"), "1");
   assert.doesNotMatch(header(mixed), /of 0|lanes flying|sq-formation/);
-  assert.match(header(board.lanes, true), /1 of 3 lanes flying/);
+  assert.match(header(mixed, false, 5), /<canvas[^>]*role="img"[^>]*aria-label="5 lanes flying across your projects"/, "SIZE-956: the fleet across every project");
+  assert.match(header(mixed, false, 0), /aria-label="0 lanes flying across your projects"/, "the mark stays, still, when nothing flies");
+  assert.doesNotMatch(header(mixed, false, 5), /of 0|of 3/, "the live mark has no capacity");
   assert.match(header(board.lanes, true), /aria-label="1 of 3 lanes flying"/);
+});
+
+test("SIZE-958: no board visual is demo-only", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const derived = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()] })).board;
+  const flying = derived.lanes[0]!;
+  const board = { ...derived, lanes: [
+    { ...flying, tickets: flying.tickets.map((t, i) => ({ ...t, state: (["working", "branch", "done", "question", "review", "failed", "blocked"] as const)[i % 7] })) },
+    { ...flying, specId: "FIX-30", state: "landed" as const, landedAt: SYNCED_AT },
+  ] };
+  const view = (demo: boolean) => renderToStaticMarkup(createElement(BoardView, {
+    board: { ...board, laneCapacity: demo ? 3 : 0 }, demo, modeSwitch: null, fleet: demo ? null : 1, dispatch: () => undefined, onPlan: () => undefined,
+  }));
+  const visuals = (html: string) => new Set([...html.matchAll(/class="([^"]+)"/g)].flatMap((m) => m[1]!.split(" ")).filter((c) => c.startsWith("sq-")));
+  const live = visuals(view(false));
+  // The demo's own controls: the Synthetic data tag, the auto-start switch, the Cancel action.
+  const demo = view(true).replace(/<span class="sq-tag" data-tone="amber">Synthetic data<\/span>/g, "");
+  const demoOnly = [...visuals(demo)].filter((c) => !live.has(c) && !/^sq-(switch|isolated)/.test(c));
+  assert.deepEqual(demoOnly, [], "every visual the demo draws, the live board draws too");
+  for (const visual of ["sq-formation", "sq-path", "sq-air", "sq-fx", "sq-plate", "sq-tail-number", "sq-progress"]) {
+    assert.ok(live.has(visual), `the live board draws ${visual}`);
+  }
 });
 
 test("a stopped Lead with an open PR stays In review and in Needs you until it runs again", async () => {

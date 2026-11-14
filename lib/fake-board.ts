@@ -54,7 +54,7 @@ export function initialBoard(): Board {
       ticket("SQD-16", "Needs-you strip with actions", OPUS, ["SQD-14", "SQD-15"]),
       ticket("SQD-17", "Pixel burst when a spec lands", OPUS, ["SQD-16"]),
       ticket("SQD-18", "PR chip reads checks from BB", SOL, ["SQD-16"]),
-      ticket("SQD-19", "Ready and Unplanned sections", OPUS, ["SQD-17", "SQD-18"]),
+      ticket("SQD-19", "Ready and Open issues sections", OPUS, ["SQD-17", "SQD-18"]),
       ticket("SQD-20", "Board refetches on board-changed", SOL, ["SQD-19"]),
     ],
   };
@@ -113,7 +113,13 @@ export function initialBoard(): Board {
       },
     ],
     ready,
-    unplanned: [
+    shaping: [
+      { id: "SQD-80", title: "Lanes for GitHub-tracked repos", ticketCount: 0, missing: "Planning is still open in its thread.",
+        action: "resume", threadId: thread("plan-80") },
+      { id: "SQD-81", title: "Board in a thread's side panel", ticketCount: 3, missing: "Has 3 tickets but no ready-for-agent label.",
+        action: "tickets" },
+    ],
+    openIssues: [
       { id: "SQD-71", title: "Linear webhooks as a speed-up over polling", priority: 3, labels: [] },
       { id: "SQD-72", title: "GitHub Issues as a ticket source", priority: 2, labels: ["v2"] },
       { id: "SQD-73", title: "Retry Linear writes after a rate limit", priority: 2, labels: ["follow-up"] },

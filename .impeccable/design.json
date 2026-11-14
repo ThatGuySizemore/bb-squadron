@@ -135,7 +135,7 @@
       },
       "body": {
         "displayName": "Body",
-        "purpose": "Needs-you text, empty states, Unplanned rows, header counts."
+        "purpose": "Needs-you text, empty states, Open issue rows, header counts."
       },
       "body-small": {
         "displayName": "Peg title",

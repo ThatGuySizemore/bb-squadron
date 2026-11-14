@@ -14,7 +14,7 @@ function skills(provider: string, root = `/owner/.${provider === "codex" ? "code
     pluginId, provider, registrySkillId: null, scope,
   }));
 }
-function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; unavailable?: boolean; gh?: boolean; ownerFiles?: boolean } = {}) {
+function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; unavailable?: boolean; gh?: boolean; ownerFiles?: boolean; expectedCheckout?: string } = {}) {
   const available = options.skills ?? [...skills("claude-code"), ...skills("codex")];
   return createFakePluginHost({
     experimental_hostEntry: true,
@@ -26,6 +26,10 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
       files: { read: async ({ hostId, path }) => {
         if (options.unavailable) throw new Error("private file diagnostic");
         assert.equal(hostId, "repo-machine");
+        if (path === "/repo/docs/agents/issue-tracker.md") {
+          const content = readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8");
+          return { content, contentEncoding: "utf8", path, sha256: "tracker", sizeBytes: content.length };
+        }
         assert.equal(path, "/repo/docs/agents/squadron.md");
         return { content: fixture, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: fixture.length };
       } },
@@ -37,7 +41,10 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
     experimental_callHostRpc: async ({ hostId, method, input }) => {
       assert.equal(hostId, "repo-machine");
       if (options.unavailable) throw new Error("private process diagnostic");
-      if (method === "githubLogin") return { authenticated: options.gh ?? true };
+      if (method === "githubLogin") {
+        if (options.expectedCheckout) assert.equal((input as { checkoutPath?: string }).checkoutPath, options.expectedCheckout);
+        return { authenticated: options.gh ?? true };
+      }
       assert.equal(method, "inspectFiles");
       assert.equal((input as { checkoutPath: string }).checkoutPath, "/repo");
       return {
@@ -57,7 +64,7 @@ test("Doctor reads the selected checkout on its machine and exposes checks and f
     assert.equal(report.ready, false);
     assert.deepEqual(report.checks.map(({ id, status }) => [id, status]), [
       ["skills", "pass"], ["setup", "pass"], ["settings", "pass"], ["linear", "pass"], ["github", "fix"],
-      ["playbook", "warning"], ["machine-profile", "warning"],
+      ["playbook", "warning"], ["machine-profile", "warning"], ["tracker", "pass"],
     ]);
     assert.deepEqual(report.configurationFiles.map(({ path, hostId, exists }) => [path, hostId, exists]), [
       ["/repo/AGENTS.md", "repo-machine", true], ["/repo/docs/agents/squadron.md", "repo-machine", true],
@@ -93,7 +100,7 @@ test("unavailable sources fail without leaking private diagnostics", async () =>
     registerDoctor(bb, async () => { throw new Error("private connection diagnostic"); });
     const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
     assert.equal(report.ready, false);
-    assert.deepEqual(report.checks.map((check) => check.status), ["fix", "fix", "fix", "fix", "fix", "warning", "warning"]);
+    assert.deepEqual(report.checks.map((check) => check.status), ["fix", "fix", "fix", "fix", "warning", "warning", "fix"]);
     assert.match(report.checks[0].message, /machine is online/);
     assert.equal(JSON.stringify(report).includes("private"), false);
   } finally { await harness.lifecycle.dispose(); }
@@ -126,6 +133,16 @@ test("an unavailable selected environment does not borrow the project's default 
     assert.deepEqual(report.checks[2], {
       id: "settings", name: "Project settings", status: "fix", message: "Choose a ready checkout for this project, then check again.",
     });
-    assert.equal(report.checks[3].status, "pass");
+    assert.equal(report.checks.find((check) => check.id === "linear"), undefined);
+  } finally { await harness.lifecycle.dispose(); }
+});
+
+
+test("Doctor checks gh in the selected repo checkout rather than the plugin checkout", async () => {
+  const { bb, harness } = host({ expectedCheckout: "/repo" });
+  try {
+    registerDoctor(bb, async () => ({ status: "connected" }));
+    const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+    assert.equal(report.checks.find((c) => c.id === "github")?.status, "pass");
   } finally { await harness.lifecycle.dispose(); }
 });

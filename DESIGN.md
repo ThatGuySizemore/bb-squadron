@@ -1,6 +1,6 @@
 ---
 name: BB Squadron
-description: A ready-room sortie board in dithered pixels, drawn on BB's own theme.
+description: The ready-room sortie board, live: the whole path in dithered pixels on BB's own theme.
 colors:
   needs-you-amber: "#f2a900"
   working-sky: "#3fa7d6"
@@ -28,6 +28,17 @@ typography:
     fontWeight: 650
     lineHeight: 1.15
     letterSpacing: "-0.02em"
+  headline-narrow:
+    fontFamily: "inherit (BB UI font)"
+    fontSize: "18px"
+    fontWeight: 650
+    lineHeight: 1.15
+  path-count:
+    fontFamily: "inherit (BB UI font)"
+    fontSize: "22px (18px in a narrow box)"
+    fontWeight: 650
+    lineHeight: 1.1
+    fontFeature: "tnum"
   title:
     fontFamily: "inherit (BB UI font)"
     fontSize: "14px"
@@ -110,7 +121,8 @@ components:
     rounded: "{rounded.none}"
     padding: "8px 9px 7px"
     width: "190px"
-  peg-slim:
+  peg-waiting:
+    padding: "6px 8px"
     width: "168px"
   peg-compact:
     padding: "6px 7px"
@@ -128,74 +140,98 @@ components:
     backgroundColor: "{colors.needs-you-amber}"
     textColor: "{colors.on-amber}"
     padding: "2px 7px"
+  picker-button:
+    backgroundColor: "{colors.board-ground}"
+    textColor: "{colors.board-ink}"
+    rounded: "{rounded.control}"
+    padding: "0 10px 0 11px"
+    height: "32px"
+  doctor-status:
+    backgroundColor: "{colors.board-ground}"
+    textColor: "{colors.board-ink}"
+    typography: "{typography.meta}"
+    rounded: "{rounded.control}"
+    padding: "0 10px"
+    height: "28px"
+  path-station:
+    typography: "{typography.path-count}"
+    padding: "10px 12px 12px 0"
+  list-plate:
+    backgroundColor: "{colors.band}"
+    rounded: "{rounded.none}"
+    padding: "6px 8px"
 ---
 
 # Design System: BB Squadron
 
+This describes the board as shipped in SIZE-958, built to the approved SIZE-948 comp (`comps/live-board/index.html`). The comp and this file agree; where they ever differ, the shipped code and this file win.
+
 ## Overview
 
-**Creative North Star: "The Ready-Room Sortie Board"**
+**Creative North Star: "The Ready-Room Sortie Board, live"**
 
-The board is a squadron ready room's sortie board drawn inside BB. Each lane is one ruled line; its tickets sit on that line as pegs in dependency order, left to right, with small pixel chevrons between columns. Status has to read from across the room: what waits on the owner sits pinned at the top in amber, and what is flying shows how far along it is by how many pegs have gone green.
+The board is a squadron ready room's sortie board drawn inside BB, now covering the whole path a spec travels: Open issues, Shaping, Ready, Flying, Landed. Each Flying lane is one ruled line; its tickets sit on that line as pegs in dependency order, left to right, with small pixel chevrons between columns, and a sky airstream flows behind them at the pace of the lane's working threads. What waits on the owner sits pinned near the top in amber. The path reads as a route, never as kanban columns or count tiles.
 
-The material is BB's own theme. The ground, ink, muted ink and hairlines are BB's theme tokens, so the board works on any BB theme, light or dark. The only texture is ordered dither: Bayer 4x4 halftone masks cut from 2px cells. The only display type is a 5x7 pixel cell font for spec numbers, used like tail numbers on an airframe. Four state inks sit on top of the theme, and each state is also carried by form (a marching border, a doubled edge, a tall segment, a hollow outline), never by colour alone.
+The material is BB's own theme. Ground, ink, muted ink and hairlines are BB's theme tokens, so the board works on any BB theme, light or dark. The only texture is ordered dither drawn on canvas: Bayer 8x8 thresholds, one cell per device pixel, so fills read as fine halftone grain. The only display type is a 5x7 pixel cell font for spec numbers, used like tail numbers on an airframe. Four state inks sit on top of the theme, and each state is also carried by form, never by colour alone.
 
-Motion is stepped, never eased, except for one moment: the landing burst. Working pegs march their border and cycle their dither, the Needs-you strip pulses slowly, a stopped peg glitches once, and a landed tail number stamps green while pixels sweep down its line. Under reduced motion all of it becomes one still dither layer.
+Motion is continuous and only where something is happening: the Flying airstream, working pegs, the Needs-you edge, the header's formation mark and the one-time landing. It pauses while the page is hidden. Under reduced motion every canvas draws one still frame and CSS motion stops.
 
-**Key Characteristics:**
+**Key characteristics:**
 - BB theme tokens for every neutral; four fixed state inks layered on top.
-- Bayer 4x4 ordered dither (`--sq-d0` … `--sq-d16`, 8px tiles of 2px cells) is the only texture.
-- A 5x7 pixel cell font for spec numbers only; BB's UI font for everything else.
-- Square board marks, 1px hairlines, 2px pixel rules (2px on, 2px off); no shadows.
-- Every state is ink plus form; every animation has a still pixel fallback.
+- Canvas Bayer 8x8 ordered dither at device-pixel density is the only texture. CSS adds none.
+- A 5x7 pixel cell font for spec numbers only; BB's UI font for everything else; mono for ids and branches.
+- Square board marks, 1px hairlines, 2px pixel rules (2px on, 2px off), 2px controls, no shadows.
+- Every state is ink plus form; every animation has a still fallback.
+- No visual is demo-only: the synthetic demo and the live board draw the same parts.
 
 ## Colors
 
 The theme supplies the neutrals; four state inks supply the meaning.
 
 ### Primary
-- **Needs-You Amber** (needs-you-amber): the one colour that means "the owner". It fills the Needs-you count, kind tags and the Merge and Answer buttons, edges the Needs-you rows and question pegs with a doubled line, tops the tail card of a lane whose merge waits on the owner, and tints text selection at 38%. Text on solid amber is always **On-Amber** (on-amber), never white.
+- **Needs-You Amber** (needs-you-amber): the one colour that means "the owner". It fills the Needs-you count and kind tags and the Answer, Merge, Resume-in-Needs-you and Set up buttons, edges Needs-you rows and question pegs with a doubled line, tops the tail card of a lane whose merge waits on the owner, outlines Doctor's square when something needs fixing, dashes Doctor's Fix tags, and tints text selection at 38%. Text on solid amber is always **On-Amber** (on-amber), never white. Amber ink names what a Shaping spec is missing.
 
 ### Secondary
-- **Working Sky** (working-sky): an agent is on it. Fills working and review progress segments through a 50% dither mask, marches around working pegs, edges review pegs, fills the formation mark's flying chevrons and the auto-start switch when on. Sky ink (sky-ink) is also the focus outline.
+- **Working Sky** (working-sky): an agent is on it. The airstream, the working peg's march and grain, the striped working and review progress segments, the formation mark's flying chevrons, the Flying station's rule and count while anything flies, the pace square, and the auto-start switch when on. Sky ink also marks "N can start" on Ready rows and is the focus outline.
 
 ### Tertiary
-- **Stopped Red** (stopped-red): failed or stopped. Doubles the failed peg's border to 2px, raises its progress segment to full height, tops a stopped lane's tail card, and colours the urgent-priority mark and failing-checks dot.
-- **Landed Green** (landed-green): in the integration branch or merged. Fills branch and done segments solid, edges compact branch pegs, dithers behind landed spec numbers at level 3, and is the colour of the landing burst and stamp.
+- **Stopped Red** (stopped-red): failed or stopped. Doubles the failed peg's border to 2px with a red grain, raises its progress segment to full height, tops a stopped lane's tail card, and colours the urgent-priority mark and failing-checks dot.
+- **Landed Green** (landed-green): in the integration branch or merged. Fills branch and done segments solid, edges compact branch pegs with their still green grain, grains the landed number plates, fills Doctor's square when Start is ready, and is the colour of the landing burst and stamp.
 
 ### Neutral
-- **Board Ground** (board-ground): BB's `--background`. Page, pegs, buttons and Needs-you rows all sit on it.
-- **Board Ink** (board-ink): BB's `--foreground`. Body text, spec numbers at rest, the primary button fill, and the base every `-ink` variant mixes toward.
-- **Muted Ink** (muted-ink): BB's `--muted-foreground`. Section labels, counts, meta lines, branch names, waiting pegs.
-- **Hairline** (hairline): BB's `--border`. Every 1px row rule, peg border and button border.
+- **Board Ground** (board-ground): BB's `--background`. Page, pegs, buttons, the picker list and Needs-you rows all sit on it.
+- **Board Ink** (board-ink): BB's `--foreground`. Body text, section labels, spec numbers at rest, the primary button fill, and the base every `-ink` variant mixes toward.
+- **Muted Ink** (muted-ink): BB's `--muted-foreground`. Station labels, zero counts, meta lines, branch names, waiting pegs, the tracker line.
+- **Hairline** (hairline): BB's `--border`. Every 1px row rule, peg border and control border.
 - **Band** (band): foreground at 4.5% over the ground. The one tonal step: the tail card behind each lane and the plate behind spec numbers in lists.
-- **Rule Ink** (rule-ink): foreground at 30%. The 2px-on, 2px-off pixel rule under section labels and along each sortie line, and hollow progress segments.
+- **Rule Ink** (rule-ink): foreground at 30%. The 2px-on, 2px-off pixel rule under section labels, under the path stations and along each sortie line; hollow progress segments; the outside-lane tag's dashes.
 
 ### Named Rules
 
-**The Theme-Owns-Neutrals Rule.** No neutral is ever a literal value. Ground, ink, muted ink and hairline are BB's tokens; the band and rule ink are mixes of them. The board must look right on any BB theme without a single override.
+**The Theme-Owns-Neutrals Rule.** No neutral is ever a literal value. Ground, ink, muted ink and hairline are BB's tokens; the band, hover tint and rule ink are mixes of them. The board must look right on any BB theme without a single override.
 
-**The Ink-Toward-Foreground Rule.** State colours as fills stay fixed; state colours as text or marks use their `-ink` variant, mixed in OKLab toward the theme foreground (amber 46%, sky 50%, red 62%, green 52%), so labels stay legible on light and dark grounds.
+**The Ink-Toward-Foreground Rule.** State colours as fills stay fixed; state colours as text or marks use their `-ink` variant, mixed in OKLab toward the theme foreground (amber 46%, sky 50%, red 62%, green 52%), so labels stay legible on light and dark grounds. The dither renderer reads the fixed inks from the board's CSS, so a theme change redraws the art.
 
 **The Four-Inks Rule.** Amber means the owner, sky means an agent is working, red means stopped, green means in the branch or landed. No fifth hue, and no ink used for decoration.
 
 ## Typography
 
-**Display Font:** a 5x7 pixel cell font drawn as SVG rects (lib/pixels.ts), with a screen-reader copy of the text.
+**Display Font:** a 5x7 pixel cell font drawn as SVG rects (`lib/pixels.ts`), with a screen-reader copy of the text.
 **Body Font:** BB's inherited UI font; the board sets no family of its own.
-**Label/Mono Font:** the system monospace stack, for ticket ids, branch names and issue ids.
+**Label/Mono Font:** the system monospace stack, for ticket ids, branch names, Open issue ids and file paths.
 
 **Character:** a crisp, built-from-cells display set against BB's plain UI type, so the spec numbers look painted on and everything else reads like the rest of BB.
 
 ### Hierarchy
-- **Display** (pixel cells: 4px cells on a 5px pitch, 34px tall, in lane tails; 2px cells with no gap, 14px tall, in Needs-you, Ready and Landed lists): spec numbers only. Ink follows lane state: board ink, red ink when stopped, amber ink when the merge waits, green ink when landed.
-- **Headline** (650, 22px, 1.15, -0.02em): the page title "Squadron", once.
-- **Title** (620, 14px, 1.3, balanced wrap): the spec title in each tail card. Ready-row titles step down to 600 at 13.5px.
-- **Body** (400, 13px, 1.45): Needs-you text, empty-state lines, Unplanned rows, header counts.
-- **Body small** (400, 12.5px, 1.3, clamped to two lines): peg titles.
-- **Label** (650, 12px, 0.08em, uppercase): the section headings Needs you, Flying, Ready, Unplanned, Landed, each sitting on a pixel rule. The Needs-you kind tag uses the same voice at 700, 11px, 0.04em on solid amber.
-- **Meta** (600, 11px): button text (12px), peg state, tags, AI chips, counts.
-- **Mono** (650, 11px, tabular figures): ticket ids on pegs; branch names and Unplanned ids at 400 in muted ink.
+- **Display** (pixel cells: 4px cells on a 5px pitch, 34px tall, in lane tails; 2px cells with no gap, 14px tall, on list plates and in Needs-you rows): spec numbers only. Ink follows lane state: board ink, red ink when stopped, amber ink when the merge waits or in Needs you, green ink when landed.
+- **Headline** (650, 22px, 1.15, -0.02em): the page title "Squadron", once. 18px in a narrow box.
+- **Path count** (650, 22px, 1.1, tabular): each station's count; 500 and muted at zero, sky ink on Flying while anything flies. 18px in a narrow box.
+- **Title** (620, 14px, 1.3, balanced wrap): the spec title in each tail card and the project name on the picker. List-row titles are 600 at 13.5px; Open issue and Landed titles are 400 at 13px.
+- **Body** (400, 13px, 1.45): Needs-you text, empty-state lines (max 70ch), Doctor messages.
+- **Body small** (400, 12.5px, 1.3, clamped to two lines): peg titles; one line on waiting pegs.
+- **Label** (650, 12px, 0.08em, uppercase): section headings, each on a pixel rule with its count beside it. Station labels use the same voice at 11px. The Needs-you kind tag is 700, 11px, 0.04em on solid amber.
+- **Meta** (600, 11–12px): buttons (12px), peg state, tags, AI chips, counts, the picker's tracker-and-counts line (11.5px).
+- **Mono** (650, 11px, tabular figures): ticket ids on pegs; branch names, Open issue ids, "after" lines (10.5px) and file paths at 400 in muted ink.
 
 ### Named Rules
 
@@ -205,17 +241,22 @@ The theme supplies the neutrals; four state inks supply the meaning.
 
 ## Layout
 
-One centred column (max 1480px) with 22px top and 28px side padding, sections 30px apart, each opened by an uppercase label on a 2px pixel rule. Order is fixed by the product: header and Linear status line, Needs you, Flying, Ready, Unplanned, then Landed when any lane has landed. The synthetic demo adds its labelled footer behind a dashed hairline. Doctor is a header utility whose open checks sit in the page flow after Needs you, before Flying.
+One centred column (max 1480px) with 22px top and 28px side padding.
 
-A sortie line is a two-column grid: a tail card (200–236px) and a track, 20px apart, 16px of vertical padding, closed by a 1px hairline. The track holds a progress strip (one segment per ticket, max 40px each, 2px apart, then a count) above a horizontally scrolling rail of dependency columns. The pixel rule runs through the rail's vertical centre and scrolls with the pegs; columns are joined by 6x10 pixel chevrons with 7px side margins, and pegs in one column stack 8px apart.
+1. **Header** (a wrapping row): the formation mark and "Squadron", the project picker, then at the right Doctor status and New spec (primary). The demo adds its "Synthetic data" tag, auto-start switch and the demo switch before Doctor.
+2. **Tracker line**, 8px under the header.
+3. **Path strip**, 20px under that: five equal stations in path order.
+4. **Sections**, 30px apart, in attention order, not path order: Needs you (with Doctor's open region under its rows), Flying, Ready, Shaping, Open issues, Landed. Every section always shows; an empty one says in a sentence how work gets into it, with the button that does it where there is one. Each section opens with an uppercase label on a 2px pixel rule, its count beside the label (amber for Needs you, muted otherwise).
 
-List rows (Ready, Unplanned, Landed) are grids on 1px hairlines with 11px, 7px and 9px vertical padding respectively; spec numbers in lists sit on a band plate (6px 8px padding).
+A sortie line is a two-column grid: a tail card (208–236px) and a track, 20px apart, 16px of vertical padding, closed by a 1px hairline. The track holds the progress strip above a horizontally scrolling rail. Inside the rail, the dependency columns sit on the pixel rule at their vertical centre, with the airstream canvas behind them across the full width of the pegs; columns are joined by 6x10 pixel chevrons with 7px side margins, and pegs in one column stack 8px apart. When the rail overflows, its right 56px fades out through a mask.
 
-The board is a container (`container-type: inline-size`) and responds to its own width, not the window. At 900px and below the header stacks, the sortie line becomes one column with the tail card laid out as a wrapping row, Ready rows wrap with routes and ticket counts hidden, and Needs-you rows drop the spec number and put actions on their own line.
+List rows (Ready, Shaping, Open issues, Landed) are three-column grids on 1px hairlines: a band plate with the spec number (an 82px mono id column for Open issues), a main column of title over a meta line, and the row's one action at the right. Ready and Shaping rows pad 11px; Open issues and Landed 9px.
+
+The board is a container (`container-type: inline-size`) and responds to its own width, not the window. At 900px and below a sortie line stacks the tail card over the track. At 560px and below (a side panel) the page padding drops to 14px, the picker takes its own full row, Doctor shows only its square and the word "Doctor", the path strip keeps five cells with "Open" for Open issues, Needs-you rows put text and actions on their own lines, row actions move under the row, and empty sections stack their button under the sentence. In a thread's side panel (the `experimental_tab`, `placement="panel"`, `data-layout="narrow"`) a sortie line is one column: the tail card with a 3px-cell tail number, the progress strip, a 26px airstream band on its pixel rule, then full-width pegs for only the tickets an agent is on or that wait on the owner (Working, In review, Needs you, Stopped). Every ticket sits behind an "All N tickets" disclosure ("1 ticket" for one): id, title and state word per row on hairlines, the state word in its ink. There is no dependency rail. Thread links there open in the main view, not beside the board.
 
 ## Elevation & Depth
 
-The board is flat: there are no shadows anywhere. Depth comes from three things only: the band (one 4.5% tonal step) behind tail cards and number plates, doubled edges (a 1px border plus a 1px outline offset 2px) on anything amber, and dither layers stacked inside a mark's own box. The one inset `box-shadow` in the code draws the 1px hollow outline of an empty progress segment; it is a stroke, not elevation.
+The board is flat: there are no shadows anywhere. Depth comes from three things only: the band behind tail cards and number plates, doubled edges (a 1px border plus a 1px outline offset 2px) on anything amber, and dither drawn inside a mark's own box. The picker list drops over the page as a hairline box on the ground, with no shadow. The inset `box-shadow`s in the code are strokes (a hollow progress segment, Doctor's square, a hollow PR dot), not elevation.
 
 ### Named Rules
 
@@ -223,87 +264,95 @@ The board is flat: there are no shadows anywhere. Depth comes from three things 
 
 ## Shapes
 
-Board marks are square: pegs, tail cards, Needs-you rows, number plates, progress segments and state squares have no radius (0px). Controls are almost square: buttons and tags round to 2px, the switch track to 1px. Borders are 1px hairlines at rest and 2px for the failed peg and the tail card's top edge. Every pixel mark (chevrons, formation mark, burst bits, dither cells, pixel rule) is built on a 2px cell and rendered with crisp edges. Blocked pegs use a dashed border; the synthetic-data footer sits behind a dashed hairline.
+Board marks are square: pegs, tail cards, Needs-you rows, number plates, progress segments, state squares and the picker's current-project mark have no radius. Controls are almost square: buttons, tags, the picker button and Doctor round to 2px. Borders are 1px hairlines at rest and 2px for the failed peg and the tail card's top edge. Every pixel mark (chevrons, carets, formation mark, burst bits, pixel rules) is built on a 2px cell with crisp edges. Waiting pegs use a dashed hairline; the outside-lane tag a dashed rule-ink line; the synthetic-data footer sits behind a dashed hairline.
 
 ## Components
 
 ### Buttons
 Small, quiet, near-square; colour only when the owner is the one acting.
-- **Shape:** near-square (2px), 28px tall, 0 11px padding, 12px at 600.
+- **Shape:** 2px corners, 28px tall, 0 11px padding, 12px at 600.
 - **Plain:** ground fill, hairline border. Hover tints the fill to foreground 6%.
-- **Primary** (Plan a spec, Start, Resume in a tail card): solid board ink with ground text. Hover mixes it 86% toward the ground.
-- **Amber** (Merge, Answer in thread, Resume in Needs you): solid amber with on-amber text. Only for actions the owner alone can take.
-- **Danger** (demo-only Cancel): transparent, red-ink text, border red at 45% over the hairline; set 14px apart from the other lane actions. Hover tints red at 9%.
+- **Primary** (New spec in the header, Start, Plan tickets, Resume planning, Resume in a tail card): solid board ink with ground text. Hover mixes it 86% toward the ground. Plan on Open issues and New spec in empty sections stay plain.
+- **Amber** (Answer in thread, Merge, Resume in Needs you, Set up): solid amber with on-amber text. Only for actions the owner alone can take.
+- **Danger** (the demo's Cancel): transparent, red-ink text, border red at 45% over the hairline; set 14px apart from the other lane actions.
 - **Focus:** a 2px sky-ink outline, offset 2px, on every focusable element.
-- **Disabled:** 42% opacity, not-allowed cursor; the reason sits beside the button as muted text.
+- **Disabled:** 42% opacity, not-allowed cursor; the reason sits beside the button in 11.5px muted text ("Opening its Lead thread", Doctor's reason).
 
-### Chips
-- **Tag:** 11px at 600, 1px 6px padding, hairline border, 2px corners; used for issue labels and `accept:owner`. The amber tag (solid amber, on-amber text) marks "Synthetic data".
-- **AI chip:** the provider's own icon at 12px, then model name and effort in muted ink, 11px. A Lead chip prefixes "Lead ·".
-- **Count:** solid amber, on-amber 11px, 0 6px padding, beside the Needs-you label only when something needs the owner.
+### Header
+- **Formation mark** (92x40 canvas) before the title: one sky chevron per lane flying across all of the owner's projects, three slots minimum with empty ones in hairline, each bobbing under a pixel with a short dithered contrail. Before the picker opens it shows only the shown project. Afterward it combines that live count with other available counts from the last picker read; its label explains this coverage. No additional poller or page-mount count read runs. Labelled with that coverage; the demo labels it against its lane cap ("2 of 3 lanes flying"). Still when nothing flies; absent only until the live board's first read.
+- **Project picker:** a 32px button naming the project (Title voice), then its tracker kind and its Ready and Flying counts in 11.5px muted meta ("Linear · 1 ready · 0 flying"), then a pixel caret that flips when open. It opens a list under the button (min 330px): each row has a 6px square that fills for the shown project, the name at 620, the tracker kind under it in muted 11.5px, and the counts (or why there are none) at the right. Escape or a click outside closes it. With no project to show it stays open, asking.
+- **Doctor status:** a 28px quiet button with an 8px square, "Doctor", and in muted ink what it means for Start: solid green "Start ready", amber-outlined "N to fix before Start", hollow muted "Needs Set up". Before Doctor has run it reads just "Doctor" with a hollow square. It expands Doctor's region.
+- **Tracker line:** 12px muted ink, starting with a hairline tracker-kind tag. Linear: the bound "Team · Project" in board ink at 600 and when it was last read (a failed read in red ink). Local markdown: "**.scratch/** on main · Flying lanes read from their integration branch". GitHub: "**GitHub Issues** read through gh". No tracker: "**No tracker found**" and the short reason.
 
-### Cards / Containers
-- **Tail card:** the lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed); 11px 12px 10px padding. Holds the pixel spec number, title, Lead chip, lane state with an 8px state square, time, PR link with checks dot, branch name in mono and the lane actions.
-- **Needs-you row:** ground fill, 1px amber border plus a 1px amber outline offset 2px, a three-layer amber dither (levels 3, 6, 3) at 18–20% pulsing on a 3.6s step cycle. Kind tag, pixel spec number, one line of text, one or two actions. Rows stack 12px apart.
+### Path strip
+Five stations, each an 11px label over a path count on a 2px pixel rule, joined by 6x10 pixel chevrons in rule ink at their bottom right. Zero counts are muted; Flying turns its count sky ink and its rule sky while anything flies. While the board can't show Ready, Shaping and Open issues, those counts read "–". Each station scrolls to its section.
 
-### Navigation
-The board is a single BB nav page; it adds no navigation of its own. Every peg, Lead chip and PR link opens where the thing lives (thread beside the board, Linear issue or GitHub PR).
+### Chips and tags
+- **Tag:** 11px at 600, 1px 6px padding, hairline border, 2px corners; issue labels, `accept:owner`, Doctor's Pass, Warning and Fix (Fix and Warning dashed amber), Present and Missing. The amber tag (solid amber, on-amber) marks "Synthetic data".
+- **AI chip:** BB's own provider icon at 12px, then model and effort, 11px at 600 in muted ink. A Lead chip prefixes "Lead ·" and turns board ink on hover.
+- **Outside-lane tag:** "Started outside Squadron", 11px at 600, dashed rule-ink border.
 
-### Live board controls
+### Needs-you row
+Ground fill, 1px amber border plus a 1px amber outline offset 2px, with an amber grain along the edges (7–10px deep) breathing on a 3.6s sine, so the text sits on a clean ground. Kind tag (Setup, Failed, Blocked, Stopped, Question, Merge), the spec or ticket number in 2px pixel cells and amber ink, one line of text, then its actions. Rows stack 12px apart; with none, "Nothing needs you. Every lane is flying on its own."
 
-The live Linear board is the default. Plan opens a planning thread; Start opens a Lead for a ready, unblocked spec when Doctor passes, and otherwise shows its disabled reason. Live lanes offer Stop, Resume and Merge. The demo switch opts into the existing simulation and shows the amber "Synthetic data" tag; Cancel belongs only to that simulation.
+### Doctor region
+A flat region under the Needs-you rows: 12px padding, hairline border. A summary line, then one row per check (150px name, Pass/Warning/Fix tag, muted explanation) on hairlines, then "Configuration files" with a linked file name, Present or Missing tag and its mono path. Check again uses the plain button. In a narrow box explanations and paths move under their name and tag.
 
-- **Header count:** live mode counts all lanes that haven't landed as "N lanes on the board", including In review and stopped lanes. It shows no capacity or formation mark. The demo keeps its capacity count and formation mark.
-- **Stop and Resume:** a live lane that hasn't landed offers Resume when no lane thread is running, and Stop otherwise. This fact is read from BB independently of the PR state, so an open PR still reads In review while its stopped lane appears in Needs you. A thread failure or question explains the stop once; an `accept:owner` PR ready to merge shows its merge need instead of a bare stop.
-
-- **Linear status line:** a wrapping line under the header in 12px muted ink. The bound "Team · Project" uses board ink at 600; a failed read uses red ink. It shows connection, binding, catch-up or current state and the time of the last read.
-- **Setup rows:** the existing amber Needs-you row and kind tag, with connection or binding controls.
-- **Issue-title links:** Ready and Unplanned titles are plain text at rest, underlined on hover with a 3px underline offset and a 1px rule-ink underline. They retain the global 2px sky focus outline. Ready titles are 13.5px at 600; Unplanned titles are 13px. Unplanned parent context wraps beside the title in 12px muted ink and leaves the Linear parent unchanged.
-- **Binding picker:** native team and project selects, 28px high, 2px corners, ground fill and hairline border, 12px at 600, maximum width 220px. Controls wrap with 6px gaps. Disabled controls use 42% opacity. Progress is muted text; errors wrap on their own line in red ink. The global sky focus outline applies.
-- **Doctor:** a quiet header button with `aria-expanded` and `aria-controls`. Open checks occupy a full-width, flat region after Needs you, with 12px padding and a hairline border. Each row shows the check name, a Pass, Warning or Fix tag and a plain explanation. Warning and Fix tags have dashed borders; their text uses board ink. A "Configuration files" list follows, with a linked file name, Present or Missing tag and its path on each row. At 650px explanations and file paths move below their name and tag. Loading and error text and Check again use the existing body and button styles. No popover, shadow or header restyling.
-
-- **Lane detail:** a live lane's spec title in its tail card opens the spec in Linear with the issue-title link treatment, keeping the Title voice. The PR link names a draft, merged or closed PR in muted text after its number. Its checks dot is green, red or blinking amber, and hollow (a 1px rule-ink stroke) when there are no checks or none are known yet. The lane state reads In review while the PR is open. Child threads of the Lead that match no ticket sit under the rail after a muted "Other threads" label, as issue-title links that open the thread beside the board. A waiting peg names its open blockers in its "after" line and has no after line when nothing blocks it.
-- **Merge:** the existing amber button, in the tail card's actions only while the lane's PR is open with passing checks, and in the lane's Needs-you row when `accept:owner` holds that PR. While it runs it reads "Merging…", every lane action waits, and a status line beside it says "Squash-merging the PR". A toast names the merged PR or the plugin's reason. When the board first sees that lane Landed, its tail number stamps and the burst plays once on the sortie line; a lane already Landed when the board opens goes straight to the Landed list. Under reduced motion the landed lane is a still green state.
-
-### Linear connection settings
-
-The settings page uses the same ground, ink, type and quiet controls. Workspace names use Title; connection state sits in an announced status region. Check connection uses the quiet button style. BB owns the personal API key secret input; the page receives only public identity and connection status.
-
-### Peg (signature component)
-A ticket on the sortie line. Square, ground fill, 1px hairline, 190px wide with id and state on top, title (two lines), and AI chip and time at the foot. State is ink plus form:
-- **Waiting:** slim (168px, one-line title, no foot), dashed border, muted id and title, "after SQD-n" in mono.
-- **Ready:** full size, border at foreground 40%, state in board ink.
-- **Working:** border replaced by a sky 2px-dash march (6px period) that steps round the edge every 600ms; inside, sky dither at levels 2, 3, 5 cycles every 2.4s.
-- **Needs you:** amber border plus amber outline offset 2px (the doubled edge), amber dither 2, 4, 6, 4 cycling.
-- **In review:** solid 1px sky border, still sky dither at level 2 (32%); state reads "Review · model" with the reviewer's chip.
-- **In branch / Done:** compact (84px, id and state only), green border (70% for in branch, full for done), still green dither at 22%.
-- **Stopped:** 2px red border, red dither at level 4 (26%), and one 460ms stepped glitch (horizontal shifts and slice clips) when it fails.
+### Tail card
+The lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed). Holds the pixel spec number, the title (opens the spec), the Lead chip (opens the Lead thread), the lane state with an 8px state square and its time, the PR link with its checks dot (green, red, pulsing amber while checks run, hollow when there are none or none are known), the outside-lane tag, the branch in mono, and the lane actions (Merge, Resume, Stop). An outside lane replaces the actions with a muted read-only line over a hairline: "Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge."
 
 ### Progress strip
-One segment per ticket in lane order, 6px tall. Hollow (1px rule-ink outline) for waiting and ready; sky through a 50% dither for working and review; solid green for in branch and done; amber or red at double height (12px) for needs you and stopped. The tall segment is the form cue that something on this line is stuck.
+One segment per ticket in lane order, up to 40px wide (22px basis), 6px tall, 2px apart, then "N/M in branch" and, at the right, the pace ("2 working" with a sky square). Hollow (1px rule-ink outline) for waiting and ready; sky in 1px stripes for working and review; solid green for in branch and done; amber or red at double height for a question and a failure. The tall segment is the form cue that something on this line is stuck.
 
-### Formation mark
-Demo only: three pixel chevrons in a V beside the page title, one per lane slot; flying slots fill sky, empty slots fill hairline. It carries an accessible label ("2 of 3 lanes flying"). Live mode has no lane cap and omits the mark.
+### Peg (signature component)
+A ticket on the sortie line. Square, ground fill, 190px wide, 1px border at foreground 40%: the id in mono and the state on top, the title in two lines, and for full pegs the AI chip and time at the foot. State is ink plus form:
+- **Waiting:** 168px, 6px 8px padding, dashed hairline, muted id and one-line title; the top line's state place reads "after SIZE-n" (its open blockers) in muted mono, or "Waiting" when none are open.
+- **Ready:** full size, foreground-40% border.
+- **Working:** the border becomes a sky dashed line (2px, 6 on and 4 off) running round the edge at 12px/s over a slow sky grain (7% plus drift); state in sky ink.
+- **Question:** amber border plus amber outline offset 2px, amber grain at 16%; state "Needs you" in amber ink.
+- **In review:** solid sky border, still sky grain at 14%; state reads "Review · model" with the reviewer's chip.
+- **In branch / Done:** compact (84px, id and state only), green border (70% for in branch, full for done), still green grain (17% and 24%), state in green ink.
+- **Stopped:** 2px red border, red grain at 22%, state in red ink.
+Pegs with a thread are buttons that open it beside the board.
 
-### Motion
-All motion is stepped except the burst: border march 600ms `steps(3)`, dither cycle 2.4s `steps(1)`, Needs-you pulse 3.6s, PR-checks-pending blink 1s `steps(1)`, failed glitch 460ms `steps(1)` once, landed stamp 420ms `steps(3)` from 1.3x scale, switch knob 160ms `steps(3)`, and the landing burst: 28 green pixels (2px and 4px) sweeping 120–880px along the line over 950ms `cubic-bezier(0.16, 1, 0.3, 1)`, staggered by 35ms. Hover transitions are 120–140ms. Under `prefers-reduced-motion` every animation and transition is removed, only the first dither layer shows (at 40%), and the burst and the Ready-row hover dither are hidden.
+### List rows
+- **Ready:** plate, title, then "**N** tickets", "N can start" in sky ink when some wait, the routes' AI chips and `accept:owner`; a disclosure "N wait on blockers" lists each waiting ticket and what it waits on. Start (primary) at the right, with its disabled reason beside it.
+- **Shaping:** plate, title, what's missing in amber ink at 600 and the ticket count; Plan tickets or Resume planning (primary).
+- **Open issues:** mono id, title, then a meta line of the priority mark, labels and parent context; Plan (plain).
+- **Landed:** plate with a still green grain and green-ink number, title, then "PR #n merged" for a confirmed merged PR, otherwise "Lane landed", when it landed and how long it flew.
+
+### Linear connection settings
+The settings page uses the same ground, ink, type and quiet controls. Workspace names use Title; connection state sits in an announced status region. BB owns the API key's secret input. Linear binding uses native team and project selects, 28px high, 2px corners, ground fill, hairline border, 12px at 600, max 220px.
+
+## Motion
+
+The board's art and motion come from the canvas dither renderer (`lib/dither.ts`, `lib/dither-renderer.ts`, `board/DitherCanvas.tsx`). One `requestAnimationFrame` loop paints every animated canvas that's on screen, at device-pixel density. It stops while the document is hidden. Under `prefers-reduced-motion` each canvas is painted once, at its still moment, and the loop doesn't run.
+
+- **Airstream (signature):** behind each Flying lane's pegs, sky streaks flow left to right along the sortie line. Their speed (12px/s plus 12px/s per working thread, up to four) and density rise with the number of working threads; a lane with none working draws one still frame.
+- **Working peg:** the dashed march and grain above.
+- **Needs you:** the breathing amber edge grain above.
+- **Formation mark:** chevrons bob and trail contrails while anything flies.
+- **Landing:** once, when the board first sees a lane Landed: about 110 green pixels sweep the rail behind the pegs and leave a thinning green wake (the burst runs 1.6s); the tail number stamps green from 1.18x over 520ms (`cubic-bezier(0.16, 1, 0.3, 1)`); for the burst's last 420ms the line folds away (grid rows to 0 and opacity to 0, same curve); then the row arrives in Landed (700ms, 6px drop and fade in, same curve). A lane already Landed when the board opens goes straight to Landed. Under reduced motion there is no burst, stamp, fold or arrival: the lane shows Landed still, then moves.
+- **CSS motion that remains:** the stamp, the fold and the arrival, the PR-checks-running pulse (1.6s ease-in-out), the switch knob (140ms ease-out), and hover transitions of 130–140ms. No `steps()` animation remains, and CSS draws no dither.
 
 ## Do's and Don'ts
 
 ### Do:
-- **Do** take every neutral from BB's theme tokens (`--background`, `--foreground`, `--muted-foreground`, `--border`) and derive the band (4.5%) and rule ink (30%) by mixing them.
+- **Do** take every neutral from BB's theme tokens (`--background`, `--foreground`, `--muted-foreground`, `--border`) and derive the band (4.5%), hover (6%) and rule ink (30%) by mixing them.
 - **Do** use the `-ink` variant of a state colour for any text or small mark, and the fixed state colour for fills, edges and dither.
 - **Do** carry every state twice: ink plus form (march, doubled edge, tall segment, hollow outline, dashed border, size).
-- **Do** cut every texture from the Bayer 4x4 masks `--sq-d0` … `--sq-d16` on an 8px tile of 2px cells.
-- **Do** set spec numbers in the 5x7 pixel cell font (cell 4 in lane tails, cell 2 in lists), always with a screen-reader copy.
-- **Do** use 2px-on, 2px-off pixel rules for section rules and sortie lines, and 1px hairlines for rows and cards.
-- **Do** step animations (`steps()`), and give each one a still dither fallback under reduced motion.
-- **Do** keep amber for what waits on the owner and the actions only he can take.
+- **Do** draw every texture and every moving art through the dither renderer, only where something is happening, with a still frame under reduced motion.
+- **Do** set spec numbers in the 5x7 pixel cell font (cell 4 in lane tails, cell 2 on plates and in Needs you), always with a screen-reader copy.
+- **Do** use 2px-on, 2px-off pixel rules for section labels, path stations and sortie lines, and 1px hairlines for rows and cards.
+- **Do** keep amber for what waits on the owner and the actions only they can take.
+- **Do** give every empty section a sentence saying how work gets in, with its button where there is one.
+- **Do** draw the live board and the demo from the same parts: no visual is demo-only.
 
 ### Don't:
-- **Don't** add a shadow or lift to any surface; the board is flat.
+- **Don't** add a shadow or lift to any surface, including the picker list.
 - **Don't** round board marks; pegs, cards, rows and segments stay at 0px, controls at 2px.
 - **Don't** show a state by colour alone, or by motion alone.
 - **Don't** introduce a neutral as a literal hex or a fifth state hue.
+- **Don't** cut a CSS dither mask or a `steps()` animation; the renderer owns texture and motion.
 - **Don't** use the pixel font for prose, buttons or ticket ids, and don't load a web font.
 - **Don't** put white text on amber; use on-amber.

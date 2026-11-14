@@ -1,6 +1,7 @@
 // The board runtime schema is also the source of its public TypeScript types.
 import { z } from "zod";
 import { doctorReportSchema } from "./doctor-contract.js";
+import { trackerKindSchema } from "./tracker-contract.js";
 
 const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
 const ticket = z.object({
@@ -13,6 +14,12 @@ const lane = z.object({
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   /** No lane thread is running, independent of the PR's In review state. Derived only. */
   stopped: z.boolean().optional(),
+  /** Running Lead and child threads, independent of tracker ticket statuses. */
+  workingThreads: z.number().int().nonnegative().optional(),
+  /** A no-remote lane whose tickets are ready for the Lead's local merge. */
+  localMerge: z.boolean().optional(),
+  /** Started outside Squadron: read-only, with no Stop, Resume or Merge. leadThreadId is its thread. */
+  outside: z.boolean().optional(),
   minutes: z.number(), acceptOwner: z.boolean(), tickets: z.array(ticket),
   pr: z.object({
     number: z.number(), checks: z.enum(["pending", "passing", "failing", "none", "unknown"]), url: z.string(),
@@ -21,7 +28,7 @@ const lane = z.object({
   stopReason: z.string().optional(), landedAt: z.number().optional(),
   /** Who runs the lane's final review, from the final-review family. */
   reviewer: route.optional(),
-  /** The spec in Linear. */
+  /** The spec in its planning tracker. */
   url: z.string().optional(),
   /** Child threads of the Lead that match no ticket, so no thread is hidden. */
   unmatchedThreads: z.array(z.object({ threadId: z.string(), title: z.string() })).optional(),
@@ -39,12 +46,21 @@ const boardSchema = z.object({
     id: z.string(), title: z.string(), ticketCount: z.number(), routes: z.array(route), blockedBy: z.array(z.string()),
     acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
     startReason: z.string().nullable().optional(),
+    /** Open tickets that wait on open blockers, so a partial frontier shows why the rest won't start. */
+    waiting: z.array(z.object({ id: z.string(), title: z.string(), blockedBy: z.array(z.string()) })).optional(),
   })),
-  unplanned: z.array(z.object({
+  /** Specs that aren't Ready: what's missing, and the one button that fixes it. */
+  shaping: z.array(z.object({
+    id: z.string(), title: z.string(), url: z.string().optional(), ticketCount: z.number(), missing: z.string(),
+    /** "resume" reopens the open planning thread; "tickets" plans the spec's tickets. */
+    action: z.enum(["resume", "tickets"]), threadId: z.string().optional(),
+  })),
+  openIssues: z.array(z.object({
     id: z.string(), title: z.string(), labels: z.array(z.string()), url: z.string().optional(), under: z.string().optional(),
     priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
   })),
-  linear: z.object({
+  tracker: z.object({
+    kind: trackerKindSchema.nullable().optional(),
     state: z.enum(["disconnected", "unbound", "catching-up", "current", "failed"]), message: z.string(),
     syncedAt: z.number().nullable(), project: z.string().nullable(),
   }).optional(),
@@ -61,8 +77,9 @@ export type PullRequest = NonNullable<Lane["pr"]>;
 export type Blocker = z.infer<typeof blocker>;
 export type Board = z.infer<typeof boardSchema>;
 export type ReadySpec = Board["ready"][number];
-export type UnplannedIssue = Board["unplanned"][number];
-export type LinearStatus = NonNullable<Board["linear"]>;
+export type OpenIssue = Board["openIssues"][number];
+export type ShapingSpec = Board["shaping"][number];
+export type TrackerStatus = NonNullable<Board["tracker"]>;
 export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge";
 
 export interface NeedsYouItem {
@@ -73,13 +90,14 @@ export interface NeedsYouItem {
   ticketId?: string;
   text: string;
   threadId: string | null;
+  localMerge?: boolean;
 }
 
 /** What waits on the owner, derived from lane and ticket state, never stored. */
 export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
-  if (board.linear?.state === "disconnected" || board.linear?.state === "unbound") {
-    items.push({ key: "setup", kind: "setup", specId: "", text: board.linear.message, threadId: null });
+  if (board.tracker?.state === "disconnected" || board.tracker?.state === "unbound") {
+    items.push({ key: "setup", kind: "setup", specId: "", text: board.tracker.message, threadId: null });
   }
   for (const check of board.doctor?.checks ?? []) {
     if (check.status === "fix") {
@@ -87,20 +105,22 @@ export function needsYou(board: Board): NeedsYouItem[] {
     }
   }
   for (const lane of board.lanes) {
-    if (lane.state === "merge-waits") {
+    if (lane.state === "merge-waits" && !lane.outside) {
       items.push({
         key: `merge:${lane.specId}`,
         kind: "merge",
         specId: lane.specId,
-        text: `PR #${lane.pr?.number} passed its checks. accept:owner holds it for your merge.`,
+        text: lane.localMerge ? "The tickets are in the integration branch. accept:owner holds the local merge for you."
+          : `PR #${lane.pr?.number} passed its checks. accept:owner holds it for your merge.`,
         threadId: lane.leadThreadId,
+        ...(lane.localMerge ? { localMerge: true } : {}),
       });
     }
     for (const need of lane.needs ?? []) {
       items.push({ key: `${need.kind}:${need.threadId}`, kind: need.kind, specId: lane.specId, text: need.text, threadId: need.threadId });
     }
     // A failure or a question already says why the lane isn't moving.
-    if ((lane.stopped ?? lane.state === "stopped") && lane.state !== "landed" && lane.state !== "merge-waits" && !lane.needs?.length) {
+    if (!lane.outside && (lane.stopped ?? lane.state === "stopped") && lane.state !== "landed" && lane.state !== "merge-waits" && !lane.needs?.length) {
       items.push({
         key: `stopped:${lane.specId}`,
         kind: "stopped",
@@ -172,7 +192,9 @@ export function nextLandings(previous: Landings | null, lanes: readonly Lane[], 
 }
 
 /** Merge shows, and the server merges, only for an open PR whose checks pass. The demo's PRs carry no state. */
-export function canMerge(lane: { pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+export function canMerge(lane: { outside?: boolean; localMerge?: boolean; pr?: { state?: PullRequest["state"]; checks: PullRequest["checks"] } }): boolean {
+  if (lane.outside) return false;
+  if (lane.localMerge) return true;
   return (lane.pr?.state ?? "open") === "open" && lane.pr?.checks === "passing";
 }
 

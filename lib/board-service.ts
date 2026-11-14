@@ -1,35 +1,40 @@
-// Serves the board from the Linear reader, settings and clock; publishes
+// Serves the board from the tracker reader, settings and clock; publishes
 // `board-changed` whenever a project's board model changes.
 import { setTimeout as delay } from "node:timers/promises";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Board } from "./board-model.js";
-import { boardContract } from "./board-contract.js";
+import { boardContract, type ProjectCounts } from "./board-contract.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
-import { deriveBoard, type BoardInput } from "./board-derive.js";
+import { deriveBoard, type BoardInput, type PlanningThread } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
-import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { SettingsResult } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
 import type { PullRequestRow } from "./pull-requests.js";
+import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
+import { readLaneProgress } from "./lane-progress.js";
+import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 
 export interface BoardSources {
   connection(): Promise<LinearConnectionState>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   leads?(projectId: string): Promise<LeadThread[]>;
+  /** Open planning threads, so a spec being planned shows under Shaping. */
+  planning?(projectId: string): Promise<PlanningThread[]>;
   /** Rows from BB's pull-request plugin for the Leads' environments. */
   pullRequests?(environmentIds: string[], signal?: AbortSignal): Promise<Record<string, PullRequestRow>>;
-  mirror: {
-    getSnapshot(bbProjectId: string): MirrorSnapshot;
-    onChange(listener: (bbProjectId: string) => void): () => void;
-  };
+  tracker: TrackerReader;
+  /** Lanes started outside Squadron, shown read-only. */
+  outside?: OutsideLaneReader;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
 const REUSE_MS = 60_000;
 /** The watcher's pass interval, for changes nothing announces (clock, settings). */
-const WATCH_MS = 15_000;
+const WATCH_MS = 30_000;
+/** A board page asks again every 30 s while it shows a project; after this, nothing shows it. */
+export const SHOWN_MS = 75_000;
 
 export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   now?: () => number;
@@ -41,6 +46,8 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   bb.onDispose(() => { lifetime.abort(); });
   const projects = new Map<string, {
     published: string | null;
+    /** When a board page last read this project. Only shown projects are polled. */
+    shownAt?: number;
     connection?: { at: number; value: BoardInput["connection"] };
     settings?: { at: number; value: SettingsResult | null };
     doctor?: { at: number; value: DoctorReport };
@@ -53,6 +60,18 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (!entry) projects.set(id, entry = { published: null });
     return entry;
   };
+
+  /** Squadron's Leads, then the outside lanes flying the specs no Squadron Lead or planning thread has. */
+  async function lanesOf(projectId: string, snapshot: TrackerSnapshot, planning: PlanningThread[] = []): Promise<LeadThread[]> {
+    const leads = await sources.leads?.(projectId) ?? [];
+    if (!sources.outside) return leads;
+    try { return [...leads, ...await sources.outside(projectId, outsideLaneSpecs(snapshot, leads, planning))]; }
+    catch (error) {
+      // Outside lanes are only shown; failing to read them never hides Squadron's own lanes.
+      bb.log.warn(`outside lanes unavailable: ${error instanceof Error ? error.name : "unknown"}`);
+      return leads;
+    }
+  }
 
   async function readSettings(projectId: string, signal: AbortSignal): Promise<SettingsResult | null> {
     try { return (await readProjectCheckout(bb, projectId, signal))?.settings ?? null; }
@@ -70,16 +89,20 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   async function compute(projectId: string, fresh: boolean): Promise<Board> {
     const entry = project(projectId);
     const at = now();
-    if (fresh || !entry.connection || at - entry.connection.at > REUSE_MS) entry.connection = { at, value: await connection() };
+    const snapshot = await sources.tracker.getSnapshot(projectId);
+    if (snapshot.kind === "linear" && (fresh || !entry.connection || at - entry.connection.at > REUSE_MS)) entry.connection = { at, value: await connection() };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
-    const leads = await sources.leads?.(projectId);
-    const environments = (leads ?? []).flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
+    const planning = await sources.planning?.(projectId);
+    const leads = await lanesOf(projectId, snapshot, planning);
+    const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
+    const environments = leads.flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []);
     const { board } = deriveBoard({
-      snapshot: sources.mirror.getSnapshot(projectId), connection: entry.connection.value,
+      snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
       settings: entry.settings.value, now: now(),
       doctor: entry.doctor?.value,
-      leads,
+      leads, planning,
+      ...progress,
       pullRequests: environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : undefined,
     });
     return board;
@@ -110,23 +133,69 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return running;
   }
 
-  sources.mirror.onChange((projectId) => { void refresh(projectId); });
+  /** Whether a board page is showing this project now. */
+  function isShown(projectId: string): boolean {
+    const at = projects.get(projectId)?.shownAt;
+    return at !== undefined && now() - at < SHOWN_MS;
+  }
+
+  sources.tracker.onChange((projectId) => { if (isShown(projectId)) void refresh(projectId); });
 
   bb.background.service("board-watcher", { start: async (signal) => {
     const stop = AbortSignal.any([signal, lifetime.signal]);
     while (!stop.aborted) {
-      for (const id of [...projects.keys()]) await refresh(id);
+      for (const id of [...projects.keys()].filter(isShown)) await refresh(id);
       try { await wait(WATCH_MS, stop); } catch { return; }
     }
   } });
 
+  const pickKey = "board.projectPick";
+
+  async function listProjects() {
+    return (await bb.sdk.projects.list()).map(({ id, name }) => ({ id, name }));
+  }
+
+  /** One project's picker row: a fresh read through the reader contract, never a poller. */
+  async function counts(projectId: string): Promise<ProjectCounts["projects"][number]> {
+    try {
+      const snapshot = await (sources.tracker.refresh ?? sources.tracker.getSnapshot)(projectId);
+      const note = snapshot.error ?? (snapshot.kind === "linear" && !snapshot.project ? "Choose its Linear project on its board."
+        : snapshot.syncedAt === null ? "Not read yet." : null);
+      if (note) return { id: projectId, tracker: snapshot.kind, ready: null, flying: null, note };
+      const planning = await sources.planning?.(projectId);
+      const leads = await lanesOf(projectId, snapshot, planning);
+      const progress = await readLaneProgress(bb, snapshot, leads, lifetime.signal);
+      const { board } = deriveBoard({ snapshot, connection: { status: "connected", message: "" }, settings: null, now: now(),
+        leads, planning, ...progress });
+      return { id: projectId, tracker: snapshot.kind, ready: board.ready.length,
+        flying: board.lanes.filter((lane) => lane.state !== "landed").length, note: null };
+    } catch {
+      return { id: projectId, tracker: null, ready: null, flying: null, note: "Couldn't read this project. Make sure its machine is online." };
+    }
+  }
+
   bb.rpc.register(boardContract, {
     board: async ({ projectId }) => {
+      const entry = project(projectId);
+      const wasShown = isShown(projectId);
+      entry.shownAt = now();
+      // A project nothing was polling is read afresh when a board starts showing it.
+      if (!wasShown) await sources.tracker.refresh?.(projectId);
       const board = await compute(projectId, true);
       publishIfChanged(projectId, board);
       return board;
     },
+    "board.projects": async () => {
+      const listed = await listProjects();
+      const picked = await bb.storage.kv.get<string>(pickKey);
+      return { projects: listed, lastPick: picked && listed.some((item) => item.id === picked) ? picked : null };
+    },
+    "board.projectCounts": async () => ({ projects: await Promise.all((await listProjects()).map(({ id }) => counts(id))) }),
+    "board.pick": async ({ projectId }) => {
+      await bb.storage.kv.set(pickKey, projectId);
+      return { projectId };
+    },
   });
 
-  return { refresh };
+  return { refresh, isShown };
 }

@@ -3,7 +3,7 @@ import { z } from "zod";
 export const doctorReportSchema = z.object({
   ready: z.boolean(),
   checks: z.array(z.object({
-    id: z.enum(["skills", "setup", "settings", "linear", "github", "playbook", "machine-profile"]), name: z.string(),
+    id: z.enum(["skills", "setup", "settings", "linear", "github", "playbook", "machine-profile", "tracker"]), name: z.string(),
     status: z.enum(["pass", "fix", "warning"]), message: z.string(),
   })),
   configurationFiles: z.array(z.object({
@@ -29,8 +29,8 @@ export const doctorHostContract = {
     experimental_retryable: true,
   },
   githubLogin: {
-    input: z.object({}),
-    output: z.object({ authenticated: z.boolean() }),
+    input: z.object({ checkoutPath: z.string().optional() }),
+    output: z.object({ authenticated: z.boolean(), hostname: z.string().optional() }),
     experimental_retryable: true,
   },
 };

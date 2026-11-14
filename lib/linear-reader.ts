@@ -8,6 +8,8 @@ import { z } from "zod";
 import { LinearRequestError, type LinearAuth } from "./linear-auth.js";
 import { bindInputSchema, linearMirrorContract, mirrorLabelSchema, mirrorStateSchema,
   type LinearBinding, type MirrorCatalog, type MirrorIssue, type MirrorRelation, type MirrorSnapshot } from "./linear-mirror-contract.js";
+import { readProjectCheckout } from "./project-checkout.js";
+import { suggestLinearBinding } from "./linear-binding-suggestion.js";
 
 const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() });
 const connection = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node), pageInfo });
@@ -19,16 +21,17 @@ const issueNode = z.object({
   id: z.string(), identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
   updatedAt: z.string().datetime(), team: z.object({ id: z.string() }), project: z.object({ id: z.string() }).nullable(),
   parent: z.object({ id: z.string() }).nullable(), state: mirrorStateSchema, labels: connection(mirrorLabelSchema),
+  assignee: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
 });
 const relatedNode = issueNode.omit({ labels: true });
 const relationNode = z.object({ id: z.string(), type: z.string(), issue: relatedNode, relatedIssue: relatedNode });
 const graphNode = issueNode.extend({ relations: connection(relationNode), inverseRelations: connection(relationNode) });
 const issuesResponse = z.object({ issues: connection(graphNode) });
 const laneSpecResponse = z.object({ issue: issueNode.extend({ children: connection(issueNode) }).nullable() });
-const referenceFields = `id identifier title description url updatedAt team { id } project { id } parent { id } state { id name type }`;
+const referenceFields = `id identifier title description url updatedAt team { id } project { id } parent { id } state { id name type } assignee { id name }`;
 const relationFields = `nodes { id type issue { ${referenceFields} } relatedIssue { ${referenceFields} } } pageInfo { hasNextPage endCursor }`;
 const issueFields = `id identifier title description url updatedAt team { id } project { id } parent { id }
-  state { id name type } labels(first: 50) { nodes { id name color } pageInfo { hasNextPage endCursor } }`;
+  state { id name type } assignee { id name } labels(first: 50) { nodes { id name color } pageInfo { hasNextPage endCursor } }`;
 
 async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pageInfo: z.infer<typeof pageInfo> }>,
   initial?: { nodes: T[]; pageInfo: z.infer<typeof pageInfo> }): Promise<T[]> {
@@ -48,6 +51,8 @@ async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pag
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
   /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
   laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
+  /** Which bound projects the background poller reads: those a board shows. Default: every bound project. */
+  shouldPoll?: (bbProjectId: string) => boolean;
   now?: () => number;
   wait?: (ms: number, signal: AbortSignal) => Promise<void>;
 } = {}) {
@@ -167,6 +172,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
         id: node.id, identifier: node.identifier, title: node.title, description: node.description, url: node.url,
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
         state: node.state, labels: labels.length ? labels : existing?.labels ?? [],
+        assignees: node.assignee === undefined ? existing?.assignees ?? [] : node.assignee ? [node.assignee] : [],
         // Match the open-issue walk's board eligibility, including relation endpoints.
         inProject: node.team.id === binding.team.id && node.project?.id === binding.project.id &&
           isOpenIssue(node),
@@ -309,7 +315,8 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     polls.clear(); // Every service start rebuilds the in-memory snapshot.
     let budgetAt = 0;
     while (!signal.aborted && !lifetime.signal.aborted) {
-      const rows = db.prepare("SELECT bb_project_id FROM mirror_bindings ORDER BY bb_project_id").all() as { bb_project_id: string }[];
+      const rows = (db.prepare("SELECT bb_project_id FROM mirror_bindings ORDER BY bb_project_id").all() as { bb_project_id: string }[])
+        .filter(({ bb_project_id: id }) => options.shouldPoll?.(id) ?? true);
       for (const { bb_project_id: id } of rows) {
         if (signal.aborted || lifetime.signal.aborted || now() < budgetAt) break;
         const at = polls.get(id) ?? 0;
@@ -332,6 +339,11 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     }
   } });
   bb.rpc.register(linearMirrorContract, {
+    "linear.suggestBinding": async ({ bbProjectId }) => {
+      const checkout = await readProjectCheckout(bb, bbProjectId);
+      if (checkout?.tracker.kind !== "linear" || !checkout.issueTrackerMarkdown) return null;
+      return suggestLinearBinding(checkout.issueTrackerMarkdown, await catalog());
+    },
     "linear.catalog": catalog,
     "linear.bind": async (input) => { await bind(input); return sync(input.bbProjectId); },
     "linear.snapshot": ({ bbProjectId }) => getSnapshot(bbProjectId),

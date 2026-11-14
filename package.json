@@ -8,7 +8,7 @@
   },
   "bb": {
     "name": "Squadron",
-    "description": "Run a software factory on your Linear tickets: plan specs, start lanes of agents, and watch every ticket, thread and PR live.",
+    "description": "Run a software factory on your project's tickets: plan specs, start lanes of agents, and watch every ticket, thread and PR live.",
     "branding": {
       "icon": "Plane"
     },
@@ -33,7 +33,7 @@
   "private": true,
   "scripts": {
     "test": "node scripts/test.mjs",
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && node scripts/check-board-css.mjs",
     "build": "bb plugin build"
   }
 }

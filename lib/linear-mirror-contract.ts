@@ -12,6 +12,7 @@ export const mirrorIssueSchema = z.object({
   id, identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
   updatedAt: z.string(), teamId: id, projectId: id.nullable(), parentId: id.nullable(),
   state: mirrorStateSchema, labels: z.array(mirrorLabelSchema),
+  assignees: z.array(z.object({ id, name: z.string() })).optional(),
   // Eligible for the bound project's open board rows. Closed and external
   // relation endpoints remain in issues with their status and inProject:false.
   inProject: z.boolean(),
@@ -33,6 +34,7 @@ export const mirrorCatalogSchema = z.object({
 });
 export type MirrorCatalog = z.infer<typeof mirrorCatalogSchema>;
 export const linearMirrorContract = {
+  "linear.suggestBinding": { input: z.object({ bbProjectId: id }).strict(), output: z.object({ teamId: id, projectId: id }).nullable() },
   "linear.catalog": { input: z.null(), output: mirrorCatalogSchema },
   "linear.bind": { input: bindInputSchema, output: mirrorSnapshotSchema },
   "linear.snapshot": { input: z.object({ bbProjectId: id }).strict(), output: mirrorSnapshotSchema },

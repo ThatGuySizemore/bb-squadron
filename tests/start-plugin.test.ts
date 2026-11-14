@@ -23,6 +23,10 @@ function host(native = nativeThreads()) {
         sources: [{ id: "source", projectId, hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
       }) },
       files: { read: async ({ path }) => {
+        if (path === "/repo/docs/agents/issue-tracker.md") {
+          const content = readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8");
+          return { content, contentEncoding: "utf8", path, sha256: "tracker", sizeBytes: content.length };
+        }
         assert.equal(path, "/repo/docs/agents/squadron.md");
         return { content: settingsFile, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: settingsFile.length };
       } },
@@ -100,6 +104,19 @@ test("Start uses the first matching spec label rather than a ticket's route", as
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel], ["claude-code", "claude-opus-5-5", "high"]);
 });
 
+test("a ready-marked spec with open planning is Shaping in the board and picker and cannot Start through RPC", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.shaping.map((row) => row.id), ["FIX-5"]);
+  assert.deepEqual(board.ready.map((row) => row.id), ["FIX-1"]);
+  const counts = await harness.behavior.callRpc("board.projectCounts", null) as { projects: { ready: number }[] };
+  assert.equal(counts.projects[0].ready, 1);
+  await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), /isn't a ready spec/);
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 1, "only the planning thread was spawned");
+});
+
 test("blocked specs and failing fresh Doctor checks refuse Start without spawning", async (t) => {
   const { harness } = await setup(t);
   await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-1" }), /Waits on OUT-10/);
@@ -137,7 +154,7 @@ test("reload and fresh plugin storage reconstruct Flying from BB metadata, witho
   t.after(() => fresh.harness.lifecycle.dispose());
   await plugin(fresh.bb);
   const unbound = await fresh.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(unbound.linear?.state, "unbound", "wiping plugin storage loses the binding");
+  assert.equal(unbound.tracker?.state, "unbound", "wiping plugin storage loses the binding");
   await fresh.harness.behavior.callRpc("linear.bind", binding);
   const restored = await fresh.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(restored.lanes, board.lanes);
@@ -212,7 +229,7 @@ test("the Start button announces opening and waits while its Lead is created", a
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { BoardView } = await import("../board/Board.js");
-  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], unplanned: [], ready: [{
+  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, lanes: [], shaping: [], openIssues: [], ready: [{
     id: "FIX-5", title: "Doctor checks", ticketCount: 1, routes: [], blockedBy: [], acceptOwner: false, startReason: null,
   }, {
     id: "FIX-8", title: "Another spec", ticketCount: 1, routes: [], blockedBy: [], acceptOwner: false, startReason: null,
@@ -306,7 +323,7 @@ test("Needs you names each kind in words and offers its one action; lane buttons
     specId, title: `Spec ${specId}`, lead: { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const },
     leadThreadId: `thr_${specId}`, branch: "", state, minutes: 3, acceptOwner: false, tickets: [], ...(needs ? { needs } : {}),
   });
-  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, ready: [], unplanned: [], lanes: [
+  const board: Board = { tick: 0, laneCapacity: 0, workersPerLane: 0, autoStart: false, ready: [], shaping: [], openIssues: [], lanes: [
     lane("FIX-1", "flying", [{ threadId: "thr_w1", kind: "waiting", text: "Worker FIX-2 is waiting on you." }]),
     lane("FIX-3", "flying", [{ threadId: "thr_w3", kind: "failed", text: "Worker FIX-4 failed. Open it to see why." }]),
     lane("FIX-5", "stopped"),
@@ -315,7 +332,7 @@ test("Needs you names each kind in words and offers its one action; lane buttons
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, acting,
   }));
   const html = render(null);
-  for (const [kind, action] of [["Waiting", "Answer in thread"], ["Failed", "Open thread"], ["Stopped", "Resume"]]) {
+  for (const [kind, action] of [["Question", "Answer in thread"], ["Failed", "Open thread"], ["Stopped", "Resume"]]) {
     assert.match(html, new RegExp(`sq-need-kind">${kind}<[\\s\\S]*?>${action}</button>`), `${kind} offers ${action}`);
   }
   assert.doesNotMatch(html, /Re-plan|Prototype/, "the live strip has no prototype actions");

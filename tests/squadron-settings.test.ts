@@ -109,3 +109,14 @@ test("this repo maps In review and In branch to its Waiting to Merge status", ()
   assert.equal(result.settings.statusMapping.lane.inReview, "Waiting to Merge");
   assert.equal(result.settings.statusMapping.ticket.inBranch, "Waiting to Merge");
 });
+
+test("route labels match regardless of case, so UI and ui route the same way", () => {
+  const parsed = parseSquadronSettings(fixture);
+  assert.ok(parsed.ok);
+  const ui = resolveRoute(parsed.settings, ["ui"]);
+  assert.deepEqual(ui, { family: "claude", model: "claude-opus-5-5", effort: "high" });
+  assert.deepEqual(resolveRoute(parsed.settings, ["UI"]), ui);
+  const upperRow = parseSquadronSettings(fixture.replace("| `ui` |", "| `UI` |"));
+  assert.ok(upperRow.ok);
+  assert.deepEqual(resolveRoute(upperRow.settings, ["ui"]), ui, "a route row written in capitals matches a lower-case label");
+});

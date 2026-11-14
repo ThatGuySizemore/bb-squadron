@@ -319,7 +319,7 @@ test("Needs you names each kind in words and offers its one action; lane buttons
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, acting,
   }));
   const html = render(null);
-  for (const [kind, action] of [["Waiting", "Answer in thread"], ["Failed", "Open thread"], ["Stopped", "Resume"]]) {
+  for (const [kind, action] of [["Question", "Answer in thread"], ["Failed", "Open thread"], ["Stopped", "Resume"]]) {
     assert.match(html, new RegExp(`sq-need-kind">${kind}<[\\s\\S]*?>${action}</button>`), `${kind} offers ${action}`);
   }
   assert.doesNotMatch(html, /Re-plan|Prototype/, "the live strip has no prototype actions");

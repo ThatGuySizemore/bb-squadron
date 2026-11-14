@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Squadron board preview</title>
+  <!-- BB supplies these tokens in the real app; the preview emulates the comp's dark and light BB themes. -->
+  <style>
+    html, body { margin: 0; }
+    body { background: var(--background); color: var(--foreground); font-family: system-ui, -apple-system, "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+    .theme-dark { --background: #131415; --foreground: #e9e7e3; --muted-foreground: #9c9993; --border: #2c2d30; color-scheme: dark; }
+    .theme-light { --background: #fbfaf8; --foreground: #1c1c1a; --muted-foreground: #66645e; --border: #e1dfda; color-scheme: light; }
+    #frame { display: flex; flex-direction: column; }
+    .width-wide #frame { width: 100%; }
+    .width-narrow #frame { width: 400px; border-right: 1px solid var(--border); }
+  </style>
+  <link rel="stylesheet" href="preview.css">
+</head>
+<body>
+  <div id="frame"></div>
+  <script type="module" src="preview.js"></script>
+</body>
+</html>

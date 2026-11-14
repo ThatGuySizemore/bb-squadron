@@ -59,8 +59,9 @@ test("Doctor's status shows in the header without opening the panel", async () =
   const view = (doctor?: DoctorReport) => render(createElement(BoardView, { board: { ...base, ...(doctor ? { doctor } : {}) },
     demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
   const doctorButton = (html: string) => /<button[^>]*aria-controls[^>]*>(Doctor[\s\S]*?)<\/button>/.exec(html)?.[1].replace(/<[^>]+>/g, "");
-  assert.equal(doctorButton(await view(report(["setup", "settings"], false))), "Doctor: 2 to fix");
-  assert.equal(doctorButton(await view(report([]))), "Doctor: Ready");
+  assert.equal(doctorButton(await view(report(["setup", "settings"], false))), "Doctor: Needs Set up");
+  assert.equal(doctorButton(await view(report(["settings"], true))), "Doctor: 1 to fix before Start");
+  assert.equal(doctorButton(await view(report([]))), "Doctor: Start ready");
   assert.equal(doctorButton(await view()), "Doctor", "no status before Doctor has run");
 });
 

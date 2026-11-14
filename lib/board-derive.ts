@@ -4,7 +4,7 @@ import type { MirrorIssue, MirrorSnapshot } from "./linear-mirror-contract.js";
 import { resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
-import type { LeadThread } from "./lead-threads.js";
+import type { LeadThread, WorkerThread } from "./lead-threads.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
 export interface BoardInput {
@@ -29,6 +29,21 @@ function list(ids: string[]): string {
   return ids.length < 2 ? ids.join("") : `${ids.slice(0, -1).join(", ")} and ${ids[ids.length - 1]}`;
 }
 
+type LaneThread = Pick<WorkerThread, "id" | "status" | "runtime" | "hasPendingInteraction" | "queuedWork">;
+/** BB statuses in which a thread is still doing, or about to do, work. */
+const RUNNING = new Set(["active", "starting", "pending", "stopping"]);
+
+/** Why a lane thread needs the owner, read only from its BB state. */
+function threadNeed(thread: LaneThread, who: string): NonNullable<Lane["needs"]>[number] | null {
+  if (thread.hasPendingInteraction) return { threadId: thread.id, kind: "waiting", text: `${who} is waiting on you.` };
+  if (thread.status === "error") return { threadId: thread.id, kind: "failed", text: `${who} failed. Open it to see why.` };
+  if (thread.queuedWork === "failed") return { threadId: thread.id, kind: "blocked", text: `${who} couldn't deliver a queued message.` };
+  if (thread.runtime.displayStatus === "waiting-for-host") {
+    return { threadId: thread.id, kind: "blocked", text: `${who} is waiting for its machine to come online.` };
+  }
+  return null;
+}
+
 function uniqueRoutes(routes: Route[]): Route[] {
   return [...new Map(routes.map((route) => [`${route.family}|${route.model}|${route.effort}`, route])).values()];
 }
@@ -46,12 +61,19 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     binding && isActiveProjectThread(thread, thread.id, binding.bbProjectId)).map((lead) => [lead.specId, lead]));
   const lanes: Lane[] = specs.flatMap((spec) => {
     const lead = leads.get(spec.id);
-    return lead ? [{
+    if (!lead) return [];
+    const workers = lead.workers ?? [];
+    const needs = [threadNeed(lead.thread, `The Lead for ${spec.identifier}`),
+      ...workers.map((worker) => threadNeed(worker, worker.title ?? "A worker"))].filter((need) => need !== null);
+    // Stopped is only the threads' status (ADR-0008): nothing in the lane is running.
+    const stopped = [lead.thread, ...workers].every((thread) => !RUNNING.has(thread.status));
+    return [{
       specId: spec.identifier, title: spec.title, lead: lead.route, leadThreadId: lead.thread.id,
-      branch: lead.branch, state: "flying" as const,
+      branch: lead.branch, state: stopped ? "stopped" as const : "flying" as const,
+      ...(needs.length ? { needs } : {}),
       minutes: Math.max(0, Math.floor((input.now - lead.thread.createdAt) / 60_000)),
       acceptOwner: labels(spec).includes(ACCEPT_OWNER), tickets: [],
-    }] : [];
+    }];
   });
   /** Open blockers of one issue, in identifier order. Unknown endpoints are skipped. */
   const openBlockers = (issue: MirrorIssue): Blocker[] => snapshot.relations

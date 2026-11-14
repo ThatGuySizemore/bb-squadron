@@ -259,7 +259,31 @@ function useOverflow<T extends HTMLElement>() {
   return [ref, overflow] as const;
 }
 
-function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean }) {
+/** A Stop or Resume whose message is on its way to the Lead. */
+export interface LaneAction { specId: string; type: "stop" | "resume" }
+
+const LANE_ACTION_PENDING: Record<LaneAction["type"], string> = { stop: "Stopping…", resume: "Resuming…" };
+const LANE_ACTION_STATUS: Record<LaneAction["type"], string> = {
+  stop: "Asking the Lead to wind down",
+  resume: "Asking the Lead to carry on",
+};
+
+/** Stop or Resume, disabled while a message to this lane's Lead is on its way. */
+function LaneMessageButton({ type, specId, acting, tone, dispatch }: {
+  type: LaneAction["type"]; specId: string; acting: LaneAction | null; tone: "plain" | "primary" | "amber"; dispatch: (a: BoardAction) => void;
+}) {
+  const mine = acting?.specId === specId;
+  return (
+    <>
+      {mine && acting.type === type ? <span className="sq-plan-why" role="status">{LANE_ACTION_STATUS[type]}</span> : null}
+      <Btn tone={tone} disabled={acting !== null} onClick={() => dispatch({ type, specId })}>
+        {mine && acting.type === type ? LANE_ACTION_PENDING[type] : type === "stop" ? "Stop" : "Resume"}
+      </Btn>
+    </>
+  );
+}
+
+function SortieLine({ lane, dispatch, landing, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; acting?: LaneAction | null }) {
   const open = useOpen();
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
   const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
@@ -295,12 +319,8 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
                 Merge
               </Btn>
             ) : null}
-            {lane.state === "stopped" ? (
-              <Btn tone="primary" onClick={() => dispatch({ type: "resume", specId: lane.specId })}>
-                Resume
-              </Btn>
-            ) : null}
-            {lane.state === "flying" ? <Btn onClick={() => dispatch({ type: "stop", specId: lane.specId })}>Stop</Btn> : null}
+            {lane.state === "stopped" ? <LaneMessageButton type="resume" tone="primary" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
+            {lane.state === "flying" ? <LaneMessageButton type="stop" tone="plain" specId={lane.specId} acting={acting} dispatch={dispatch} /> : null}
             <span className="sq-isolated">
               <Btn tone="danger" onClick={() => dispatch({ type: "cancel", specId: lane.specId })}>
                 Cancel
@@ -344,13 +364,17 @@ function SortieLine({ lane, dispatch, landing }: { lane: Lane; dispatch: (a: Boa
   );
 }
 
-const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = { setup: "Setup", question: "Question", stopped: "Stopped", merge: "Merge" };
+const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
+  setup: "Setup", waiting: "Waiting", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
+};
 
-function NeedsYouStrip({ items, dispatch, setup }: {
+export function NeedsYouStrip({ items, dispatch, setup, demo = false, acting = null }: {
   items: NeedsYouItem[];
   dispatch: (a: BoardAction) => void;
-  /** Controls for a setup item, such as choosing the Linear project. */
+  /** Controls for the Linear setup item, such as choosing the Linear project. */
   setup?: ReactNode;
+  demo?: boolean;
+  acting?: LaneAction | null;
 }) {
   const open = useOpen();
   if (items.length === 0) {
@@ -371,24 +395,29 @@ function NeedsYouStrip({ items, dispatch, setup }: {
             {item.text}
           </span>
           <span className="sq-need-actions">
-            {item.kind === "setup" ? setup : null}
-            {item.kind === "question" && item.threadId ? (
+            {item.key === "setup" ? setup : null}
+            {item.kind === "waiting" && item.threadId ? (
               <Btn
                 tone="amber"
                 onClick={() => {
-                  open.thread(item.threadId!, `the worker thread for ${item.ticketId}`);
-                  window.setTimeout(() => dispatch({ type: "answer", ticketId: item.ticketId! }), 900);
+                  open.thread(item.threadId!, `the thread waiting on you in ${item.specId}`);
+                  if (item.ticketId) window.setTimeout(() => dispatch({ type: "answer", ticketId: item.ticketId! }), 900);
                 }}
               >
                 Answer in thread
               </Btn>
             ) : null}
+            {(item.kind === "failed" || item.kind === "blocked") && item.threadId ? (
+              <Btn onClick={() => open.thread(item.threadId!, `the ${item.kind} thread in ${item.specId}`)}>Open thread</Btn>
+            ) : null}
             {item.kind === "stopped" ? (
               <>
-                <Btn tone="amber" onClick={() => dispatch({ type: "resume", specId: item.specId })}>
-                  Resume
-                </Btn>
-                <Btn onClick={() => toast(`Prototype: opens a planning thread on ${item.specId}.`)}>Re-plan</Btn>
+                <LaneMessageButton type="resume" tone="amber" specId={item.specId} acting={acting} dispatch={dispatch} />
+                {demo ? (
+                  <Btn onClick={() => toast(`Prototype: opens a planning thread on ${item.specId}.`)}>Re-plan</Btn>
+                ) : item.threadId ? (
+                  <Btn onClick={() => open.thread(item.threadId!, `the Lead thread for ${item.specId}`)}>Open Lead</Btn>
+                ) : null}
               </>
             ) : null}
             {item.kind === "merge" ? (
@@ -536,6 +565,8 @@ interface BoardViewProps {
   /** The Plan that is opening its thread: an issue id, or "" for Plan a spec. */
   planning?: string | null;
   starting?: string | null;
+  /** A Stop or Resume on its way to a Lead. */
+  acting?: LaneAction | null;
   setup?: ReactNode;
   /** Replaces Ready and Unplanned while the board can't show them. */
   notice?: ReactNode;
@@ -543,7 +574,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, setup, notice, footer }: BoardViewProps) {
+export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, setup, notice, footer }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const reduced = usePrefersReducedMotion();
@@ -602,7 +633,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           <h2 id="sq-needs-h">
             Needs you {items.length > 0 ? <span className="sq-count sq-num">{items.length}</span> : null}
           </h2>
-          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} />
+          <NeedsYouStrip items={items} dispatch={dispatch} setup={setup} demo={demo} acting={acting} />
         </section>
         <DoctorPanel open={doctorOpen} id={doctorId} />
 
@@ -611,7 +642,7 @@ export function BoardView({ board, dispatch, demo, modeSwitch, onPlan, planning 
           {onLine.length === 0 ? (
             <p className="sq-clear">{demo ? "No lanes flying. Start a ready spec below." : "No lanes flying."}</p>
           ) : (
-            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} />)
+            onLine.map((lane) => <SortieLine key={lane.specId} lane={lane} dispatch={dispatch} landing={isLanding(lane)} acting={acting} />)
           )}
         </section>
 
@@ -752,6 +783,23 @@ export async function startFromBoard(deps: {
   } finally { await deps.refresh(); }
 }
 
+/** Send Stop or Resume to a lane's Lead through the board's public RPC, then read the board again. */
+export async function messageLeadFromBoard(deps: {
+  send: (type: LaneAction["type"], input: { projectId: string; specId: string }) => Promise<{ threadId: string }>;
+  notify: (text: string) => void;
+  refresh: () => Promise<void>;
+}, projectId: string, action: LaneAction) {
+  try {
+    await deps.send(action.type, { projectId, specId: action.specId });
+    deps.notify(action.type === "stop"
+      ? `Asked the Lead for ${action.specId} to wind down. Its workers save their work first.`
+      : `Asked the Lead for ${action.specId} to carry on from its last summary.`);
+  } catch (error) {
+    deps.notify(error instanceof Error && error.message ? error.message
+      : `Couldn't ${action.type === "stop" ? "stop" : "resume"} ${action.specId}. Try again.`);
+  } finally { await deps.refresh(); }
+}
+
 /** The real board for the BB project in view, read from the reader. */
 function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const { projectId } = useBbContext();
@@ -759,6 +807,7 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
   const open = useOpen();
   const [planning, setPlanning] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
+  const [acting, setActing] = useState<LaneAction | null>(null);
   const [board, setBoard] = useState<Board | null>(null);
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -813,16 +862,28 @@ function LiveBoard({ modeSwitch }: { modeSwitch: ReactNode }) {
       }, projectId, specId);
     } finally { setStarting(null); }
   }, [rpc, projectId, starting, open, load]);
+  const message = useCallback(async (action: LaneAction) => {
+    if (!projectId || acting !== null) return;
+    setActing(action);
+    try {
+      await messageLeadFromBoard({ send: (type, input) => rpc.call(type === "stop" ? "lane.stop" : "lane.resume", input),
+        notify: (text) => toast(text), refresh: load }, projectId, action);
+    } finally { setActing(null); }
+  }, [rpc, projectId, acting, load]);
   const notice = liveNotice({ projectId, board, failed });
   return (
     <BoardView
       board={board ?? EMPTY_BOARD}
       demo={false}
       modeSwitch={modeSwitch}
-      dispatch={(action) => { if (action.type === "start") void start(action.specId); }}
+      dispatch={(action) => {
+        if (action.type === "start") void start(action.specId);
+        else if (action.type === "stop" || action.type === "resume") void message({ type: action.type, specId: action.specId });
+      }}
       onPlan={(issueId) => void plan(issueId)}
       planning={planning}
       starting={starting}
+      acting={acting}
       notice={notice ? (
         <>
           {notice}

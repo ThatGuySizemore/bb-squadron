@@ -11,7 +11,7 @@ test("a live Lead makes its spec Flying and links the Lead instead of offering S
     issue("FIX-2", { parent: "FIX-1" }),
   ]);
   const { board } = deriveBoard(input(snap, { leads: [{ specId: "fix-1", thread: makeThreadResponse({
-    id: "thr_lead", projectId: "proj-one", providerId: "claude-code",
+    id: "thr_lead", projectId: "proj-one", providerId: "claude-code", status: "active",
     createdAt: Date.parse("2026-11-13T20:00:00Z"),
   }), route: { family: "claude", model: "claude-opus-5-5", effort: "high" }, branch: "spec/fix-1" }] }));
   assert.deepEqual(board.ready, []);
@@ -194,4 +194,68 @@ test("Start waits for a current bound Linear snapshot and a ready Doctor", () =>
   ]) {
     assert.notEqual(deriveBoard(input(snap, { doctor, ...overrides })).board.ready[0].startReason, null);
   }
+});
+
+/** A Flying lane for FIX-1 whose Lead and workers are in the given BB states. */
+function laneWith(lead: Partial<ReturnType<typeof makeThreadResponse>> & { hasPendingInteraction?: boolean; queuedWork?: "none" | "waiting" | "failed" },
+  workers: (Partial<ReturnType<typeof makeThreadResponse>> & { hasPendingInteraction?: boolean; queuedWork?: "none" | "waiting" | "failed" })[] = []) {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })]);
+  return deriveBoard(input(snap, { leads: [{
+    specId: "fix-1", route: { family: "gpt", model: "gpt-6.1-sol", effort: "high" }, branch: "spec/fix-1",
+    thread: { ...makeThreadResponse({ id: "thr_lead", projectId: "proj-one", status: "active", runtime: { displayStatus: "active" } }), ...lead },
+    workers: workers.map((worker, i) => ({ ...makeThreadResponse({ id: `thr_w${i + 1}`, projectId: "proj-one", parentThreadId: "thr_lead",
+      title: `Worker FIX-${i + 2}`, status: "active", runtime: { displayStatus: "active" } }), ...worker })),
+  }] })).board;
+}
+const kinds = (board: ReturnType<typeof laneWith>) => needsYou(board).map(({ kind, specId, threadId }) => ({ kind, specId, threadId }));
+
+test("a lane thread waiting on the owner is in Needs you until it moves on", () => {
+  assert.deepEqual(kinds(laneWith({}, [{ status: "idle", runtime: { displayStatus: "idle" }, hasPendingInteraction: true }, {}])),
+    [{ kind: "waiting", specId: "FIX-1", threadId: "thr_w1" }]);
+  assert.deepEqual(kinds(laneWith({ hasPendingInteraction: true })), [{ kind: "waiting", specId: "FIX-1", threadId: "thr_lead" }]);
+  const answered = laneWith({}, [{ hasPendingInteraction: false }]);
+  assert.deepEqual(kinds(answered), []);
+  assert.equal(answered.lanes[0].state, "flying");
+});
+
+test("a failed or blocked lane thread is in Needs you until it runs again", () => {
+  assert.deepEqual(kinds(laneWith({}, [{ status: "error", runtime: { displayStatus: "error" } }])),
+    [{ kind: "failed", specId: "FIX-1", threadId: "thr_w1" }]);
+  assert.deepEqual(kinds(laneWith({ queuedWork: "failed" })), [{ kind: "blocked", specId: "FIX-1", threadId: "thr_lead" }]);
+  assert.deepEqual(kinds(laneWith({ runtime: { displayStatus: "waiting-for-host" } })),
+    [{ kind: "blocked", specId: "FIX-1", threadId: "thr_lead" }]);
+  assert.deepEqual(kinds(laneWith({}, [{ status: "active", runtime: { displayStatus: "active" } }])), []);
+  const text = needsYou(laneWith({}, [{ status: "error", runtime: { displayStatus: "error" } }]))[0].text;
+  assert.match(text, /Worker FIX-2/, "the item names the thread");
+});
+
+test("a lane whose Lead and workers have all stopped is Stopped and in Needs you, and clears when it runs again", () => {
+  const idle = { status: "idle" as const, runtime: { displayStatus: "idle" as const } };
+  const stopped = laneWith(idle, [idle]);
+  assert.equal(stopped.lanes[0].state, "stopped");
+  assert.deepEqual(kinds(stopped), [{ kind: "stopped", specId: "FIX-1", threadId: "thr_lead" }]);
+  // A Lead between turns while its worker builds is still flying.
+  const working = laneWith(idle, [{}]);
+  assert.equal(working.lanes[0].state, "flying");
+  assert.deepEqual(kinds(working), []);
+  const resumed = laneWith({}, [idle]);
+  assert.equal(resumed.lanes[0].state, "flying");
+  assert.deepEqual(kinds(resumed), []);
+  // A stopped lane with a failed Lead lists the failure once, not also as a bare stop.
+  const failed = laneWith({ status: "error", runtime: { displayStatus: "error" } }, [idle]);
+  assert.equal(failed.lanes[0].state, "stopped");
+  assert.deepEqual(kinds(failed), [{ kind: "failed", specId: "FIX-1", threadId: "thr_lead" }]);
+});
+
+test("Doctor problems are setup items in Needs you, and warnings aren't", () => {
+  const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] })]);
+  const doctor = { ready: false, configurationFiles: [], checks: [
+    { id: "skills" as const, name: "Matt's plugin", status: "fix" as const, message: "Install Matt's plugin in Codex." },
+    { id: "playbook" as const, name: "Playbook", status: "warning" as const, message: "No playbook yet." },
+    { id: "github" as const, name: "GitHub", status: "pass" as const, message: "Signed in." },
+  ] };
+  assert.deepEqual(needsYou(deriveBoard(input(snap, { doctor })).board).map(({ kind, text }) => ({ kind, text })), [
+    { kind: "setup", text: "Install Matt's plugin in Codex." },
+  ]);
+  assert.deepEqual(needsYou(deriveBoard(input(snap, { doctor: { ...doctor, ready: true, checks: doctor.checks.slice(1) } })).board), []);
 });

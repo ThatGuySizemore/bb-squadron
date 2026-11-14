@@ -1,24 +1,9 @@
 import { cliCommand, defineCli, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
 import type { LaneActions } from "./lane-start.js";
-import { needsYou, type Board, type NeedsYouItem, type NeedsYouKind } from "./board-model.js";
+import type { Board } from "./board-model.js";
 import { helperCommands } from "./helper-cli.js";
 import type { registerHelper } from "./helper.js";
-
-const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
-const unreadable = "Couldn't read this project. Make sure its machine is online.";
-
-const kindNames: Record<NeedsYouKind, string> = {
-  setup: "Setup", waiting: "Question", failed: "Stopped", blocked: "Stopped", stopped: "Stopped", merge: "Merge waiting",
-};
-
-function openNeeds(board: Board): NeedsYouItem[] {
-  const items = needsYou(board);
-  // A failed read can't establish that Needs you is empty. Keep its safe tracker message.
-  if (board.tracker?.state === "failed" && !items.some((item) => item.text === board.tracker!.message)) {
-    items.unshift({ key: "tracker", kind: "setup", specId: "", text: board.tracker.message, threadId: null });
-  }
-  return items;
-}
+import { oneLine, openNeeds, needLine, boardLink, unreadableProject as unreadable } from "./project-observation.js";
 
 const incomplete = (board: Board | null) => !board || board.tracker?.state !== "current";
 
@@ -71,7 +56,6 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
       },
     });
   }
-  const boardLink = () => `${bb.server.experimental_appUrl?.replace(/\/$/, "") ?? ""}/plugins/squadron/board`;
   bb.cli.register(defineCli({
     name: "squadron", summary: "See your projects and act on their specs.",
     commands: {
@@ -86,16 +70,8 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
         async run({ options }) {
           const rows = await readProjects(options.project);
           const lines = rows.map(({ project, value }) => {
-            if (!value) return [`${oneLine(project.name)} | Setup | Project | ${unreadable} | ${boardLink()}`];
-            return openNeeds(value).map((item) => {
-              const lane = value.lanes.find((lane) => lane.specId === item.specId);
-              const text = item.kind === "merge" ? item.localMerge
-                ? "The tickets are ready and wait for your local merge."
-                : `PR #${lane?.pr?.number} passed its checks and waits for your merge.` : item.text;
-              const link = item.kind === "merge" && lane?.pr ? lane.pr.url
-                : item.threadId ? `@thread:${item.threadId}` : boardLink();
-              return `${oneLine(project.name)} | ${kindNames[item.kind]} | ${(item.ticketId ?? item.specId) || "Project"} | ${oneLine(text)} | ${link}`;
-            });
+            if (!value) return [`${oneLine(project.name)} | Setup | Project | ${unreadable} | ${boardLink(bb)}`];
+            return openNeeds(value).map((item) => needLine(project.name, value, item, boardLink(bb)));
           });
           const output = lines.flat();
           return { exitCode: rows.some(({ value }) => incomplete(value)) ? 1 : 0, stdout: output.length ? `${output.join("\n")}\n` : "Nothing needs you.\n" };

@@ -15,7 +15,7 @@ const lane = z.object({
   liveStep: liveStepSchema.optional(),
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
-  /** No lane thread is running, independent of the PR's In review state. Derived only. */
+  /** A confirmed stop or unavailable idle lifecycle, independent of the PR state. Derived only. */
   stopped: z.boolean().optional(),
   /** Running Lead and child threads, independent of tracker ticket statuses. */
   workingThreads: z.number().int().nonnegative().optional(),

@@ -6,6 +6,7 @@ import { registerLinearMirror } from "./lib/linear-mirror.js";
 import { registerDoctor } from "./lib/doctor-service.js";
 import { registerBoard } from "./lib/board-service.js";
 import { registerPlanning } from "./lib/planning.js";
+import { registerRestart } from "./lib/restart-service.js";
 import { registerWorkers } from "./lib/worker-service.js";
 import { registerLanes } from "./lib/lane-service.js";
 import { registerSignedCommentAvatars } from "./lib/linear-avatar.js";
@@ -18,6 +19,7 @@ export default async function plugin(bb: BbPluginApi) {
   const doctor = registerDoctor(bb, () => linear.getConnection());
   const lanes = registerLanes(bb, { connection: () => linear.getConnection(), mirror, doctor, outbox });
   const workers = registerWorkers(bb, { connection: () => linear.getConnection(), mirror, outbox }, lanes);
+  registerRestart(bb, { mirror }, lanes, workers);
   const planning = registerPlanning(bb, { connection: () => linear.getConnection(), mirror, outbox });
   bb.agents.configure((context) => ({
     tools: [...outbox.toolsForThread(context.project.id, context.thread.id), ...workers.toolsForThread(context.project.id, context.thread.id)],

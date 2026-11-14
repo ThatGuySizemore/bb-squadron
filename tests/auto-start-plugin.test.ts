@@ -51,6 +51,7 @@ async function setup(t: import("node:test").TestContext, options: {
       skills: { list: async () => ({ skills: skills.map((name) => ({ id: name, name, description: null, manageable: false,
         pluginId: null, provider: null, registrySkillId: null, scope: "shared-project" as const, filePath: `/repo/.agents/skills/${name}/SKILL.md` })) }) },
       threads: {
+        list: async () => [],
         queuedMessages: {
           list: async ({ threadId }) => [makeQueueEntry({ id: `queued-${threadId}`, threadId })],
           send: async () => ({ ok: true as const, delivery: "sent" as const }),

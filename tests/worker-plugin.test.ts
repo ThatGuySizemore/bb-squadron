@@ -46,6 +46,7 @@ async function setup(t: import("node:test").TestContext, options: { verify?: boo
         ({ id: name, name, description: null, manageable: false, pluginId: null, provider: null, registrySkillId: null,
           scope: "shared-project" as const, filePath: `/repo/.agents/skills/${name}/SKILL.md` })) }) },
       threads: {
+        list: async () => [],
         queuedMessages: {
           list: async ({ threadId }) => [makeQueueEntry({ id: `queued-${threadId}`, threadId })],
           send: async ({ threadId }) => {
@@ -344,4 +345,14 @@ test("worker diagnostics retain safe classes and codes without leaking provider 
     assert.ok(harness.inspection.logEntries.some((entry) => entry.message.startsWith("Lane ") && entry.message.includes(" worker ") && entry.message.endsWith(`provisioning: ${item.expected}`)));
     assert.ok(!JSON.stringify(harness.inspection.logEntries).includes("fake-private-diagnostic-detail"));
   });
+});
+
+test("automatic continuation of a reported worker needs a fresh working reservation", async (t) => {
+  const { harness, start, call } = await setup(t); await start();
+  const worker = await call("squadron_spawn_worker", { ticketId: "FIX-6" });
+  await call("squadron_report", { type: "done", commit, summary: "Tests pass." }, { threadId: worker.threadId, projectId: "proj-one" });
+  const decision = await harness.inspection.registrations.hooks["message.dispatch"]!(makeMessageDispatchHookContext({
+    thread: { id: worker.threadId }, project: { id: "proj-one" }, originPluginId: "squadron",
+  }));
+  assert.equal(decision.action, "reject");
 });

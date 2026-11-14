@@ -19,6 +19,7 @@ async function setup(t: import("node:test").TestContext, options: {
   let environmentReads = 0;
   let branchReady = false;
   let writeIdentities = 0;
+  let writesRestored = false;
   const linear = workspace({ vocabulary: () => Response.json({ data: {
     workflowStates: { nodes: [ready, { id: "state-started", name: "In Progress", type: "started" }], pageInfo: end },
     issueLabels: { nodes: [], pageInfo: end },
@@ -26,7 +27,7 @@ async function setup(t: import("node:test").TestContext, options: {
   const mutations: Array<{ query: string; variables: { id?: string; input: Record<string, string> } }> = [];
   const fetch = mock.method(globalThis, "fetch", async (url: string | URL | Request, init?: RequestInit) => {
     const request = JSON.parse(String(init?.body));
-    if (request.query.includes("SquadronIdentity") && branchReady && options.refuseWrite &&
+    if (request.query.includes("SquadronIdentity") && branchReady && options.refuseWrite && !writesRestored &&
       ++writeIdentities >= (options.refuseWrite === "status" ? 1 : 2)) {
       return Response.json({ data: { viewer: { id: "fixture-user", name: "Fixture user" },
         organization: { id: "other-workspace", name: "Other workspace" } } });
@@ -49,6 +50,7 @@ async function setup(t: import("node:test").TestContext, options: {
       skills: { list: async () => ({ skills: skills.map((name) => ({ id: name, name, description: null, manageable: false,
         pluginId: null, provider: null, registrySkillId: null, scope: "shared-project" as const, filePath: `/repo/.agents/skills/${name}/SKILL.md` })) }) },
       threads: {
+        list: async () => [],
         queuedMessages: {
           list: async ({ threadId }) => [makeQueueEntry({ id: `queued-${threadId}`, threadId })],
           send: async () => ({ ok: true as const, delivery: "sent" as const }),
@@ -74,7 +76,7 @@ async function setup(t: import("node:test").TestContext, options: {
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   await harness.behavior.callRpc("linear.bind", binding);
-  return { harness, mutations };
+  return { harness, mutations, restoreWrites: () => { writesRestored = true; } };
 }
 
 test("Start spawns one routed Lead in a managed integration worktree, links Flying and queues signed status writes", async (t) => {
@@ -215,4 +217,26 @@ test("app comments use a distinct public Lead avatar through the shared origin-o
   const svg = await lead.text();
   assert.notEqual(svg, await planning.text());
   assert.ok(!/thr_lead|proj-one|FIX-5|fake-password/.test(svg));
+});
+
+
+test("restart catch-up retries refused Lead writes with the same keys and keeps the Lead alive", async (t) => {
+  const { harness, restoreWrites } = await setup(t, { refuseWrite: "comment" });
+  await harness.behavior.callRpc("lanes.start", { projectId: "proj-one", specId: "FIX-5" });
+  restoreWrites();
+  const reloaded = await harness.lifecycle.reload(plugin);
+  t.after(() => reloaded.harness.lifecycle.dispose());
+  const service = reloaded.harness.behavior.runService("lane-starts");
+  t.after(() => service.controller.abort());
+  let board: Board | undefined;
+  for (let i = 0; i < 100; i++) {
+    board = await reloaded.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+    if (!board.lanes[0].writeError) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  assert.equal(board?.lanes[0].writeError, undefined);
+  assert.equal(board?.writes?.pendingCount, 2);
+  assert.equal(board?.lanes[0].leadThreadId, "thr_lead");
+  assert.equal(reloaded.harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+  assert.equal(reloaded.harness.inspection.sdk.callsTo("threads.stop").length, 0);
 });

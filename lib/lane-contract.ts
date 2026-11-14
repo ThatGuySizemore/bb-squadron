@@ -1,3 +1,4 @@
+import { firstPromptSchema } from "./bound-thread.js";
 import { z } from "zod";
 import type { Route } from "./board-model.js";
 import { workerRunSchema } from "./worker-contract.js";
@@ -15,6 +16,10 @@ export const laneRunSchema = z.object({
   /** Receipt IDs prove queuing only; current delivery state belongs to outbox. */
   startWrites: z.object({ status: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
+  /** Disposable metadata-derived links never grant tools, writes or launches. */
+  recoveryOnly: z.boolean().optional(),
+  firstPrompt: firstPromptSchema.optional(),
+  startFailure: z.enum(["spawn", "prompt", "environment"]).optional(),
   workers: z.array(workerRunSchema).optional(),
   routeOverrides: z.record(z.string(), routeSchema).optional(),
 });

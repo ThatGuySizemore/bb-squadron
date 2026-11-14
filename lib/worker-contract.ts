@@ -1,3 +1,4 @@
+import { firstPromptSchema } from "./bound-thread.js";
 import { z } from "zod";
 import { routeSchema, type Route } from "./board-model.js";
 
@@ -11,6 +12,8 @@ export const workerRunSchema = z.object({
   integration: z.object({ commit: commitSchema, head: commitSchema, verifiedAt: z.number() }).optional(),
   writes: z.object({ started: z.string().optional(), integrated: z.string().optional(), comment: z.string().optional() }).optional(),
   writeError: z.string().optional(),
+  firstPrompt: firstPromptSchema.optional(),
+  failurePhase: z.enum(["spawn", "prompt", "lifecycle"]).optional(),
 });
 export type WorkerRun = z.infer<typeof workerRunSchema>;
 export type SpawnWorkerCommand = { type: "spawn-worker"; laneId: string; ticketIssueId: string; ticketId: string; route: Route };

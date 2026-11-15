@@ -227,3 +227,30 @@ test("stop takes only the two policy reasons", async (t) => {
   assert.equal(result.exitCode, 1);
   assert.match(result.stderr, /two-strikes or time-limit/);
 });
+
+test("a peer message that makes the Lead change files clears the wait", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "FIX-9"], { projectId: "one", threadId: lead.id });
+  peerTurn(f, lead.id, [{ id: "edit", threadId: lead.id, seq: 8.5, createdAt: epoch + 1, scope: { kind: "thread" }, type: "item/completed",
+    data: { providerThreadId: "provider", item: { id: "edit", type: "fileChange", changes: [], status: "completed" } } } as never]);
+  idle(f, lead.id);
+  assert.equal((await f.board()).lanes[0].waitingOn, undefined);
+});
+
+test("a reply-only wait survives more peer turns than one page of history holds", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "FIX-9"], { projectId: "one", threadId: lead.id });
+  peerTurn(f, lead.id);
+  const base = f.events.get(lead.id)!;
+  const many = Array.from({ length: 150 }, (_, i) => [
+    { id: `s${i}`, threadId: lead.id, seq: 1000 - i * 2, createdAt: epoch + 3, scope: { kind: "thread" }, type: "turn/started", data: { providerThreadId: null } },
+    { id: `r${i}`, threadId: lead.id, seq: 999 - i * 2, createdAt: epoch + 3, scope: { kind: "thread" }, type: "client/turn/requested", data: (base[2] as { data: unknown }).data },
+  ]).flat();
+  f.events.set(lead.id, [{ ...base[0], seq: 1001 }, ...many, ...base.slice(1)] as never);
+  idle(f, lead.id);
+  assert.deepEqual((await f.board()).lanes[0].waitingOn, ["FIX-9"]);
+});

@@ -211,21 +211,24 @@ const inputTexts = (control: Control) => control.type === "client/turn/requested
   ? (control.data.input ?? []).flatMap((part) => part.type === "text" ? [part.text] : []) : [];
 const isPeerMessage = (control: Control) => inputTexts(control).some((text) => text.startsWith(PEER_MESSAGE_LEAD_IN));
 
-/** Whether the Lead took a turn of its own after `seq`. A turn that a peer's message started is only a reply. */
+/** Whether the Lead did work of its own after `seq`: a turn nobody's message started, or file changes in any turn.
+ * A turn a peer's message started that only replies is not work. */
 async function workedSince(bb: BbPluginApi, threadId: string, seq: number): Promise<boolean> {
-  let beforeSeq: string | undefined;
-  for (;;) {
-    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested", "turn/started"] });
-    const after = events.filter((event) => event.seq > seq);
-    // Oldest first, so each turn's start is read against the request just before it.
-    for (const [index, event] of [...after].reverse().entries()) {
-      if (event.type !== "turn/started") continue;
-      const asked = [...after].reverse().slice(0, index).reverse().find((earlier) => earlier.type === "client/turn/requested");
-      if (!asked || asked.type !== "client/turn/requested" || !isPeerMessage(asked)) return true;
-    }
-    if (after.length < events.length || events.length < 200) return false;
+  const after: ThreadEvent[] = [];
+  for (let beforeSeq: string | undefined; ;) {
+    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested", "turn/started", "item/completed"] });
+    after.push(...events.filter((event) => event.seq > seq));
+    if (events.length < 200 || events[events.length - 1].seq <= seq) break;
     beforeSeq = String(events[events.length - 1].seq);
   }
+  // Oldest first, so each turn's start is read against the request just before it, whichever page it fell on.
+  let asked: ThreadEvent | undefined;
+  for (const event of after.sort((a, b) => a.seq - b.seq)) {
+    if (event.type === "client/turn/requested") asked = event;
+    else if (event.type === "item/completed" && event.data.item.type === "fileChange") return true;
+    else if (event.type === "turn/started" && (!asked || !isPeerMessage(asked))) return true;
+  }
+  return false;
 }
 
 /** Child outcomes and other automatic system deliveries aren't Stop or Resume.

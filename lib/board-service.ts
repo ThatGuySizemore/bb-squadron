@@ -19,11 +19,12 @@ import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 import { mainCheckHostContract } from "./main-check-contract.js";
+import { readingProblem } from "./linear-reading.js";
 
 export interface BoardSources {
   autopilot?: AutopilotControls;
   startLane?: ReturnType<typeof registerLaneStart>["startAutomatic"];
-  connection(): Promise<LinearConnectionState>;
+  connection(projectId: string): Promise<LinearConnectionState>;
   observed?(projectId: string, projectName: string, board: Board | null): Promise<void>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   leads?(projectId: string): Promise<LeadThread[]>;
@@ -87,9 +88,9 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     catch { return null; }
   }
 
-  async function connection(): Promise<BoardInput["connection"]> {
+  async function connection(projectId: string): Promise<BoardInput["connection"]> {
     try {
-      const value = await sources.connection();
+      const value = await sources.connection(projectId);
       return { status: value.status, message: value.message };
     } catch { return { status: "failed", message: "Couldn't check the Linear connection. Try again shortly." }; }
   }
@@ -99,7 +100,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const entry = project(projectId);
     const at = now();
     const snapshot = await sources.tracker.getSnapshot(projectId);
-    if (snapshot.kind === "linear" && (fresh || !entry.connection || at - entry.connection.at > REUSE_MS)) entry.connection = { at, value: await connection() };
+    if (snapshot.kind === "linear" && (fresh || !entry.connection || at - entry.connection.at > REUSE_MS)) entry.connection = { at, value: await connection(projectId) };
     if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
     const planning = await sources.planning?.(projectId);
@@ -123,9 +124,16 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       pullRequests,
     });
     if (sources.autopilot) {
-      board.autopilot = snapshot.error || snapshot.syncedAt === null
-        ? await sources.autopilot.get(projectId) : await sources.autopilot.observe(projectId, board);
-      if (!snapshot.error && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
+      const problem = readingProblem(snapshot, now());
+      const savedLinear = snapshot.kind === "linear" && snapshot.syncedAt !== null;
+      // Stops come from live BB threads. A saved tracker completion cannot reset
+      // that brake, but a merged PR read in this pass can prove a landing.
+      const observation = savedLinear && (snapshot.error || problem)
+        ? { ...board, lanes: board.lanes.filter(lane => lane.state !== "landed" || lane.pr?.state === "merged") }
+        : board;
+      board.autopilot = savedLinear || !snapshot.error && !problem
+        ? await sources.autopilot.observe(projectId, observation) : await sources.autopilot.get(projectId);
+      if ((savedLinear || !snapshot.error) && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
         // Main is shared: include Outside merges and older Leads hidden by returning lanes.
         const merges = checkEnvironments.flatMap((id) => {
           const row = pullRequests?.[id];
@@ -143,6 +151,11 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
         }, { visible: visibleOutside,
           requests: Object.fromEntries(outsideEnvironments.flatMap((id) => pullRequests?.[id] ? [[id, pullRequests[id]]] : [])) });
       }
+      // This wait is derived, never stored as an owner-controlled pause. A good
+      // read removes it automatically without clearing either existing brake.
+      if (snapshot.kind === "linear" && problem && board.autopilot.status === "on") {
+        board.autopilot = { ...board.autopilot, status: "paused", pauseReason: problem, waitingForLinear: snapshot.kind === "linear" };
+      }
       board.laneCapacity = board.autopilot.laneLimit;
       board.autoStart = board.autopilot.status === "on";
     }
@@ -152,7 +165,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   // Switch-on reads merge evidence only, without Doctor, checks, or lane starts.
   sources.autopilot?.setMergeBaselineReader(async (projectId) => {
     const snapshot = await sources.tracker.getSnapshot(projectId);
-    if (snapshot.error || snapshot.syncedAt === null) throw new Error("Couldn't read existing merges. Try again shortly.");
+    if (readingProblem(snapshot, now())) throw new Error("Couldn't read existing merges. Try again shortly.");
     const leads = await lanesOf(projectId, snapshot, await sources.planning?.(projectId));
     const visible = leads.flatMap(({ outside, thread }) => outside && thread.environmentId ? [thread.environmentId] : []);
     const retained = await sources.autopilot!.rememberOutside(projectId, visible,
@@ -199,11 +212,11 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
           board = await compute(projectId, false);
           publishIfChanged(projectId, board);
           if (!attempted && sources.autopilot?.isOn(projectId) && sources.startLane) {
-            attempted = true;
             const state = await sources.autopilot.get(projectId);
             const flying = autopilotLaneCount(board);
             const next = board.ready.find((spec) => spec.kind !== "work-item" && spec.startReason === null);
             if (board.doctor?.ready && flying < state.laneLimit && next) {
+              attempted = true;
               await sources.startLane(projectId, next.id, "autopilot", async () => {
                 // Owner controls and hand starts can change while Start checks Doctor.
                 const current = await compute(projectId, false);
@@ -278,9 +291,18 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const entry = project(projectId);
       const wasShown = isShown(projectId);
       entry.shownAt = now();
+      let refreshed = false;
       // A project nothing was polling is read afresh when a board starts showing it.
-      if (!wasShown) await sources.tracker.refresh?.(projectId);
-      const board = await compute(projectId, true);
+      if (!wasShown) {
+        const snapshot = await sources.tracker.cachedSnapshot?.(projectId);
+        const pending = sources.tracker.refresh?.(projectId).then(() => { refreshed = true; });
+        if (!snapshot) await pending;
+        else void pending?.catch(() => undefined);
+      }
+      let board = await compute(projectId, true);
+      // Use a fast successful refresh if it finished while assembling the board,
+      // while a slow request never delays the saved reading.
+      if (refreshed) board = await compute(projectId, false);
       publishIfChanged(projectId, board);
       return liveSteps(board, projectId, visibleLaneIds, refreshLive);
     },

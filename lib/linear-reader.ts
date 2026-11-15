@@ -6,12 +6,13 @@ import { CLOSED_ISSUE_STATE_TYPES, isOpenIssue } from "./linear-issues.js";
 import { linearMirrorChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { z } from "zod";
 import { LinearRequestError, type LinearAuth } from "./linear-auth.js";
-import { linearMirrorContract, mirrorLabelSchema, mirrorStateSchema,
+import { linearMirrorContract, mirrorSnapshotSchema, mirrorLabelSchema, mirrorStateSchema,
   type MirrorIssue, type MirrorRelation, type MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { LINEAR_QUERIES, PAGE } from "./linear-queries.js";
 import { resolveScope, scopeDisplayName, scopeIssueFilter, scopeLookup, viewSlugId, type ResolvedScope } from "./linear-scope.js";
 import { parseLinearScope, SETTINGS_UNREADABLE, type LinearScope } from "./squadron-settings.js";
+import { recentLinearReading } from "./linear-reading.js";
 
 const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() });
 const connection = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node), pageInfo });
@@ -105,6 +106,39 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   /** Projects read at least once since start: the poller's candidates. */
   const known = new Set<string>();
   const snapshots = new Map<string, { key: string; snapshot: MirrorSnapshot }>();
+  const loaded = new Map<string, Promise<void>>();
+  const storageKey = (id: string) => `linear.lastGood.v1.${id}`;
+  // Only completed readings are durable. Scope keys prevent reuse after settings change.
+  async function load(bbProjectId: string) {
+    let pending = loaded.get(bbProjectId);
+    if (!pending) {
+      pending = (async () => {
+        try {
+          const source = await readScope(bbProjectId, lifetime.signal);
+          const key = JSON.stringify(source);
+          const saved = z.object({ key: z.string(), snapshot: mirrorSnapshotSchema }).safeParse(
+            await bb.storage.kv.get(storageKey(bbProjectId)));
+          if (source.ok && saved.success && saved.data.key === key && saved.data.snapshot.scope &&
+            saved.data.snapshot.error === null && saved.data.snapshot.syncedAt !== null &&
+            saved.data.snapshot.syncedAt <= now() && !snapshots.has(bbProjectId)) {
+            snapshots.set(bbProjectId, { key, snapshot: { ...saved.data.snapshot, error: "Waiting for Linear." } });
+          }
+        } catch { bb.log.warn("Saved Linear reading unavailable."); }
+      })();
+      loaded.set(bbProjectId, pending);
+    }
+    await pending;
+    const source = await readScope(bbProjectId, lifetime.signal);
+    const key = JSON.stringify(source);
+    const current = snapshots.get(bbProjectId);
+    if (current && current.key !== key) {
+      latest.set(bbProjectId, ++sequence);
+      reads.delete(bbProjectId);
+      resolved.delete(bbProjectId);
+      commit(bbProjectId, key, empty(null, source.ok ? null : source.message));
+    }
+    known.add(bbProjectId);
+  }
   const resolved = new Map<string, { key: string; at: number; scope: ResolvedScope }>();
   /** The latest sync started per project. An older one finishing later never overwrites it. */
   const latest = new Map<string, number>();
@@ -127,7 +161,8 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   function commit(bbProjectId: string, key: string, snapshot: MirrorSnapshot) {
     const previous = getSnapshot(bbProjectId);
     snapshots.set(bbProjectId, { key, snapshot });
-    if (content(previous) !== content(snapshot)) changed(bbProjectId);
+    if (content(previous) !== content(snapshot) ||
+      recentLinearReading(previous.syncedAt, now()) !== recentLinearReading(snapshot.syncedAt, now())) changed(bbProjectId);
     return snapshot;
   }
   /** The Scope problem Doctor reports, if the last read found one. */
@@ -148,6 +183,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   }
 
   async function sync(bbProjectId: string, signal?: AbortSignal): Promise<MirrorSnapshot> {
+    await load(bbProjectId);
     const actionTurn = actionTurns.get(bbProjectId) ?? 0;
     known.add(bbProjectId);
     const combined = AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]);
@@ -195,7 +231,10 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
         cadences.set(bbProjectId, cadence);
         polls.set(bbProjectId, now() + cadence);
       }
-      return commit(bbProjectId, key, result.snapshot);
+      const snapshot = commit(bbProjectId, key, result.snapshot);
+      try { await bb.storage.kv.set(storageKey(bbProjectId), { key, snapshot }); }
+      catch { bb.log.warn("Couldn't save the last complete Linear reading."); }
+      return snapshot;
     } catch (error) {
       if (error instanceof ScopeError) {
         if (superseded()) return getSnapshot(bbProjectId);
@@ -485,7 +524,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     }
   } });
   bb.rpc.register(linearMirrorContract, {
-    "linear.snapshot": ({ bbProjectId }) => getSnapshot(bbProjectId),
+    "linear.snapshot": async ({ bbProjectId }) => { await load(bbProjectId); return getSnapshot(bbProjectId); },
   });
-  return { getSnapshot, sync, onChange, scopeProblem, resetCadence };
+  return { getSnapshot, load, sync, onChange, scopeProblem, resetCadence };
 }

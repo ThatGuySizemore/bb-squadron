@@ -5,10 +5,12 @@ import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import { registerGithubReader } from "./github-reader.js";
 import { linearTrackerSnapshot } from "./tracker-snapshot.js";
 import { registerLocalMarkdownReader } from "./local-markdown-reader.js";
+import { recentLinearReading } from "./linear-reading.js";
 
 /** Reader selection. GitHub and local readers plug into the same snapshot contract. */
 export function registerTracker(bb: BbPluginApi, mirror: {
   getSnapshot(bbProjectId: string): MirrorSnapshot;
+  load?(bbProjectId: string): Promise<void>;
   sync?(bbProjectId: string): Promise<MirrorSnapshot>;
   onChange(listener: (bbProjectId: string) => void): () => void;
 }): TrackerReader & Required<Pick<TrackerReader, "refresh">> {
@@ -21,11 +23,24 @@ export function registerTracker(bb: BbPluginApi, mirror: {
   }
   /** Linear projects read at least once by this plugin run. */
   const read = new Set<string>();
+  const attemptedAt = new Map<string, number>();
+  async function cachedSnapshot(bbProjectId: string): Promise<TrackerSnapshot | null> {
+    if ((await detect(bbProjectId)).kind !== "linear") return null;
+    await mirror.load?.(bbProjectId);
+    const snapshot = mirror.getSnapshot(bbProjectId);
+    return snapshot.syncedAt === null ? null : linearTrackerSnapshot(bbProjectId, snapshot);
+  }
   async function getSnapshot(bbProjectId: string): Promise<TrackerSnapshot> {
     const found = await detect(bbProjectId);
     if (found.kind === "linear") {
+      await mirror.load?.(bbProjectId);
       // A project nothing has read yet (Plan or Start before any board) reads once first.
-      if (!read.has(bbProjectId) && mirror.sync) await syncLinear(bbProjectId);
+      const cached = mirror.getSnapshot(bbProjectId);
+      const expired = cached.syncedAt !== null && !recentLinearReading(cached.syncedAt, Date.now());
+      if (mirror.sync && (!read.has(bbProjectId) || expired && Date.now() - (attemptedAt.get(bbProjectId) ?? -Infinity) >= 30_000)) {
+        const pending = syncLinear(bbProjectId);
+        if (mirror.getSnapshot(bbProjectId).syncedAt === null) await pending;
+      }
       return linearTrackerSnapshot(bbProjectId, mirror.getSnapshot(bbProjectId));
     }
     if (found.kind === "github") return github.getSnapshot(bbProjectId);
@@ -42,9 +57,10 @@ export function registerTracker(bb: BbPluginApi, mirror: {
   }
   async function syncLinear(bbProjectId: string) {
     read.add(bbProjectId);
+    attemptedAt.set(bbProjectId, Date.now());
     await mirror.sync!(bbProjectId).catch(() => undefined); // The snapshot carries the safe error.
   }
-  return { getSnapshot, refresh, onChange(listener) {
+  return { getSnapshot, cachedSnapshot, refresh, onChange(listener) {
     const unsubscribes = [mirror.onChange(listener), github.onChange(listener), local.onChange(listener)];
     return () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
   } };

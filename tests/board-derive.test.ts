@@ -277,12 +277,13 @@ test("Start uses the Doctor's first failing fix and owner-file warnings don't bl
   assert.deepEqual(board.doctor, warnings);
 });
 
-test("Start waits for a current bound Linear snapshot and a ready Doctor", () => {
+test("Start waits for a recent scoped Linear reading and a ready Doctor", () => {
   const snap = snapshot([issue("FIX-1", { labels: ["ready-for-agent"] }), issue("FIX-2", { parent: "FIX-1" })]);
   const doctor = { ready: true, checks: [], configurationFiles: [] };
   assert.equal(deriveBoard(input(snap, { doctor })).board.ready[0].startReason, null);
+  assert.equal(deriveBoard(input(snap, { doctor, snapshot: { ...snap, error: "Linear is unavailable." } })).board.ready[0].startReason, null);
   for (const overrides of [
-    { snapshot: { ...snap, error: "Linear is unavailable." } },
+    { snapshot: { ...snap, syncedAt: input(snap).now - 900_001, error: "Linear is unavailable." } },
     { snapshot: { ...snap, syncedAt: null } },
     { snapshot: { ...snap, scope: null, error: SCOPE_MISSING } },
     { snapshot: { ...snap, scope: null } },

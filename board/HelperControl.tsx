@@ -95,7 +95,7 @@ function ProjectHelperControl({ projectId, openThread }: { projectId: string | n
     if (event.key === "Escape" && menu) { event.stopPropagation(); close(); }
   }}>
     <button type="button" className="sq-btn" disabled={!loaded || !projectId || busy} aria-describedby={disabledReason ? reasonId : undefined} aria-busy={busy} onClick={() => start()}>
-      {!helper ? "Start " : null}<Term text="Helper" nested />
+      <span>{!helper ? "Start " : null}<Term text="Helper" nested /></span>
     </button>
     {helper ? <button type="button" className="sq-btn sq-helper-toggle" ref={toggle} aria-label="Helper options" aria-expanded={menu}
       aria-controls={menu ? listId : undefined} disabled={busy} aria-describedby={busy ? reasonId : undefined} onClick={() => { setMenu((value) => !value); setChoosing(false); }}>

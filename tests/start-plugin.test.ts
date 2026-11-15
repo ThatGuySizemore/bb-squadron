@@ -58,7 +58,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
         },
       },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : method === "codexMattSkills" ? { skills: [] } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       ...(ownerHost ? await ownerHost.experimental_call("inspectFiles", { checkoutPath: "/repo", skillPaths: [] }) as Record<string, unknown> : {}),
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
@@ -1038,6 +1038,9 @@ test("a landed spec stays Landed while every remaining ticket is held, then retu
   const next = await harness.lifecycle.reload(plugin);
   t.after(() => next.harness.lifecycle.dispose());
   next.harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  // Reload can show the saved reading immediately. Wait for the live refresh
+  // before checking that Linear's newly cleared hold has reached the board.
+  await next.harness.behavior.callRpc("board.projectCounts", null);
   const unheld = await next.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.ok(unheld.ready.some((spec) => spec.id === "FIX-5"));
   await watcherCycle(next.harness);
@@ -1236,6 +1239,8 @@ test("work-item Start shares CLI and board dedupe, uses its labels over Lead, an
     assert.ok(prompt.includes(text), `prompt includes ${text}`);
   }
   assert.match(prompt, /accept:owner.*wait/i);
+  assert.match(prompt, /Treat the test approach named in the issue's acceptance criteria as the confirmed seam for tdd\./);
+  assert.match(prompt, /Ask the owner about test seams only when the issue names none\./);
   const { harness: reloaded } = await harness.lifecycle.reload(plugin);
   t.after(() => reloaded.lifecycle.dispose());
   await assert.rejects(reloaded.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" }),

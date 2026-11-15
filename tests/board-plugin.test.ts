@@ -223,13 +223,16 @@ test("a change in Linear reaches open boards as board-changed on the mirror's ne
   assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9", "FIX-12"]);
 });
 
-test("a reload rebuilds the board from the repo's Scope and Linear without a stored snapshot", async (t) => {
+test("a reload restores the complete reading for the repo's Scope, then reads Linear afresh", async (t) => {
   let changed = false;
   const linear = workspace({ issues: () => changed ? withNewIssue() : Response.json(workspaceIssues) });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const first = host();
   await plugin(first.bb);
   await first.harness.behavior.callRpc("board", { projectId: "proj-one" });
+  const previous = await first.harness.behavior.callRpc("linear.snapshot", { bbProjectId: "proj-one" }) as {
+    scope: { name: string } | null; issues: unknown[]; syncedAt: number | null;
+  };
   changed = true;
   const { harness } = await first.harness.lifecycle.reload((api) => plugin(api));
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
@@ -237,9 +240,9 @@ test("a reload rebuilds the board from the repo's Scope and Linear without a sto
   const snapshot = await harness.behavior.callRpc("linear.snapshot", { bbProjectId: "proj-one" }) as {
     scope: { name: string } | null; issues: unknown[]; syncedAt: number | null;
   };
-  assert.equal(snapshot.scope, null, "the plugin stores no scope; the repo does");
-  assert.deepEqual(snapshot.issues, [], "issues are held only in memory");
-  assert.equal(snapshot.syncedAt, null);
+  assert.deepEqual(snapshot.scope, previous.scope, "saved readings match the Scope the repo still names");
+  assert.deepEqual(snapshot.issues, previous.issues, "the complete reading survives reload");
+  assert.equal(snapshot.syncedAt, previous.syncedAt, "restoring never makes an old reading younger");
   // The poller reads only projects a board page shows (SIZE-953); this page shows proj-one.
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const poll = harness.behavior.runService("linear-reader");
@@ -270,7 +273,7 @@ test("board RPC refreshes reuse identity for a minute and invalidate it when cre
   let now = Date.now();
   const auth = registerLinearAuth(bb, { fetch: linear.fetch, now: () => now });
   const mirror = registerLinearReader(bb, auth);
-  registerBoard(bb, { connection: auth.getConnection, tracker: registerTracker(bb, mirror) }, { now: () => now });
+  registerBoard(bb, { connection: () => auth.getConnection(), tracker: registerTracker(bb, mirror) }, { now: () => now });
   const identities = () => linear.operations.filter((name) => name === "SquadronIdentity").length;
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   assert.equal(identities(), 1);

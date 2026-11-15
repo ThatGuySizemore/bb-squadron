@@ -5,6 +5,8 @@ export const autopilotStateSchema = z.object({
   laneLimit: z.number().int().min(1).max(10),
   consecutiveStops: z.number().int().nonnegative(),
   pauseReason: z.string().nullable(),
+  /** A derived read wait, never an owner-controlled or stored pause. */
+  waitingForLinear: z.boolean().optional(),
   checkingMain: z.boolean().optional(),
   pauseLog: z.object({ hostId: z.string(), path: z.string() }).optional(),
   skippedMainChecks: z.record(z.string(), z.string()).optional(),

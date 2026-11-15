@@ -57,7 +57,7 @@ export function namedIntegrationBranches(text: string | null): string[] {
 
 /** Top-level work an outside lane may fly: open, not being planned, and without a Squadron Lead. */
 export function outsideLaneSpecs(snapshot: TrackerSnapshot, leads: readonly LeadThread[], planning: readonly PlanningThread[] = []): TrackerIssue[] {
-  const taken = new Set([...leads.map((lead) => lead.specId), ...planning.map((thread) => thread.issueId)]);
+  const taken = new Set([...leads.map((lead) => lead.specId), ...planning.filter((thread) => !thread.done).map((thread) => thread.issueId)]);
   return openLaneCandidates(snapshot, new Set()).filter((spec) => !taken.has(spec.id));
 }
 

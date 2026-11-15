@@ -167,16 +167,23 @@ test("Resume planning reopens a finished planning thread and puts its spec back 
 });
 
 test("New spec links its published work item on completion and retains that link after reload", async (t) => {
-  const { harness: first } = await setup(t);
+  let published = false;
+  const { harness: first } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: [...workspaceIssues.data.issues.nodes, ...(published ? [{ ...workspaceIssues.data.issues.nodes[5],
+      id: "fix-99", identifier: "FIX-99", title: "A newly published work item", url: "https://linear.app/fixture/issue/FIX-99",
+    }] : [])],
+  } } }));
   first.sdk.stub("skills.list", async () => ({ skills: [] }));
   const { threadId } = await first.behavior.callRpc("planning.start", { projectId: "proj-one" }) as { threadId: string };
-  assert.equal((await first.behavior.runCli(["planning", "done", "FIX-9"], { threadId, projectId: "proj-one" })).exitCode, 0);
+  published = true;
+  const finished = await first.behavior.runCli(["planning", "done", "FIX-99"], { threadId, projectId: "proj-one" });
+  assert.equal(finished.exitCode, 0, finished.stderr);
   const { harness } = await first.lifecycle.reload((api) => plugin(api));
   t.after(() => harness.lifecycle.dispose());
   harness.sdk.stub("skills.list", async () => ({ skills: [] }));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.equal(board.openIssues.find((row) => row.id === "FIX-9")?.planningThreadId, threadId);
-  assert.deepEqual(await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }), { threadId });
+  assert.equal(board.openIssues.find((row) => row.id === "FIX-99")?.planningThreadId, threadId);
+  assert.deepEqual(await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-99" }), { threadId });
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
 });
 

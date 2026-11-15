@@ -12,7 +12,7 @@ import type { PlanningThread } from "./board-derive.js";
 import { trackerName } from "./tracker-detection.js";
 
 export interface PlanningSources {
-  tracker: Pick<TrackerReader, "getSnapshot">;
+  tracker: Pick<TrackerReader, "getSnapshot" | "refresh">;
   onAction?(projectId: string): void;
   /** Says which setup steps a project lacks. Without it, Set up asks the thread to check. */
   doctor?(projectId: string): Promise<DoctorReport>;
@@ -129,7 +129,8 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
       if (item.threadId === threadId && item.metadata.role === "planning") caller = item.metadata;
     }
     if (!caller) throw new PluginCliError("Run planning done inside this project's planning thread.");
-    const snapshot = await sources.tracker.getSnapshot(projectId);
+    // Publication may have happened after the last board poll.
+    const snapshot = await (sources.tracker.refresh?.(projectId) ?? sources.tracker.getSnapshot(projectId));
     const issue = snapshot.issues.find((item) => item.identifier === identifier && item.inProject && isOpenIssue(item));
     if (!issue) throw new PluginCliError(`${identifier} isn't an open issue in this project's tracker.`);
     if (caller.issueId !== undefined && caller.issueId !== issue.id)

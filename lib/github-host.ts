@@ -29,12 +29,25 @@ async function repository(checkoutPath: string, signal: AbortSignal, run: Github
 }
 
 export async function githubLogin(signal: AbortSignal, checkoutPath: string | undefined, run: GithubCommand = runGithubCommand) {
-  if (!checkoutPath) return { authenticated: false };
+  if (!checkoutPath) return { authenticated: null };
   try {
     const repo = await repository(checkoutPath, signal, run);
-    const result = await run("gh", ["auth", "status", "--hostname", repo.hostname], { cwd: checkoutPath, signal, discardOutput: true });
-    return { authenticated: result.code === 0, hostname: repo.hostname };
-  } catch { return { authenticated: false }; }
+    // Filter inside gh so account details, tokens and diagnostics never enter our output.
+    // A generic error can be a network failure. Only an HTTP 401 proves rejection.
+    const classify = '[.hosts[][]] | if length == 0 then "signed-out" else map(select(.active)) | if length != 1 then "unknown" elif .[0].state == "success" then "signed-in" elif ((.[0].error // "") | contains("HTTP 401")) then "signed-out" else "unknown" end end';
+    const result = await run("gh", ["auth", "status", "--active", "--hostname", repo.hostname, "--json", "hosts", "--jq", classify], { cwd: checkoutPath, signal });
+    const status = result.code === 0 ? result.stdout.trim() : "unknown";
+    return { authenticated: status === "signed-in" ? true : status === "signed-out" ? false : null, hostname: repo.hostname };
+  } catch {
+    // repo view also fails before making a request when no hosts are signed in.
+    // Only that definite local absence overrides an unavailable repository lookup.
+    try {
+      const result = await run("gh", ["auth", "status", "--json", "hosts", "--jq",
+        '.hosts | if length == 0 then "signed-out" else "unknown" end'], { cwd: checkoutPath, signal });
+      if (result.code === 0 && result.stdout.trim() === "signed-out") return { authenticated: false };
+    } catch { /* A failed fallback still proves nothing about login. */ }
+    return { authenticated: null };
+  }
 }
 
 const connection = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node),

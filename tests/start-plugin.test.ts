@@ -58,7 +58,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
         },
       },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : method === "codexMattSkills" ? { skills: [] } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       ...(ownerHost ? await ownerHost.experimental_call("inspectFiles", { checkoutPath: "/repo", skillPaths: [] }) as Record<string, unknown> : {}),
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],

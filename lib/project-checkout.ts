@@ -34,18 +34,22 @@ export function squadronSettingsPath(path: string): string | null {
 }
 
 export async function readTrackerConfiguration(bb: BbPluginApi, source: { hostId: string; path: string }, signal?: AbortSignal) {
+  const unavailableFiles: string[] = [];
   const read = async (relativePath: string) => {
     const path = joinHostPath({ rootPath: source.path, relativePath });
     if (!path) return null;
     try {
       const file = await bb.sdk.files.read({ hostId: source.hostId, path, rootPath: source.path, signal });
       return file.contentEncoding === "utf8" ? file.content : null;
-    } catch { return null; }
+    } catch (error) {
+      if ((error as { code?: string })?.code !== "ENOENT") unavailableFiles.push(relativePath);
+      return null;
+    }
   };
   const [issueTrackerMarkdown, settingsMarkdown] = await Promise.all([
     read("docs/agents/issue-tracker.md"), read("docs/agents/squadron.md"),
   ]);
-  return { issueTrackerMarkdown, settingsMarkdown, tracker: detectTracker(issueTrackerMarkdown, settingsMarkdown) };
+  return { issueTrackerMarkdown, settingsMarkdown, unavailableFiles, tracker: detectTracker(issueTrackerMarkdown, settingsMarkdown) };
 }
 
 /** null when the project has no default source. */

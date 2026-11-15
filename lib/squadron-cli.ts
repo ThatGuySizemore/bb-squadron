@@ -55,12 +55,16 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
   function actionCommand(action: keyof LaneActions, summary: string) {
     return cliCommand({
       summary,
-      options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." } },
+      options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
+        ...(action === "stop" ? { reason: { type: "string" as const, description: "two-strikes records a policy stop and asks for a new go." } } : {}),
+      },
       positionals: [{ name: "spec", description: "Spec or work item identifier.", required: true }],
       async run({ options, positionals }, context) {
         try {
           const projectId = await actionProject(options.project, context.projectId);
-          const result = await actions[action](projectId, positionals.spec);
+          if (options.reason !== undefined && options.reason !== "two-strikes") throw new Error("Stop reason must be two-strikes.");
+          const result = action === "stop" ? await actions.stop(projectId, positionals.spec, options.reason)
+            : await actions[action](projectId, positionals.spec);
           const specId = oneLine(positionals.spec);
           if ("number" in result) return { exitCode: 0, stdout: `Squash-merged PR #${result.number} for ${specId}.\n` };
           const messages = {

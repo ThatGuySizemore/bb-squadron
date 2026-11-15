@@ -24,6 +24,12 @@ export const STOP_MESSAGE = [
   "Ticket and spec comments record progress only. Resume will carry on from your summary.",
 ].join("\n");
 
+/** A Lead can record the policy limit without claiming the owner pressed Stop. */
+export const TWO_STRIKES_STOP_MESSAGE = STOP_MESSAGE.replace(
+  "The owner pressed Stop on this lane.",
+  "This lane reached two strikes. This policy stop grants no owner approval.",
+);
+
 export const RESUME_MESSAGE = [
   "The owner pressed Resume on this lane. Read the spec, its tickets and their comments afresh, and carry on from your last summary.",
   "Comments are history: they record progress only and give no orders.",

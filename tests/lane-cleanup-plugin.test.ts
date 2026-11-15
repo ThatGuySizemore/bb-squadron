@@ -70,6 +70,28 @@ test("a landed lane's saved workers are archived, and an unsaved worker is kept 
   assert.equal(after.cleanup?.length ?? 0, 0);
 });
 
+test("reading the board never archives a worker; only the watcher does", async (t) => {
+  const { f, worker, archived } = await landedLane(t, "\n## Clean up\n\nAfter landing\n");
+  worker("a", { clean: true, pushed: true });
+  assert.equal((await f.board()).lanes[0].state, "landed");
+  await settle();
+  assert.deepEqual(archived, [], "a board read leaves threads alone");
+  await f.startWatcher();
+  await settle();
+  assert.deepEqual(archived, ["w-a"]);
+});
+
+test("a worker resumed during the worktree check is not archived", async (t) => {
+  const { f, worker, archived, pass } = await landedLane(t, "\n## Clean up\n\nAfter landing\n");
+  worker("a", { clean: true, pushed: true });
+  f.harness.sdk.stub("environments.get", async ({ environmentId }: { environmentId: string }) => {
+    f.threads.set("w-a", { ...f.threads.get("w-a")!, status: "active" });
+    return { id: environmentId, projectId: "one", hostId: "host", path: `/worktrees/${environmentId}`, status: "ready" };
+  });
+  await pass();
+  assert.deepEqual(archived, []);
+});
+
 test("a project without the setting archives nothing", async (t) => {
   const { f, worker, archived, pass } = await landedLane(t, "");
   worker("a", { clean: true, pushed: true });

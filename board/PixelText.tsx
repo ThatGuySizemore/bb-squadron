@@ -2,7 +2,8 @@ import { useMemo } from "react";
 import { layoutPixels } from "../lib/pixels.js";
 
 /** The board's shared 5x7 lettering, with an accessible text copy. */
-export function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: number; gap?: number; className?: string }) {
+/** `decorative` draws only the glyphs, for a caller that gives the whole text its own accessible copy. */
+export function PixelText({ text, cell = 3, gap, className, decorative = false }: { text: string; cell?: number; gap?: number; className?: string; decorative?: boolean }) {
   gap ??= cell >= 3 ? 1 : 0;
   const run = useMemo(() => layoutPixels(text), [text]);
   const pitch = cell + gap;
@@ -20,7 +21,7 @@ export function PixelText({ text, cell = 3, gap, className }: { text: string; ce
           <rect key={`${x}.${y}`} x={x * pitch} y={y * pitch} width={cell} height={cell} />
         ))}
       </svg>
-      <span className="sq-sr">{text}</span>
+      {decorative ? null : <span className="sq-sr">{text}</span>}
     </span>
   );
 }

@@ -30,6 +30,18 @@ export const TWO_STRIKES_STOP_MESSAGE = STOP_MESSAGE.replace(
   "This lane reached two strikes. This policy stop grants no owner approval.",
 );
 
+/** Why a Lead sends Stop to its own lane: a policy limit, never an owner approval. */
+export type StopReason = "two-strikes" | "time-limit";
+
+/** A Lead that reached its time limit records it without claiming the owner pressed Stop. */
+export const TIME_LIMIT_STOP_MESSAGE = STOP_MESSAGE.replace(
+  "The owner pressed Stop on this lane.",
+  "This lane reached its time limit. This policy stop grants no owner approval.",
+);
+
+/** What BB writes at the start of a message another thread sent. */
+export const PEER_MESSAGE_LEAD_IN = "[bb message from thread:";
+
 const WAIT_LEAD_IN = "This lane is waiting on ";
 const WAIT_TRAIL = ". This declares a wait only and grants no owner approval. Save your work, ask the owner for nothing and end your turn. The wait clears when this lane runs again or when the named lane lands.";
 

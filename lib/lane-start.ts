@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { cleanWaitTarget, laneContract, LOCAL_MERGE_MESSAGE, waitMessage, RESUME_MESSAGE, STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
+import { cleanWaitTarget, laneContract, LOCAL_MERGE_MESSAGE, waitMessage, RESUME_MESSAGE, STOP_MESSAGE, type StopReason, TIME_LIMIT_STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
 import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
@@ -164,8 +164,8 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   };
   const actions = {
     merge,
-    stop: (projectId: string, specId: string, reason?: "two-strikes") =>
-      tell(projectId, specId, reason === "two-strikes" ? TWO_STRIKES_STOP_MESSAGE : STOP_MESSAGE, "steer-if-active", "stop"),
+    stop: (projectId: string, specId: string, reason?: StopReason) =>
+      tell(projectId, specId, reason === "two-strikes" ? TWO_STRIKES_STOP_MESSAGE : reason === "time-limit" ? TIME_LIMIT_STOP_MESSAGE : STOP_MESSAGE, "steer-if-active", "stop"),
     wait: (projectId: string, specId: string, on: string) => {
       if (!cleanWaitTarget(on)) throw new Error("Say what the lane is waiting on.");
       return tell(projectId, specId, waitMessage(on), "steer-if-active", "wait");

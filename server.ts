@@ -44,6 +44,7 @@ export default async function plugin(bb: BbPluginApi) {
   const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside, onAction: mirror.resetCadence });
   const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection,
     observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); checkpoint.observe(args[0], args[1]); },
+    helper: async (projectId) => (await helper.read(projectId)) !== null,
     tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside,

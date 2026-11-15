@@ -30,6 +30,8 @@ export interface BoardSources {
   observed?(projectId: string, projectName: string, board: Board | null): Promise<void>;
   doctor?(projectId: string, signal?: AbortSignal): Promise<DoctorReport>;
   leads?(projectId: string): Promise<LeadThread[]>;
+  /** Whether the project has a Helper, so a stalled lane knows who can route its next step. */
+  helper?(projectId: string): Promise<boolean>;
   /** Open planning threads, so a spec being planned shows under Shaping. */
   planning?(projectId: string): Promise<PlanningThread[]>;
   /** Rows from BB's pull-request plugin for the Leads' environments. */
@@ -134,6 +136,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       leads, planning,
       ...progress,
       pullRequests,
+      ...(sources.helper ? { hasHelper: await sources.helper(projectId).catch(() => true) } : {}),
     });
     const cleanUpOn = entry.settings.value?.ok === true && entry.settings.value.settings.cleanUp === "after landing";
     // Every Lead counts, including older ones a returning lane hides: a merged PR on its own environment is its landing.

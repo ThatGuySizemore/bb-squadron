@@ -34,3 +34,8 @@ test("the Lead skill's merge step says the same about the result block and the s
   assert.match(skill, /completion comment with a `squadron-result` block/);
   assert.match(skill, /final review that finds real defects in reported-done work is one strike/);
 });
+
+test("diagnose-first never offers a same-thread retry for thin investigation", () => {
+  assert.match(brief, /effort-only replacement thread, same role and model at a higher supported effort/);
+  assert.doesNotMatch(brief, /more care/);
+});

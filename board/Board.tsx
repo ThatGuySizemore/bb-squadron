@@ -21,6 +21,7 @@ import { planeBox, runwayLayout, runwayLoading, runwayState, type RunwayLayout, 
 import { PixelText } from "./PixelText.js";
 import { FlipCount } from "./FlipCount.js";
 import { DitherCanvas } from "./DitherCanvas.js";
+import { lastBoardOf, rememberBoard } from "./board-memory.js";
 import { inWind, workingAgents } from "../lib/working-agents.js";
 import { DoctorPanel } from "./Doctor.js";
 import { Term } from "./Term.js";
@@ -1643,7 +1644,18 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const [planning, setPlanning] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
   const [acting, setActing] = useState<LaneAction | null>(null);
-  const [board, setBoard] = useState<Board | null>(null);
+  // The board belongs to the project it was read for; another project's is never shown.
+  const [held, setHeld] = useState<{ projectId: string; board: Board } | null>(null);
+  const board = projectId !== null && held?.projectId === projectId ? held.board : lastBoardOf(projectId);
+  const setBoard = useCallback((update: (board: Board | null) => Board | null) => {
+    if (projectId === null) return;
+    setHeld((value) => {
+      const next = update(value?.projectId === projectId ? value.board : lastBoardOf(projectId));
+      if (next === null) return null;
+      rememberBoard(projectId, next);
+      return { projectId, board: next };
+    });
+  }, [projectId]);
   const [failed, setFailed] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const request = useRef(0);
@@ -1664,13 +1676,15 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
       setFailed(false);
       // Duplicate signals often return the same board; keep the view as it is.
       const json = JSON.stringify(next);
-      if (json !== shown.current) { shown.current = json; setBoard(next); }
+      if (json !== shown.current) { shown.current = json; setBoard(() => next); }
     } catch {
       if (current === request.current) setFailed(true);
     }
   }, [rpc, projectId]);
   useEffect(() => {
-    shown.current = ""; setBoard(null); setFailed(false);
+    // A project read before opens on its last board; the refresh replaces it only if it differs.
+    const remembered = lastBoardOf(projectId);
+    shown.current = remembered ? JSON.stringify(remembered) : ""; setFailed(false);
     void load();
     return () => { request.current++; };
   }, [load]);

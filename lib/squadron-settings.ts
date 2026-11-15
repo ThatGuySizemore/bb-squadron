@@ -9,7 +9,25 @@ export interface SquadronRoute extends Route {
 export const MODEL_ROLES = ["Lead", "Worker", "Worker (hard)", "Planning", "Planning (hard)", "Review of claude-code", "Review of codex", "Mechanical"] as const;
 export type ModelRole = typeof MODEL_ROLES[number];
 
+/** The owner's Squadron policy from House rules. The two-strike stop and carrying counts and budgets over are fixed, not settings. */
+export interface SquadronPolicy {
+  escalation: "diagnose first" | "retry";
+  lowEffort: "mechanical only" | "off";
+  /** Completed routine tickets between observation reports; null means none. */
+  checkpoint: number | null;
+}
+export const DEFAULT_POLICY: SquadronPolicy = { escalation: "retry", lowEffort: "off", checkpoint: null };
+export const POLICY_SETTINGS = [
+  { key: "escalation", name: "Escalation", values: ["diagnose first", "retry"] },
+  { key: "lowEffort", name: "Low effort", values: ["mechanical only", "off"] },
+  { key: "checkpoint", name: "Checkpoint", values: [] },
+] as const;
+export type PolicySource = "House rules" | "default";
+
 export interface SquadronSettings {
+  /** Resolved Squadron policy; every unset setting holds its default. */
+  policy: SquadronPolicy;
+  policySource: Record<keyof SquadronPolicy, PolicySource>;
   modelRoutes?: Partial<Record<ModelRole, Route>>;
   routeDefaults?: "house-rules";
   quickCheck: string;
@@ -64,7 +82,7 @@ export type ScopeKey = typeof SCOPE_KEYS[number];
 export const SETTINGS_UNREADABLE = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
 export const SCOPE_MISSING = "Add the Scope section to docs/agents/squadron.md, naming at least one of Team, Project, Initiative, Label or View.";
 
-export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels";
+export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels" | "Squadron policy";
 export interface SettingsIssue { section: SettingsSection; message: string }
 export type SettingsResult =
   | { ok: true; settings: SquadronSettings }
@@ -111,6 +129,39 @@ export function parseLinearScope(markdown: string): { ok: true; scope: LinearSco
   return Object.keys(scope).length ? { ok: true, scope } : { ok: false, message: SCOPE_MISSING };
 }
 
+/**
+ * House rules `## Squadron policy`, a Setting / Value table read like Model routes. A missing file, section or row keeps its default;
+ * an unknown setting or value is an issue that names it, so Doctor and Start refuse rather than guess.
+ */
+export function parseSquadronPolicy(houseRulesMarkdown?: string | null): {
+  ok: true; policy: SquadronPolicy; source: Record<keyof SquadronPolicy, PolicySource>;
+} | { ok: false; issues: SettingsIssue[] } {
+  const policy: SquadronPolicy = { ...DEFAULT_POLICY };
+  const source: Record<keyof SquadronPolicy, PolicySource> = { escalation: "default", lowEffort: "default", checkpoint: "default" };
+  const issues: SettingsIssue[] = [];
+  const fail = (message: string) => issues.push({ section: "Squadron policy", message: `House rules Squadron policy: ${message}` });
+  const body = sections(houseRulesMarkdown ?? "").get("Squadron policy");
+  const seen = new Set<string>();
+  for (const [rawName = "", rawValue = "", ...extra] of table(body ?? "")) {
+    const unquote = (cell: string) => cell.replace(/^`(.*)`$/, "$1").trim();
+    const name = unquote(rawName);
+    const value = unquote(rawValue).toLowerCase();
+    const setting = POLICY_SETTINGS.find((entry) => entry.name.toLowerCase() === name.toLowerCase());
+    if (!setting) { fail(`unknown setting ${name || "(empty)"}. Use Escalation, Low effort or Checkpoint.`); continue; }
+    if (seen.has(setting.key) || extra.length) { fail(`${setting.name} is malformed or set twice. Set it once, with one value.`); continue; }
+    seen.add(setting.key);
+    if (setting.key === "checkpoint") {
+      if (/^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value))) { policy.checkpoint = Number(value); source.checkpoint = "House rules"; }
+      else fail(`Checkpoint ${value ? `"${unquote(rawValue)}"` : "has no value"}; use a positive whole number, or remove the row for none.`);
+      continue;
+    }
+    const allowed: readonly string[] = setting.values;
+    if (allowed.includes(value)) { (policy as unknown as Record<string, string>)[setting.key] = value; source[setting.key] = "House rules"; }
+    else fail(`${setting.name} ${value ? `"${unquote(rawValue)}"` : "has no value"}; use ${allowed.join(" or ")}, or remove the row for the default.`);
+  }
+  return issues.length ? { ok: false, issues } : { ok: true, policy, source };
+}
+
 /** Read the repo-owned Markdown without executing its quick check. */
 export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind = detectTracker(null, markdown).kind ?? "linear", houseRulesMarkdown?: string | null): SettingsResult {
   const parts = sections(markdown);
@@ -133,8 +184,11 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   };
   const routing = parseRoutes(parts.get("Routes") ?? "", houseRulesMarkdown);
   issues.push(...routing.issues);
+  const policy = parseSquadronPolicy(houseRulesMarkdown);
+  if (!policy.ok) issues.push(...policy.issues);
   const routes = routing.routes;
   const settings: SquadronSettings = {
+      policy: policy.ok ? policy.policy : { ...DEFAULT_POLICY }, policySource: policy.ok ? policy.source : { escalation: "default", lowEffort: "default", checkpoint: "default" },
       quickCheck, stopList,
       ...(checkSetup ? { checkSetup } : {}),
       limits: {
@@ -278,4 +332,9 @@ function parseRoutes(body: string, houseRulesMarkdown?: string | null): {
     }
   } else if (routes.filter((row) => row.label === null).length !== 1) fail("Include one (default) route row.");
   return { routes, issues, ...(shared ? { modelRoutes } : {}) };
+}
+
+/** The resolved policy as the owner reads it: one row per setting with where its value came from. */
+export function policyRows(settings: Pick<SquadronSettings, "policy" | "policySource">): { setting: string; value: string; source: PolicySource }[] {
+  return POLICY_SETTINGS.map(({ key, name }) => ({ setting: name, value: String(settings.policy[key] ?? "none"), source: settings.policySource[key] }));
 }

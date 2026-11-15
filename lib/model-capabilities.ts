@@ -3,7 +3,7 @@ import { providerFor, type SettingsIssue, type SquadronSettings } from "./squadr
 
 export interface ProviderModels {
   providerId: string;
-  models: { id: string; efforts: string[] }[];
+  models: { id: string; efforts: string[]; /** BB's advertised native default effort; absent when BB doesn't report one. */ defaultEffort?: string }[];
   error?: string;
 }
 
@@ -18,7 +18,8 @@ export async function readRouteCapabilities(bb: BbPluginApi, hostId: string, set
     try {
       const result = await bb.sdk.providers.models({ hostId, providerId, preferCached: true, signal });
       if (result.modelLoadError) return { providerId, models: [], error: `Couldn't read models for ${providerId}: ${result.modelLoadError.code}.` };
-      return { providerId, models: result.models.map((model) => ({ id: model.id, efforts: model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort) })) };
+      return { providerId, models: result.models.map((model) => ({ id: model.id, efforts: model.supportedReasoningEfforts.map((effort) => effort.reasoningEffort),
+        ...(typeof model.defaultReasoningEffort === "string" && model.defaultReasoningEffort ? { defaultEffort: model.defaultReasoningEffort } : {}) })) };
     } catch { return { providerId, models: [], error: `Couldn't read models for ${providerId}.` }; }
   }));
 }
@@ -41,3 +42,16 @@ export function routeProblem(route: { providerId?: string; model: string; effort
     : !model ? `Unknown model ${route.model} for provider ${route.providerId}.`
     : route.effort !== "default" && !model.efforts.includes(route.effort) ? `Unknown effort ${route.effort} for ${route.providerId}/${route.model}.` : null;
 }
+
+/**
+ * The effort a `default` route runs at: BB's advertised native default for the model, or null when BB doesn't say.
+ * Explicit efforts return themselves. Never a substitution; it only reads what BB reports.
+ */
+export function effectiveEffort(route: { providerId?: string; model: string | null; effort: string }, catalog: readonly ProviderModels[] | undefined): string | null {
+  if (route.effort !== "default") return route.effort;
+  if (!route.providerId || !route.model) return null;
+  return catalog?.find((entry) => entry.providerId === route.providerId)?.models.find((entry) => entry.id === route.model)?.defaultEffort ?? null;
+}
+
+/** Said whenever a default-effort route's native default is unknown, so the low-effort limit is never claimed as proved. */
+export const DEFAULT_EFFORT_UNPROVED = "BB doesn't report this model's default effort, so the low-effort limit isn't proved for it.";

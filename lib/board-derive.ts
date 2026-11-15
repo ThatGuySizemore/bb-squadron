@@ -11,6 +11,7 @@ import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
 import type { LaneProgress } from "./lane-progress.js";
 import { escapeRegExp } from "./issue-text.js";
+import type { ProviderModels } from "./model-capabilities.js";
 import { chooseFinalReviewer, type LaneLaunch, type LaneTicket } from "./final-reviewer.js";
 
 /** An unarchived planning thread for one tracker issue, including finished planning. */
@@ -22,6 +23,8 @@ export interface BoardInput extends LaneProgress {
   planning?: PlanningThread[];
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
+  /** BB's advertised capabilities on the checkout's host, for the final reviewer's route checks. */
+  providerCatalog?: readonly ProviderModels[];
   doctor?: DoctorReport;
   leads?: LeadThread[];
   /** Rows from BB's pull-request plugin, keyed by environment id. */
@@ -239,7 +242,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       const launches = lead.launches ?? workers.map((worker) =>
         ({ threadId: worker.id, createdAt: worker.createdAt, providerId: worker.providerId ?? null, record: worker.record ?? null }));
       const laneTickets = finalReviewTickets(spec, laneSnapshot, settings!, workItem);
-      const choice = chooseFinalReviewer(settings!, { lead: lead.route, tickets: laneTickets, launches: [...self, ...launches], projectRoutes: true });
+      const choice = chooseFinalReviewer(settings!, { lead: lead.route, tickets: laneTickets, launches: [...self, ...launches], projectRoutes: true, catalog: input.providerCatalog });
       return { ...(choice.route ? { reviewer: choice.route } : {}), finalReview: choice.statement };
     }
     return {

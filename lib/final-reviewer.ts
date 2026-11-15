@@ -4,6 +4,7 @@
 // Lead and work-item briefs, and `bb squadron launch final-review`.
 import type { Family, Route } from "./board-model.js";
 import { resolveLaunch, routeText, requestedRoute, type LaunchRecord } from "./launch-record.js";
+import type { ProviderModels } from "./model-capabilities.js";
 import { familyForProvider, resolveRoute, type ModelRole, type SquadronSettings } from "./squadron-settings.js";
 
 /** Launch roles whose accepted attempt is a ticket's builder. Mechanical, review and planning threads never are. */
@@ -98,6 +99,8 @@ export function chooseFinalReviewer(settings: SquadronSettings, lane: {
    * while every thread in the lane is recorded. The final review itself never does: only recorded builders choose it.
    */
   projectRoutes?: boolean;
+  /** BB's advertised capabilities, so review routes meet the same policy checks as every launch. */
+  catalog?: readonly ProviderModels[];
 }): FinalReviewer {
   const unrecorded = lane.launches.filter((launch) => !launch.record).length;
   const basis = lane.tickets.some((ticket) => ticket.integrated) ? "integrated" as const : "lane" as const;
@@ -117,7 +120,7 @@ export function chooseFinalReviewer(settings: SquadronSettings, lane: {
     if (family === "unknown") problem = "Final review is set to same, but the Lead runs on a provider with no known family, so no review route matches it.";
     else {
       role = REVIEW_ROLE[family === "claude" ? "gpt" : "claude"];
-      try { route = resolveLaunch(settings, { role }).route; }
+      try { route = resolveLaunch(settings, { role }, lane.catalog).route; }
       catch (error) { problem = error instanceof Error ? error.message : String(error); role = null; }
       chosenBy = `Final review is set to same, so a ${BUILT_BY[family]} reviewer, in the Lead's family, reviews.`;
     }
@@ -131,7 +134,7 @@ export function chooseFinalReviewer(settings: SquadronSettings, lane: {
     } else {
       const family = built[0];
       role = REVIEW_ROLE[family];
-      try { route = resolveLaunch(settings, { role }).route; }
+      try { route = resolveLaunch(settings, { role }, lane.catalog).route; }
       catch (error) { problem = error instanceof Error ? error.message : String(error); role = null; }
       const tie = built.length > 1 && counts.claude === counts.gpt;
       chosenBy = `${BUILT_BY[family]} built ${counts[family]} of ${total} ${basis === "integrated" ? "integrated " : ""}${total === 1 ? "ticket" : "tickets"}${tie ? ", a tie that Squadron settles toward Claude-built work" : ""}, so the ${role ?? REVIEW_ROLE[family]} route reviews.`;

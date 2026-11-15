@@ -111,6 +111,8 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
     "- Mechanical: not set. Add a Mechanical row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
     "- Worker for ui tickets: claude-code claude-opus-5-5, high effort, default tier",
     "- Worker for data tickets: codex gpt-6.1-sol, medium effort, default tier",
+    "Squadron policy resolved at Start (follow these values, and the squadron-lead skill's text for each mode):",
+    "- Escalation: retry", "- Low effort: off", "- Checkpoint: none",
   ].join("\n"));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes.map(({ specId, state, leadThreadId }) => [specId, state, leadThreadId]), [["FIX-5", "flying", "thr_lead_1"]]);
@@ -1494,12 +1496,16 @@ test("Doctor's host reads only Model routes from House rules, falling back only 
   const ownerHost = experimental_createHostEntryHarness(createDoctorHost(undefined, () => root));
   t.after(() => ownerHost.experimental_dispose());
   await writeFile(join(folder, "playbook.md"), house);
-  const legacy = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null };
+  const legacy = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null; policy: string | null };
   assert.ok(legacy.markdown?.includes("Worker (hard)"));
   assert.equal(legacy.markdown?.includes("Squadron policy"), false);
   assert.equal(legacy.markdown?.includes("prose-only"), false);
+  // Squadron policy travels separately, and never with Models and effort prose.
+  const policy = legacy.policy;
+  assert.ok(policy?.startsWith("## Squadron policy") && policy.includes("| Low effort | mechanical only |"));
+  assert.equal(policy?.includes("prose-only") || policy?.includes("Models and effort"), false);
   await writeFile(join(folder, "house-rules.md"), "# House rules\n## Models and effort\nPolicy prose only.\n");
-  assert.deepEqual(await ownerHost.experimental_call("readModelRoutes", {}), { markdown: null });
+  assert.deepEqual(await ownerHost.experimental_call("readModelRoutes", {}), { markdown: null, policy: null });
   await writeFile(join(folder, "house-rules.md"), house.replace("claude-sonnet-5-5", "fixture-preferred-model"));
   const preferred = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null };
   assert.ok(preferred.markdown?.includes("fixture-preferred-model"));

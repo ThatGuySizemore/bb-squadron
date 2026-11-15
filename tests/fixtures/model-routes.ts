@@ -23,9 +23,15 @@ export const house = `# House rules
 ## Squadron policy
 | Setting | Value |
 |---|---|
-| Low effort | off |
+| Low effort | mechanical only |
 ## Models and effort
 | Role | Provider | Model | Effort |
 |---|---|---|---|
 | Lead | ignored | prose-only | low |
 `;
+
+/** House rules with a Squadron policy table; omit rows to test defaults. */
+export function houseWith(policyRows: string[] | null): string {
+  const section = policyRows === null ? "" : `## Squadron policy\n| Setting | Value |\n|---|---|\n${policyRows.join("\n")}\n`;
+  return house.replace(/## Squadron policy[\s\S]*?(?=## Models and effort)/, section);
+}

@@ -164,3 +164,55 @@ test('the first board read with no saved reading performs one complete Linear re
   await f.board(); await settle();
   assert.equal(f.linear.operations.filter(name => name === 'SquadronIssues' || name === 'SquadronDelta').length, 1);
 });
+
+test('recent saved readings retain the two-stopped-lanes brake during a Linear outage', async t => {
+  let failed = false;
+  const spec = workspaceIssues.data.issues.nodes.find(node => node.identifier === 'FIX-5')!;
+  const ticket = workspaceIssues.data.issues.nodes.find(node => node.identifier === 'FIX-6')!;
+  const issues = { data: { issues: { ...workspaceIssues.data.issues, nodes: [
+    ...workspaceIssues.data.issues.nodes,
+    { ...spec, id: 'fix-20', identifier: 'FIX-20' },
+    { ...ticket, id: 'fix-21', identifier: 'FIX-21', parent: { id: 'fix-20' } },
+  ] } } };
+  const f = await helperFixture(t, epoch, { issues: () => failed ? Response.json({}, { status: 503 }) : Response.json(issues) });
+  await f.board();
+  await f.harness.behavior.callRpc('autopilot.set', { projectId: 'one', status: 'on', laneLimit: 1 });
+  failed = true;
+  await f.advance(60_000);
+  await f.reload();
+  for (const id of ['first', 'second']) f.threads.set(id, makeThreadResponse({ id, projectId: 'one', status: 'error', createdAt: epoch }));
+  f.harness.sdk.stub('threads.getPluginMetadata', async ({ threadId }: { threadId: string }) =>
+    threadId === 'first' || threadId === 'second' ? { role: 'lead', specId: threadId === 'first' ? 'fix-1' : 'fix-5' } : {});
+  f.harness.sdk.stub('threads.spawn', async () => makeThreadResponse({ id: 'unwanted', projectId: 'one' }));
+  await f.board(); await settle();
+  await f.startWatcher();
+  const board = await f.board();
+  assert.equal(board.autopilot?.status, 'paused');
+  assert.equal(board.autopilot?.pauseReason, 'Two lanes in a row stopped');
+  assert.equal(board.autopilot?.consecutiveStops, 2);
+  assert.equal(f.harness.inspection.sdk.callsTo('threads.spawn').length, 0, 'no third lane starts during the outage');
+});
+
+test('recent saved readings still check fresh merges and retain the main-check brake', async t => {
+  let failed = false;
+  const f = await helperFixture(t, epoch, { issues: () => failed ? Response.json({}, { status: 503 }) : Response.json(workspaceIssues) });
+  await f.board();
+  await f.harness.behavior.callRpc('autopilot.set', { projectId: 'one', status: 'on', laneLimit: 1 });
+  failed = true;
+  await f.advance(60_000);
+  await f.reload();
+  f.threads.set('outside', makeThreadResponse({ id: 'outside', title: 'Lead FIX-5', projectId: 'one', environmentId: 'outside-env', status: 'active' }));
+  f.harness.sdk.stub('plugins.callRpc', async () => ({ 'outside-env': { outcome: 'available', pullRequest: {
+    number: 29, state: 'merged', url: 'https://example.invalid/pr/29', updatedAt: new Date(epoch + 60_000).toISOString(), checks: { state: 'passing' },
+  } } }));
+  f.harness.sdk.stub('threads.spawn', async () => makeThreadResponse({ id: 'unwanted', projectId: 'one' }));
+  let checks = 0;
+  f.setMainCheck(async () => { checks++; return { passed: false, logPath: '/scratch/failure.log', mergedCommit: 'a'.repeat(40), baseCommit: 'b'.repeat(40) }; });
+  await f.board(); await settle();
+  await f.startWatcher();
+  const board = await f.board();
+  assert.equal(checks, 1, 'fresh PR evidence still runs the main check while Linear is down');
+  assert.equal(board.autopilot?.status, 'paused');
+  assert.equal(board.autopilot?.pauseReason, 'Main fails its quick check');
+  assert.equal(f.harness.inspection.sdk.callsTo('threads.spawn').length, 0);
+});

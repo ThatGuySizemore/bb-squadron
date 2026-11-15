@@ -125,9 +125,15 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     });
     if (sources.autopilot) {
       const problem = readingProblem(snapshot, now());
-      board.autopilot = snapshot.error || problem
-        ? await sources.autopilot.get(projectId) : await sources.autopilot.observe(projectId, board);
-      if (!snapshot.error && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
+      const savedLinear = snapshot.kind === "linear" && snapshot.syncedAt !== null;
+      // Stops come from live BB threads. A saved tracker completion cannot reset
+      // that brake, but a merged PR read in this pass can prove a landing.
+      const observation = savedLinear && (snapshot.error || problem)
+        ? { ...board, lanes: board.lanes.filter(lane => lane.state !== "landed" || lane.pr?.state === "merged") }
+        : board;
+      board.autopilot = savedLinear || !snapshot.error && !problem
+        ? await sources.autopilot.observe(projectId, observation) : await sources.autopilot.get(projectId);
+      if ((savedLinear || !snapshot.error) && snapshot.syncedAt !== null && board.autopilot.status !== "off") {
         // Main is shared: include Outside merges and older Leads hidden by returning lanes.
         const merges = checkEnvironments.flatMap((id) => {
           const row = pullRequests?.[id];

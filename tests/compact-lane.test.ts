@@ -39,6 +39,28 @@ const one = (root: Element, name: string) => {
   return found[0]!;
 };
 
+test("work items use the compact row at both widths, with their tag and live step but no ticket list", async () => {
+  for (const placement of ["page", "panel"] as const) {
+    const root = await view([lane("FIX-9", { kind: "work-item", title: "One standalone fix", tickets: [] })], placement);
+    const row = one(root, "sq-lane-row");
+    assert.equal(visibleText(one(row, "sq-work-kind")), "Work item");
+    assert.match(visibleText(one(row, "sq-live-step")), /Waiting on worker/);
+    assert.equal(byClass(root, "sq-tail").length, 0);
+    assert.equal(byClass(root, "sq-all").length, 0);
+    assert.equal(byClass(root, "sq-progress").length, 0);
+    assert.equal(byClass(root, "sq-rail").length, 0);
+    assert.ok(elements(row).some((element) => element.tag === "button" && visibleText(element) === "Stop"));
+    assert.ok(elements(row).some((element) => element.attrs["data-term"] === "Work item"), "shared glossary hover text");
+  }
+});
+
+test("Flying specs show their total ticket tag in wide tails and narrow rows", async () => {
+  for (const placement of ["page", "panel"] as const) {
+    const root = await view([lane("FIX-1", { totalTicketCount: 5 })], placement);
+    assert.equal(visibleText(one(root, "sq-work-kind")), "Spec · 5 tickets");
+  }
+});
+
 test("in a narrow layout each Flying lane is one compact row: tail number, title, Lead and step, time, PR and actions", async () => {
   const root = await view([
     lane("FIX-1", { pr: { number: 11, url: "https://github.com/o/r/pull/11", checks: "passing" } }),

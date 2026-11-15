@@ -119,7 +119,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   // A spec its Lead closed after the merge keeps its lane, so the lane lands and stays Landed.
   const closedSpecs = snapshot.issues.filter((issue) => issue.parentId === null && issue.state.type === "completed" &&
     issue.inProject && (readyMarked(issue) || leads.has(issue.id)));
-  const lanes: Lane[] = [...specs.filter((spec) => readyMarked(spec) || leads.has(spec.id)), ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
+  const lanes: Lane[] = [...specs.filter((spec) => readyMarked(spec) || leads.has(spec.id)),
+    ...workItems.filter((item) => leads.has(item.id)), ...closedSpecs].sort(byIdentifier).flatMap((spec) => {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
@@ -136,6 +137,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     return "blocked";
   }
   function lane(spec: TrackerIssue, lead: LeadThread): Lane {
+    const workItem = lead.kind === "work-item";
     const noRemote = input.repository?.hasRemote === false;
     // An outside lane's branch is the first of its candidates that could be read.
     const branch = input.branches?.[spec.id] ?? lead.branch;
@@ -149,7 +151,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const specLanded = !returningLead && spec.state.type === "completed";
     const localLanded = noRemote && (mergedLaneWork || specLanded);
     const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
-    const issues = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue));
+    const issues = workItem ? [] : laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue));
     const laneById = new Map(laneSnapshot.issues.map((issue) => [issue.id, issue]));
     const ids = new Set(issues.map((issue) => issue.id));
     const workers = lead.workers ?? [];
@@ -185,7 +187,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
     const acceptOwner = labels(spec).includes(ACCEPT_OWNER);
     const outside = lead.outside === true;
-    const localMerge = !outside && noRemote && !localLanded && tickets.length > 0 && tickets.every((ticket) => ["branch", "done"].includes(ticket.state));
+    const itemProgress = workItem ? laneById.get(spec.id) : undefined;
+    const readyToMerge = workItem
+      ? itemProgress !== undefined && !isDeclinedIssue(itemProgress) && ["branch", "done"].includes(ticketState(itemProgress))
+      : tickets.length > 0 && tickets.every((ticket) => ["branch", "done"].includes(ticket.state));
+    const localMerge = !outside && noRemote && !localLanded && readyToMerge;
     // accept:owner holds a mergeable PR for the owner's click; other Leads merge their own.
     // Squadron holds nothing for an outside lane: it never merges, stops or resumes one.
     const inReview = acceptOwner && localMerge ? "merge-waits"
@@ -195,6 +201,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       needs.push({ threadId: lead.thread.id, kind: "waiting", text: "The Lead is waiting on you" });
     }
     return {
+      ...(workItem ? { kind: "work-item" as const } : {}),
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
       totalTicketCount: Math.max(totalTicketsOf(spec), issues.length),
       branch,

@@ -430,7 +430,7 @@ function SpecTitle({ lane }: { lane: Lane }) {
   return (
     <h3 className="sq-line-title">
       {lane.url ? (
-        <button type="button" className="sq-issue-link" title="Open the spec" onClick={() => open.external(lane.url!, `the spec ${lane.specId}`)}>
+        <button type="button" className="sq-issue-link" title={`Open the ${lane.kind === "work-item" ? "work item" : "spec"}`} onClick={() => open.external(lane.url!, `${lane.kind === "work-item" ? "the work item" : "the spec"} ${lane.specId}`)}>
           {lane.title}
         </button>
       ) : (
@@ -456,6 +456,7 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
         <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
       </div>
       <div className="sq-lane-row-foot">
+        <WorkKindTag kind={lane.kind} ticketCount={lane.totalTicketCount ?? lane.tickets.length} />
         <LeadButton lane={lane} compact />
         <div className="sq-lane-row-end">
           {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}><Term text={LANE_LABEL[lane.state]} /></span> : null}
@@ -503,13 +504,13 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
       </ul>
     </div>
   ) : null;
-  if (narrow) {
+  if (narrow || lane.kind === "work-item") {
     // The tickets a narrow lane keeps in view: those an agent is on, or that wait on the owner.
     const active = lane.tickets.filter((t) => isActiveTicket(t.state));
     return (
-      <article className="sq-line" data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
+      <article className={`sq-line${lane.kind === "work-item" ? " sq-line-work-item" : ""}`} data-lane={lane.state} aria-label={`${lane.specId}, ${lane.title}: ${LANE_LABEL[lane.state]}`}>
         <LaneRow lane={lane} dispatch={dispatch} landing={landing} demo={demo} acting={acting} />
-        <div className="sq-track">
+        {lane.kind === "work-item" ? others : <div className="sq-track">
           {active.length ? <div className="sq-active">{active.map((t) => <SlimTicketRow key={t.id} ticket={t} lane={lane} />)}</div> : null}
           <details className="sq-all">
             <summary>
@@ -524,7 +525,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
             <p className="sq-all-branch">Branch <span className="sq-branch">{lane.branch}</span></p>
           </details>
           {others}
-        </div>
+        </div>}
       </article>
     );
   }
@@ -544,6 +545,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
       <div className="sq-tail">
         <PixelText text={lane.specId} cell={4} className="sq-tail-number" />
         <SpecTitle lane={lane} />
+        <WorkKindTag kind={lane.kind} ticketCount={lane.totalTicketCount ?? lane.tickets.length} />
         <LeadButton lane={lane} />
         <div className="sq-tail-status">
           {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}>

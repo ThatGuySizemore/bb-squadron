@@ -13,6 +13,8 @@ const ticket = z.object({
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({
+  /** Absent on older/demo snapshots means spec; RPC field names stay shared. */
+  kind: z.enum(["spec", "work-item"]).optional(),
   /** All associated tickets, including completed ones. */
   totalTicketCount: z.number().int().nonnegative().optional(),
   liveStep: liveStepSchema.optional(),

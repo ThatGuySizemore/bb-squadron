@@ -8,7 +8,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
-import type { Board } from "../lib/board-model.js";
+import { needsYou, type Board } from "../lib/board-model.js";
+import { STOP_MESSAGE, RESUME_MESSAGE } from "../lib/lane-contract.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
@@ -554,6 +555,65 @@ function twoReady() {
       ? { ...node, inverseRelations: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } : node),
   } } });
 }
+
+function readyWorkItem() {
+  return Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-9"
+      ? { ...node, labels: { ...node.labels, nodes: [{ id: "ready", name: "ready-for-agent", color: "#000000" }] } } : node),
+  } } });
+}
+
+test("a manually started work item occupies capacity, keeps its question slot and frees it after Stop", async (t) => {
+  const { harness, native } = await setup(t, readyWorkItem);
+  harness.sdk.stub("threads.send", async () => ({ ok: true, delivery: "sent" }));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 1, "the manual work item fills the shared limit");
+  let board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.kind]), [["FIX-9", "work-item"]]);
+  const running = native.threads.get("thr_lead_1")!;
+  const waiting = { ...running, status: "idle" as const, runtime: { displayStatus: "idle" as const }, hasPendingInteraction: true };
+  native.threads.set(running.id, waiting);
+  await watcherCycle(harness);
+  assert.equal(native.count, 1, "questions retain the shared slot");
+  board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(needsYou(board).filter((need) => need.specId === "FIX-9").map((need) => need.kind), ["waiting"]);
+  await harness.behavior.callRpc("lane.stop", { projectId: "proj-one", specId: "FIX-9" });
+  native.threads.set(running.id, { ...running, status: "idle", runtime: { displayStatus: "idle" } });
+  await watcherCycle(harness);
+  assert.equal(native.count, 2, "a confirmed stopped work item frees capacity under existing policy");
+  board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(needsYou(board).filter((need) => need.specId === "FIX-9").map((need) => need.kind), ["stopped"]);
+  await harness.behavior.callRpc("lane.resume", { projectId: "proj-one", specId: "FIX-9" });
+  const sends = harness.inspection.sdk.callsTo("threads.send").map(([args]) => args as { threadId: string; mode: string; input: { text: string }[] });
+  assert.deepEqual(sends.map((send) => [send.threadId, send.mode, send.input[0].text]), [
+    [running.id, "steer-if-active", STOP_MESSAGE], [running.id, "queue-if-active", RESUME_MESSAGE],
+  ]);
+  native.threads.set(running.id, running);
+  board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes.find((lane) => lane.specId === "FIX-9")?.state, "flying");
+  assert.deepEqual(needsYou(board).filter((need) => need.specId === "FIX-9"), []);
+});
+
+test("work-item PR review and landing use the shared policy without child tickets", async (t) => {
+  const { harness, native } = await setup(t, readyWorkItem);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" });
+  let merged = false;
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
+    number: 99, state: merged ? "merged" : "open", url: "https://example.invalid/pull/99",
+    updatedAt: new Date(Date.now()).toISOString(), checks: { state: "passing" },
+  } } }));
+  let board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes[0].state, "pr-open");
+  assert.deepEqual(board.lanes[0].tickets, []);
+  merged = true;
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
+  board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes[0].state, "landed");
+  assert.equal(board.lanes[0].kind, "work-item");
+  assert.deepEqual(needsYou(board), []);
+});
 async function watcherCycle(harness: ReturnType<typeof host>["harness"]) {
   const cycle = harness.behavior.runService("board-watcher");
   try { await new Promise((resolve) => setTimeout(resolve, 40)); }

@@ -329,7 +329,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
   assert.equal(visibleText(elements(parse(html)).find((element) => element.tag === "h2" && element.attrs.id === "sq-open-issues-h")!),
     "Open issues", "the section uses the glossary's Open issue term");
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
-    "Doctor checks", "Linear webhooks", "Nothing is flying. Start a Ready spec or work item to launch its lane.", "Start FIX-5"]) {
+    "Doctor checks", "Linear webhooks", "Nothing is flying. Plan the next spec with New spec.", "Start FIX-5"]) {
     assert.ok(html.includes(text), `the board shows ${text}`);
   }
   assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Start<\/button>/g) ?? []).length, 1, "the blocked spec's Start button is disabled");

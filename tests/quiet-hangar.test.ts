@@ -280,7 +280,7 @@ test("the banner moves while a pass is due; under reduced motion its still frame
 
 // ---------- the board view ----------
 
-async function mount() {
+async function mount(actions: { dispatch?: (action: unknown) => void; onPlan?: (...args: unknown[]) => void } = {}) {
   await import("./fixtures/app-runtime.js");
   const { JSDOM } = await import("jsdom");
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
@@ -300,10 +300,10 @@ async function mount() {
   const { BoardView } = await import("../board/Board.js");
   const root = createRoot(browser.document.getElementById("root")!);
   const show = async (board: Board) => act(async () => root.render(createElement(BoardView, {
-    board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, placement: "page" })));
+    board, demo: false, modeSwitch: null, dispatch: actions.dispatch ?? (() => undefined), onPlan: actions.onPlan ?? (() => undefined), placement: "page" })));
   const banner = () => browser.document.querySelector<HTMLElement>(".sq-runway")!;
   return {
-    show, pass: () => banner().dataset.flyPast,
+    show, pass: () => banner().dataset.flyPast, doc: browser.document, act,
     async close() {
       await act(async () => root.unmount());
       browser.close();
@@ -339,4 +339,25 @@ test("in the view, the last Ready spec's landing sets the fly-past for its landi
     await reload.show({ ...empty, tick: 1 });
     assert.equal(reload.pass(), undefined, "no fly-past on page load");
   } finally { await reload.close(); }
+});
+
+test("with Ready work that can start, the empty Flying section still points to New spec, and Start stays beside it", async () => {
+  const dispatched: unknown[] = [];
+  const planned: unknown[][] = [];
+  const view = await mount({ dispatch: (action) => dispatched.push(action), onPlan: (...args) => planned.push(args) });
+  try {
+    await view.show(withReady(boardOf([landedLane("A-1")]), "B-1"));
+    const head = view.doc.getElementById("sq-flying-h")!;
+    const section = head.closest("section")!;
+    const lines = [...section.querySelectorAll(".sq-clear")].map((p) => p.textContent);
+    assert.deepEqual(lines, ["Nothing is flying. Plan the next spec with New spec."], "one plain line, pointing to New spec");
+    const buttons = [...section.querySelectorAll<HTMLButtonElement>(".sq-empty button")];
+    assert.equal(buttons.length, 2);
+    assert.match(buttons[0]!.textContent!, /^New spec/, "New spec first, as the line says");
+    assert.equal(buttons[1]!.textContent, "Start B-1", "with Start for the spec that can go");
+    await view.act(async () => buttons[1]!.click());
+    assert.deepEqual(dispatched, [{ type: "start", specId: "B-1" }], "Start starts that spec");
+    await view.act(async () => buttons[0]!.click());
+    assert.deepEqual(planned, [[]], "New spec plans a new spec from nothing");
+  } finally { await view.close(); }
 });

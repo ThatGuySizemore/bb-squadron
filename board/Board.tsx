@@ -1276,13 +1276,15 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         <section className="sq-section" aria-labelledby="sq-flying-h" ref={(el) => { sections.current.flying = el; }}>
           <SectionHead id="sq-flying-h" title="Flying" count={flying.length} />
           {onLine.length === 0 ? (
-            // The quiet hangar: Start when a Ready spec can go, otherwise one plain line pointing to New spec.
-            startable ? (
-              <EmptySection text="Nothing is flying. Start a Ready spec or work item to launch its lane." action={
+            // The quiet hangar: one plain line pointing to New spec, with Start beside it when a Ready spec can go.
+            <EmptySection text="Nothing is flying. Plan the next spec with New spec." action={<>
+              {newSpec()}
+              {startable ? (
                 <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
                   {starting === startable.id ? "Opening…" : `Start ${startable.id}`}
-                </Btn>} />
-            ) : <EmptySection text="Nothing is flying. Plan the next spec with New spec." action={newSpec()} />
+                </Btn>
+              ) : null}
+            </>} />
           ) : (
             onLine.map((lane) => (
               <div key={lane.specId} data-live-lane={lane.state === "flying" ? lane.specId : undefined} data-lane-row={lane.specId} className="sq-line-wrap" data-leaving={phase.leaving(lane)}>

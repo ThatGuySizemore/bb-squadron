@@ -59,6 +59,8 @@ const lane = z.object({
   outcomeAt: z.number().optional(),
   /** Who runs the lane's final review, chosen from who built the branch. Absent when no reviewer can be chosen. */
   reviewer: route.optional(),
+  /** The launched final review child's record beside what BB reports it runs, so a substitution stays visible. */
+  reviewerLaunch: launchView.optional(),
   /** Which work the reviewer is independent of, or why none could be chosen, in owner words. */
   finalReview: z.string().optional(),
   /** The spec in its planning tracker. */

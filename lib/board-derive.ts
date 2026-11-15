@@ -235,7 +235,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       needs.push({ threadId: lead.thread.id, kind: "waiting", text: "The Lead is waiting on you" });
     }
     /** The reviewer the one resolver chooses from this lane's builders; omitted when none can be chosen. */
-    function finalReview(): Pick<Lane, "reviewer" | "finalReview"> {
+    function finalReview(): Pick<Lane, "reviewer" | "reviewerLaunch" | "finalReview"> {
       // A work item's own thread is its builder; a spec Lead only coordinates.
       const self: LaneLaunch[] = lead.record && lead.record.role !== "Lead"
         ? [{ threadId: lead.thread.id, createdAt: lead.thread.createdAt, providerId: lead.thread.providerId ?? null, record: lead.record }] : [];
@@ -244,7 +244,10 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       const laneTickets = finalReviewTickets(spec, laneSnapshot, settings!, workItem);
       const own = lead.record ? leadRouteFromRecord(lead.record.requested) : null;
       const choice = chooseFinalReviewer(settings!, { lead: own ?? lead.route, tickets: laneTickets, launches: [...self, ...launches], projectRoutes: true, catalog: input.providerCatalog });
-      return { ...(choice.route ? { reviewer: choice.route } : {}), finalReview: choice.statement };
+      // The newest launched review child, when there is one, is what actually reviews; keep its reported route and mismatch.
+      const launched = [...workers].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id))
+        .find((worker) => worker.launch?.role.startsWith("Review of"))?.launch;
+      return { ...(choice.route ? { reviewer: choice.route } : {}), ...(launched ? { reviewerLaunch: launched } : {}), finalReview: choice.statement };
     }
     return {
       ...(workItem ? { kind: "work-item" as const } : {}),

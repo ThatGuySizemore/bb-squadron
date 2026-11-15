@@ -178,6 +178,8 @@ function AiChip({ route, prefix, compact = false, launch, note }: { route: Route
 /** The lane's final reviewer; its hover says which work the reviewer is independent of, or why none was chosen. */
 function ReviewerChip({ lane, demo, compact = false }: { lane: Lane; demo: boolean; compact?: boolean }) {
   const reviewer = laneReviewer(lane, demo);
+  if (lane.reviewerLaunch && !demo) return <AiChip route={launchedRoute(lane.reviewerLaunch.reported, reviewer ?? requestedAsRoute(lane.reviewerLaunch.requested))}
+    prefix="Reviewer" compact={compact} launch={lane.reviewerLaunch} note={lane.finalReview} />;
   if (reviewer) return <AiChip route={reviewer} prefix="Reviewer" compact={compact} note={lane.finalReview} />;
   return lane.finalReview ? <span className="sq-ai" title={lane.finalReview}><span>Reviewer · not chosen</span></span> : null;
 }
@@ -202,6 +204,11 @@ function unreportedFields(launch: LaunchView): string[] {
   const reported = launch.reported;
   return ([["providerId", "provider"], ["model", "model"], ["effort", "effort"], ["serviceTier", "tier"]] as const)
     .filter(([field]) => !reported || reported[field] === null).map(([, word]) => word);
+}
+
+/** Only the family matters here: it is the icon fallback when BB names no provider. */
+function requestedAsRoute(requested: LaunchView["requested"]): Route {
+  return { family: requested.providerId === "claude-code" ? "claude" : requested.providerId === "codex" ? "gpt" : "unknown", model: UNREPORTED, effort: UNREPORTED };
 }
 
 function launchRouteText(route: LaunchView["requested"]): string {
@@ -420,7 +427,8 @@ function Peg({ ticket, lane, demo }: { ticket: Ticket; lane: Lane; demo: boolean
       {lane.state === "flying" && isActiveTicket(state) ? <LiveStepLine activity={ticket.liveStep} /> : null}
       {size === "full" ? (
         <span className="sq-peg-foot">
-          {state === "review" ? (reviewer ? <AiChip route={reviewer} note={lane.finalReview} /> : null)
+          {state === "review" ? (lane.reviewerLaunch ? <AiChip route={launchedRoute(lane.reviewerLaunch.reported, reviewer ?? requestedAsRoute(lane.reviewerLaunch.requested))} launch={lane.reviewerLaunch} note={lane.finalReview} />
+            : reviewer ? <AiChip route={reviewer} note={lane.finalReview} /> : null)
             : <AiChip route={ticket.launch ? launchedRoute(ticket.launch.reported, ticket.route) : ticket.route} launch={ticket.launch} />}
           {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
         </span>

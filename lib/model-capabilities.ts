@@ -1,5 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { providerFor, type SettingsIssue, type SquadronSettings } from "./squadron-settings.js";
+import type { Family } from "./board-model.js";
+import type { SettingsIssue, SquadronSettings } from "./squadron-settings.js";
 
 export interface ProviderModels {
   providerId: string;
@@ -9,7 +10,7 @@ export interface ProviderModels {
 
 /** Exact capabilities on the checkout's host. An unavailable catalogue never supplies a substitute. */
 export async function readRouteCapabilities(bb: BbPluginApi, hostId: string, settings: SquadronSettings, signal?: AbortSignal): Promise<ProviderModels[]> {
-  const providers = [...new Set(settings.routes.filter((route) => route.providerId).map(providerFor))];
+  const providers = [...new Set(settings.routes.flatMap((route) => capabilityProvider(route) ?? []))];
   if (!providers.length) return [];
   const installed = await bb.sdk.providers.list({ hostId, signal }).catch(() => null);
   if (!installed) return providers.map((providerId) => ({ providerId, models: [], error: `Couldn't check provider ${providerId} on this host.` }));
@@ -24,7 +25,7 @@ export async function readRouteCapabilities(bb: BbPluginApi, hostId: string, set
   }));
 }
 
-/** Legacy family tables keep their existing behavior; provider routes must be advertised by BB. */
+/** Every configured row must be advertised by BB, including legacy Family aliases. */
 export function validateRouteCapabilities(settings: SquadronSettings, catalog: readonly ProviderModels[]): SettingsIssue[] {
   return settings.routes.flatMap((route): SettingsIssue[] => {
     const problem = routeProblem(route, catalog);
@@ -32,15 +33,21 @@ export function validateRouteCapabilities(settings: SquadronSettings, catalog: r
   });
 }
 
-/** Why BB can't run this provider route on the host, or null. Legacy family routes aren't checked. */
-export function routeProblem(route: { providerId?: string; model: string; effort: string }, catalog: readonly ProviderModels[]): string | null {
-  if (!route.providerId) return null;
-  const provider = catalog.find((entry) => entry.providerId === route.providerId);
+/** Normalize only for capability lookup; valid legacy resolution objects stay unchanged. */
+function capabilityProvider(route: { providerId?: string; family?: Family }): string | null {
+  return route.providerId ?? (route.family === "claude" ? "claude-code" : route.family === "gpt" ? "codex" : null);
+}
+
+/** Why BB can't run a route on the host, or null. A missing provider never grants a validation bypass. */
+export function routeProblem(route: { providerId?: string; family?: Family; model: string; effort: string }, catalog: readonly ProviderModels[]): string | null {
+  const providerId = capabilityProvider(route);
+  if (!providerId) return `Missing provider or recognized Family alias for model ${route.model}.`;
+  const provider = catalog.find((entry) => entry.providerId === providerId);
   const model = provider?.models.find((entry) => entry.id === route.model);
-  return !provider ? `Unknown provider ${route.providerId}.`
+  return !provider ? `Unknown provider ${providerId}.`
     : provider.error ? provider.error
-    : !model ? `Unknown model ${route.model} for provider ${route.providerId}.`
-    : route.effort !== "default" && !model.efforts.includes(route.effort) ? `Unknown effort ${route.effort} for ${route.providerId}/${route.model}.` : null;
+    : !model ? `Unknown model ${route.model} for provider ${providerId}.`
+    : route.effort !== "default" && !model.efforts.includes(route.effort) ? `Unknown effort ${route.effort} for ${providerId}/${route.model}.` : null;
 }
 
 /**

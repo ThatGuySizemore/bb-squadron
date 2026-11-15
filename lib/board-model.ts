@@ -13,6 +13,8 @@ const ticket = z.object({
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
 });
 const lane = z.object({
+  /** All associated tickets, including completed ones. */
+  totalTicketCount: z.number().int().nonnegative().optional(),
   liveStep: liveStepSchema.optional(),
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
@@ -50,6 +52,10 @@ const boardSchema = z.object({
   tick: z.number(), laneCapacity: z.number(), workersPerLane: z.number(), autoStart: z.boolean(),
   lanes: z.array(lane),
   ready: z.array(z.object({
+    /** Total for the kind tag; ticketCount stays the open count for frontier math. */
+    totalTicketCount: z.number().int().nonnegative().optional(),
+    /** Absent on older/demo snapshots means spec. */
+    kind: z.enum(["spec", "work-item"]).optional(),
     id: z.string(), title: z.string(), ticketCount: z.number(), routes: z.array(route), blockedBy: z.array(z.string()),
     acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
     startReason: z.string().nullable().optional(),
@@ -62,11 +68,13 @@ const boardSchema = z.object({
   })),
   /** Specs that aren't Ready: what's missing, and the one button that fixes it. */
   shaping: z.array(z.object({
+    totalTicketCount: z.number().int().nonnegative().optional(),
     id: z.string(), title: z.string(), url: z.string().optional(), ticketCount: z.number(), missing: z.string(),
     /** "resume" reopens the open planning thread; "tickets" plans the spec's tickets. */
     action: z.enum(["resume", "tickets"]), threadId: z.string().optional(),
   })),
   openIssues: z.array(z.object({
+    kind: z.enum(["spec", "ticket", "work-item"]).optional(),
     id: z.string(), title: z.string(), labels: z.array(z.string()), url: z.string().optional(), under: z.string().optional(),
     priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
   })),

@@ -232,7 +232,7 @@ test("an all-blocked Shaping spec keeps its blockers in the planning seed", asyn
   assert.doesNotMatch(prompt, /Publish the tickets/);
 });
 
-test("Plan moves an Open issue to Shaping, and Resume planning reopens that same thread", async (t) => {
+test("Plan keeps a standalone work item in Open issues and reopens its existing planning thread", async (t) => {
   const { harness } = await setup(t);
   harness.sdk.stub("skills.list", async () => ({ skills: [] }));
   const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
@@ -240,10 +240,8 @@ test("Plan moves an Open issue to Shaping, and Resume planning reopens that same
 
   const planned = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string };
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(board.openIssues, []);
-  assert.deepEqual(board.shaping.map(({ id, action, threadId, missing }) => ({ id, action, threadId, missing })), [
-    { id: "FIX-9", action: "resume", threadId: planned.threadId, missing: "Planning is still open in its thread." },
-  ]);
+  assert.deepEqual(board.openIssues.map(({ id, kind }) => ({ id, kind })), [{ id: "FIX-9", kind: "work-item" }]);
+  assert.deepEqual(board.shaping, []);
 
   const resumed = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-9" }) as { threadId: string };
   assert.equal(resumed.threadId, planned.threadId);
@@ -341,10 +339,10 @@ test("an empty board shows how to get started: every section says how work arriv
     board: emptyBoard, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   })).replace(/&#x27;/g, "'");
   for (const text of [
-    "Nothing is flying. Start a Ready spec to launch its lane.",
-    "No spec is Ready. A spec is Ready once it has the ready-for-agent label and an open ticket nothing blocks.",
+    "Nothing is flying. Start a Ready spec or work item to launch its lane.",
+    "Nothing is Ready. Specs need the ready-for-agent label and a ticket that can start. Work items need the label and no hold.",
     "No spec is being shaped. Plan an open issue, or start a new spec from nothing.",
-    "No open issues. Issues in this project that aren't specs or tickets wait here for Plan.",
+    "No open issues. Issues that need planning wait here for Plan.",
   ]) assert.ok(html.includes(text), `the empty board says: ${text}`);
   assert.equal(buttonLabels(html).filter((label) => label === "New spec").length, 5, "the header and each empty section offer New spec");
   const order = ["sq-flying-h", "sq-ready-h", "sq-shaping-h", "sq-open-issues-h"].map((id) => html.indexOf(`id="${id}"`));

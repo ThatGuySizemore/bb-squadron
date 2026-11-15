@@ -662,6 +662,25 @@ test("an Off action cancels an automatic start still checking Doctor", async (t)
   assert.equal(native.count, 0);
 });
 
+test("Autopilot skips Ready work items and starts the next eligible spec", async (t) => {
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: {
+    ...workspaceIssues.data.issues, nodes: [
+      { ...workspaceIssues.data.issues.nodes[3], id: "fix-0", identifier: "FIX-0", title: "Standalone fix", sortOrder: -1 },
+      ...workspaceIssues.data.issues.nodes,
+    ],
+  } } }));
+  const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(before.ready[0].id, "FIX-0");
+  assert.equal(before.ready[0].kind, "work-item");
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 1);
+  assert.equal(native.metadata.get("thr_lead_1")?.specId, "fix-5");
+  assert.equal(native.metadata.get("thr_lead_1")?.startedBy, "autopilot");
+  const after = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.ok(after.ready.some((row) => row.id === "FIX-0" && row.kind === "work-item"));
+});
+
 test("Autopilot skips a held parent spec even when it still has ready-for-agent and runnable tickets", async (t) => {
   const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
     nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-1" ? {

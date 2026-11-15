@@ -3,7 +3,7 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
+import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
 import type { Board } from "../lib/board-model.js";
 import { registerLinearAuth } from "../lib/linear-auth.js";
@@ -52,6 +52,128 @@ async function until(check: () => boolean, what: string) {
   for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
   assert.ok(check(), `timed out waiting for ${what}`);
 }
+
+test("Ready includes standalone ready work items beside specs, without promoting their tickets", async (t) => {
+  const standalone = workspaceIssues.data.issues.nodes[5];
+  const linear = workspace({ issues: () => Response.json({ data: { issues: {
+    ...workspaceIssues.data.issues, nodes: [...workspaceIssues.data.issues.nodes,
+      { ...standalone, id: "fix-10", identifier: "FIX-10", title: "Standalone fix", labels: {
+        nodes: [{ id: "ready", name: "ready-for-agent", color: "#00aa00" }, { id: "ui", name: "ui", color: "#0000aa" }],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } },
+    ],
+  } } }) });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const { bb, harness } = host();
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.ready.map((row) => [row.id, (row as { kind?: string }).kind, row.ticketCount]), [
+    ["FIX-1", "spec", 2], ["FIX-5", "spec", 1], ["FIX-10", "work-item", 0],
+  ]);
+  const work = board.ready.find((row) => row.id === "FIX-10")!;
+  assert.deepEqual(work.routes, [{ family: "claude", model: "claude-opus-5-5", effort: "high" }]);
+  assert.equal(work.startReason, null);
+  assert.deepEqual(board.openIssues.map((row) => row.id), ["FIX-9"]);
+  assert.deepEqual(board.shaping, []);
+});
+
+test("Ready rows label specs with their ticket count and work items without a ticket list at both placements", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const { JSDOM } = await import("jsdom");
+  const board: Board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], shaping: [], openIssues: [], ready: [
+    { id: "FIX-1", title: "A spec", kind: "spec", ticketCount: 5, routes: [], blockedBy: [], acceptOwner: false },
+    { id: "FIX-2", title: "A work item", kind: "work-item", ticketCount: 0, routes: [], blockedBy: [], acceptOwner: false },
+  ] };
+  for (const placement of ["page", "panel"] as const) {
+    const html = renderToStaticMarkup(createElement(BoardView, {
+      board, placement, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+    }));
+    const document = new JSDOM(html).window.document;
+    const rows = document.querySelectorAll(".sq-ready");
+    const tag = rows[0].querySelector(".sq-work-kind")!;
+    assert.equal(tag?.textContent?.replace(/A plan whose tickets are its sub-issues\./g, "").replace(/One piece of a spec\./g, ""), "Spec · 5 tickets");
+    assert.equal(rows[0].querySelector('[data-term="Spec"] [role="tooltip"]')?.textContent, "A plan whose tickets are its sub-issues.");
+    assert.equal(rows[0].querySelector('[data-term="Ticket"] [role="tooltip"]')?.textContent, "One piece of a spec.");
+    assert.equal(rows[1].querySelector('[data-term="Work item"] [role="tooltip"]')?.textContent, "An issue that stands alone: no parent spec, no tickets of its own.");
+    assert.equal(rows[1].querySelector('[data-term="Ticket"]'), null);
+  }
+});
+
+test("a Ready spec counts completed tickets in its tag while keeping the open count for its frontier", async (t) => {
+  const linear = workspace({ issues: () => Response.json({ data: { issues: {
+    ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-5"
+      ? { ...node, childSummary: { totalCount: 2 } } : node),
+  } } }) });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const { bb, harness } = host();
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  const spec = board.ready.find((row) => row.id === "FIX-5")!;
+  assert.equal(spec.ticketCount, 1);
+  assert.equal((spec as { totalTicketCount?: number }).totalTicketCount, 2);
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const { JSDOM } = await import("jsdom");
+  const document = new JSDOM(renderToStaticMarkup(createElement(BoardView, {
+    board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+  }))).window.document;
+  const tag = document.querySelectorAll(".sq-ready .sq-work-kind")[1].cloneNode(true) as Element;
+  tag.querySelectorAll('[role="tooltip"]').forEach((tip) => tip.remove());
+  assert.equal(tag.textContent, "Spec · 2 tickets");
+});
+
+test("held, unfinished and actively planned work items stay in Open issues with Plan", async (t) => {
+  const loose = workspaceIssues.data.issues.nodes[5];
+  const readyLabel = { id: "ready", name: "ready-for-agent", color: "#00aa00" };
+  const holds = ["HOLD", "needs-triage", "Needs-Info", "ready-for-human", "wontfix", "Later:Owner"];
+  const additions = holds.map((name, i) => ({ ...loose, id: `fix-${10 + i}`, identifier: `FIX-${10 + i}`,
+    labels: { ...loose.labels, nodes: [readyLabel, { id: `hold-${i}`, name, color: "#aaaaaa" }] } }));
+  const linear = workspace({ issues: () => Response.json({ data: { issues: { ...workspaceIssues.data.issues, nodes: [
+    ...workspaceIssues.data.issues.nodes, ...additions,
+    { ...loose, id: "fix-16", identifier: "FIX-16", labels: { ...loose.labels, nodes: [readyLabel] }, state: { ...loose.state, name: "needs-info" } },
+    { ...loose, id: "fix-17", identifier: "FIX-17", labels: { ...loose.labels, nodes: [readyLabel] } },
+    { ...loose, id: "fix-18", identifier: "FIX-18", labels: { ...loose.labels, nodes: [readyLabel] }, childSummary: { totalCount: 1 } },
+  ] } } }) });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const { bb, harness } = host();
+  harness.sdk.stub("files.read", async ({ path }: { path: string }) => {
+    const content = path.endsWith("issue-tracker.md") ? readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8")
+      : settingsFile + "\n## Hold labels\n\n- later:*\n";
+    return { content, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: content.length };
+  });
+  harness.sdk.stub("threads.list", async () => [makeThreadResponse({ id: "thr_plan", projectId: "proj-one" })]);
+  harness.sdk.stub("threads.getPluginMetadata", async () => ({ role: "planning", issueId: "fix-17" }));
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.ready.map((row) => row.id), ["FIX-1", "FIX-5"]);
+  assert.deepEqual(board.openIssues.map((row) => [row.id, row.kind]), [
+    ["FIX-9", "work-item"], ["FIX-10", "work-item"], ["FIX-11", "work-item"], ["FIX-12", "work-item"],
+    ["FIX-13", "work-item"], ["FIX-14", "work-item"], ["FIX-15", "work-item"], ["FIX-16", "work-item"], ["FIX-17", "work-item"],
+  ]);
+  assert.deepEqual(board.shaping.map((row) => [row.id, row.totalTicketCount]), [["FIX-18", 1]], "a spec with completed tickets remains a spec");
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const { JSDOM } = await import("jsdom");
+  const document = new JSDOM(renderToStaticMarkup(createElement(BoardView, {
+    board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+  }))).window.document;
+  assert.equal(document.querySelectorAll(".sq-open-issue").length, 9);
+  for (const row of document.querySelectorAll(".sq-open-issue")) {
+    assert.equal(row.querySelector(".sq-row-actions button")?.textContent, "Plan");
+    assert.ok(row.querySelector('[data-term="Work item"]'));
+  }
+});
 
 test("install, read the repo's Scope, sync a recorded workspace and read the real board through RPC", async (t) => {
   const linear = workspace();
@@ -199,7 +321,7 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
   }));
   assert.match(html, /<h2[^>]*>Open issues<\/h2>/, "the section uses the glossary's Open issue term");
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
-    "Doctor checks", "Linear webhooks", "Nothing is flying. Start a Ready spec to launch its lane.", "Start FIX-5"]) {
+    "Doctor checks", "Linear webhooks", "Nothing is flying. Start a Ready spec or work item to launch its lane.", "Start FIX-5"]) {
     assert.ok(html.includes(text), `the board shows ${text}`);
   }
   assert.equal((html.match(/<button[^>]*disabled=""[^>]*>Start<\/button>/g) ?? []).length, 1, "the blocked spec's Start button is disabled");

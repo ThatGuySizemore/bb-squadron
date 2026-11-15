@@ -65,11 +65,12 @@ const readyMarked = (issue: TrackerIssue) => labelNames(issue).includes(READY_FO
 const heldBy = (holdLabels: readonly string[]) => (issue: TrackerIssue) => isOpenIssue(issue) &&
   [...labelNames(issue), issue.state.name].some((name) => isHoldLabel(holdLabels, name));
 
-/** Open specs: top-level open issues that are marked ready, have open tickets, or are being planned. */
+/** Open specs: top-level open issues with tickets, including completed tickets. */
 export function openSpecs(snapshot: TrackerSnapshot, planningIssueIds: ReadonlySet<string>): TrackerIssue[] {
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
   return open.filter((issue) => issue.parentId === null &&
-    (readyMarked(issue) || planningIssueIds.has(issue.id) || open.some((ticket) => ticket.parentId === issue.id)));
+    (readyMarked(issue) || planningIssueIds.has(issue.id) || (issue.childCount ?? 0) > 0 ||
+      snapshot.issues.some((ticket) => ticket.parentId === issue.id)));
 }
 
 function createdTime(issue: TrackerIssue): number {
@@ -102,7 +103,14 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const held = heldBy(settings?.holdLabels ?? DEFAULT_HOLD_LABELS);
   const planning = new Map((input.planning ?? []).map((thread) => [thread.issueId, thread.threadId]));
   const ticketsOf = (spec: TrackerIssue) => open.filter((issue) => issue.parentId === spec.id);
-  const specs = openSpecs(snapshot, new Set(planning.keys()));
+  const totalTicketsOf = (spec: TrackerIssue) => Math.max(spec.childCount ?? 0,
+    snapshot.issues.filter((issue) => issue.parentId === spec.id).length);
+  // Completed children still belong to a spec. Never turn their parent into
+  // standalone work just because its last ticket closed.
+  const workItems = open.filter((issue) => issue.parentId === null &&
+    totalTicketsOf(issue) === 0);
+  const workItemIds = new Set(workItems.map((issue) => issue.id));
+  const specs = openSpecs(snapshot, new Set(planning.keys())).filter((issue) => !workItemIds.has(issue.id));
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const project = snapshot.project;
@@ -188,6 +196,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     }
     return {
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
+      totalTicketCount: Math.max(totalTicketsOf(spec), issues.length),
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
@@ -235,14 +244,14 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const marked = readyMarked(spec);
     const heldTickets = tickets.filter(held);
     const ticketBlockers = tickets.filter((ticket) => !held(ticket)).map(openBlockers);
-    const row = { id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length };
+    const row = { id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length, totalTicketCount: totalTicketsOf(spec) };
     // An open planning thread keeps a spec Shaping; Ready needs an open, unblocked ticket.
     if (planning.has(spec.id)) {
       shaping.push({ ...row, missing: "Planning is still open in its thread.", action: "resume", threadId: planning.get(spec.id)! });
     } else if (held(spec)) {
       shaping.push({ ...row, missing: "This spec is held. Clear its hold before Start.", action: "tickets" });
     } else if (!tickets.length) {
-      shaping.push({ ...row, missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" });
+      shaping.push({ ...row, missing: marked ? "Has the ready-for-agent label but no open tickets." : "No open tickets remain.", action: "tickets" });
     } else if (!marked) {
       shaping.push({ ...row, missing: `Has ${tickets.length} ${tickets.length === 1 ? "ticket" : "tickets"} but no ready-for-agent label.`, action: "tickets" });
     } else if (heldTickets.length === tickets.length) {
@@ -253,7 +262,12 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       shaping.push({ ...row, missing: `${which} waits on a blocker: ${ids.join(", ")}`, action: "tickets" });
     } else ready.push(readyRow(spec, tickets));
   }
-  function readyRow(spec: TrackerIssue, open: TrackerIssue[]): ReadySpec {
+  for (const item of workItems) {
+    if (readyMarked(item) && !held(item) && !planning.has(item.id) && !leads.has(item.id)) {
+      ready.push(readyRow(item, [], "work-item"));
+    }
+  }
+  function readyRow(spec: TrackerIssue, open: TrackerIssue[], kind: "spec" | "work-item" = "spec"): ReadySpec {
     // Held tickets don't run, so their routes and blockers don't hold the lane.
     const tickets = open.filter((ticket) => !held(ticket));
     const specBlockers = openBlockers(spec);
@@ -281,8 +295,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       startReason = input.doctor?.ready ? null : "Check Doctor before starting a lane.";
     }
     return {
-      id: spec.identifier, title: spec.title, url: spec.url, ticketCount: open.length,
-      routes: settings ? uniqueRoutes(tickets.map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
+      id: spec.identifier, title: spec.title, url: spec.url, kind, ticketCount: open.length,
+      totalTicketCount: totalTicketsOf(spec),
+      routes: settings ? uniqueRoutes((kind === "work-item" ? [spec] : tickets).map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
       ...(specBlockers.length ? { waitingFor: specBlockers } : {}),
       acceptOwner: labels(spec).includes(ACCEPT_OWNER),
@@ -291,7 +306,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       held: open.filter(held).map((ticket) => ({ id: ticket.identifier, title: ticket.title })),
     };
   }
-  const queueOrder = new Map(sortQueue(queueSpecs, snapshot).map((spec, index) => [spec.identifier, index]));
+  const queueOrder = new Map(sortQueue([...queueSpecs, ...workItems], snapshot).map((spec, index) => [spec.identifier, index]));
   ready.sort((a, b) => queueOrder.get(a.id)! - queueOrder.get(b.id)!);
   // Anything open that isn't a spec or one of its tickets waits here,
   // so no issue in the project's scope drops off the board.
@@ -304,10 +319,12 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     return `Under ${parent.identifier}`;
   };
   const openIssues: OpenIssue[] = open
-    .filter((issue) => !specIds.has(issue.id) && !(issue.parentId !== null && specIds.has(issue.parentId)))
+    .filter((issue) => !specIds.has(issue.id) && !(issue.parentId !== null && specIds.has(issue.parentId)) &&
+      !ready.some((row) => row.id === issue.identifier) && !leads.has(issue.id))
     .map((issue) => {
       const parent = under(issue);
-      return { id: issue.identifier, title: issue.title, url: issue.url, labels: labels(issue), ...(parent ? { under: parent } : {}) };
+      return { id: issue.identifier, title: issue.title, url: issue.url, labels: labels(issue),
+        ...(workItemIds.has(issue.id) ? { kind: "work-item" as const } : {}), ...(parent ? { under: parent } : {}) };
     });
   let status: TrackerStatus["state"];
   let message: string;

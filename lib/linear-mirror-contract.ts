@@ -7,6 +7,7 @@ export const mirrorIssueSchema = z.object({
   id, identifier: z.string(), title: z.string(), description: z.string().nullable(), url: z.string(),
   sortOrder: z.number().optional(), priority: z.number().optional(), createdAt: z.string().optional(),
   updatedAt: z.string(), teamId: id, projectId: id.nullable(), parentId: id.nullable(),
+  childCount: z.number().int().nonnegative().optional(),
   state: mirrorStateSchema, labels: z.array(mirrorLabelSchema),
   assignees: z.array(z.object({ id, name: z.string() })).optional(),
   // Matches the project's Scope, including closed issues. Relation endpoints

@@ -10,6 +10,8 @@ export const trackerIssueSchema = z.object({
   trackerOrder: z.number().optional(),
   sortOrder: z.number().optional(), priority: z.number().optional(), createdAt: z.string().optional(),
   updatedAt: z.string(), parentId: z.string().nullable(),
+  /** All direct children, including closed ones the open issue walk omits. */
+  childCount: z.number().int().nonnegative().optional(),
   state: trackerStateSchema, labels: z.array(trackerLabelSchema), assignees: z.array(trackerAssigneeSchema),
   /** Membership, including closed issues. External blocker endpoints are false. */
   inProject: z.boolean(),

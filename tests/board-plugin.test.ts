@@ -111,7 +111,7 @@ test("a Ready spec counts completed tickets in its tag while keeping the open co
   const linear = workspace({ issues: () => Response.json({ data: { issues: {
     ...workspaceIssues.data.issues,
     nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-5"
-      ? { ...node, childSummary: { totalCount: 2 } } : node),
+      ? { ...node, childSummary: { nodes: [{ id: "open-child" }, { id: "closed-child" }], pageInfo: { hasNextPage: false } } } : node),
   } } }) });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const { bb, harness } = host();
@@ -137,7 +137,7 @@ test("held, unfinished and actively planned work items stay in Open issues with 
     ...workspaceIssues.data.issues.nodes, ...additions,
     { ...loose, id: "fix-16", identifier: "FIX-16", labels: { ...loose.labels, nodes: [readyLabel] }, state: { ...loose.state, name: "needs-info" } },
     { ...loose, id: "fix-17", identifier: "FIX-17", labels: { ...loose.labels, nodes: [readyLabel] } },
-    { ...loose, id: "fix-18", identifier: "FIX-18", labels: { ...loose.labels, nodes: [readyLabel] }, childSummary: { totalCount: 1 } },
+    { ...loose, id: "fix-18", identifier: "FIX-18", labels: { ...loose.labels, nodes: [readyLabel] }, childSummary: { nodes: [{ id: "closed-child" }], pageInfo: { hasNextPage: false } } },
   ] } } }) });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const { bb, harness } = host();

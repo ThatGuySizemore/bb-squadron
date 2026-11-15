@@ -21,7 +21,7 @@ const reference = z.object({
   updatedAt: z.string().datetime(), team: z.object({ id: z.string() }), project: z.object({ id: z.string() }).nullable(),
   parent: z.object({ id: z.string() }).nullable(), state: mirrorStateSchema,
   assignee: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
-  childSummary: z.object({ totalCount: z.number().int().nonnegative() }).optional(),
+  childSummary: z.object({ nodes: z.array(z.object({ id: z.string() })), pageInfo: z.object({ hasNextPage: z.boolean() }) }).optional(),
 });
 const issueNode = reference.extend({ labels: connection(mirrorLabelSchema) });
 const self = z.object({ id: z.string() });
@@ -300,7 +300,8 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
         ...(node.priority !== undefined ? { priority: node.priority } : {}),
         ...(node.createdAt !== undefined ? { createdAt: node.createdAt } : {}),
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
-        ...(node.childSummary ? { childCount: node.childSummary.totalCount }
+        // One beyond the page is a lower bound, not an exact total.
+        ...(node.childSummary ? { childCount: node.childSummary.nodes.length + (node.childSummary.pageInfo.hasNextPage ? 1 : 0) }
           : existing?.childCount !== undefined ? { childCount: existing.childCount } : {}),
         state: node.state, labels: labels ?? existing?.labels ?? [],
         assignees: node.assignee === undefined ? existing?.assignees ?? [] : node.assignee ? [node.assignee] : [],

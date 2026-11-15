@@ -53,7 +53,7 @@ _Avoid_: Helper for the orchestrator or plugin code → Squadron
 
 **Trigger**: An event or owner action that starts a task, such as pressing Plan or Start on the board.
 
-**Run**: One execution of a task. A lane is a run of the `implement-spec` task, carried out by a Lead with workers, on one integration branch with one pull request.
+**Run**: One execution of a task. A spec lane runs `implement-spec`, carried out by a Lead with workers. A work item lane runs `implement` in one standalone thread. Each uses one branch and one pull request.
 
 **Runner**: What executes a task. For an `implement-spec` run, this is the Lead's agent thread in BB.
 
@@ -76,7 +76,7 @@ _Avoid_: builder, implementer, subagent → Worker
 
 **Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its pull request merges.
 
-**Planning thread**: A thread started from the Plan button that runs `grill-with-docs`, then `to-spec` and `to-tickets`, with the owner.
+**Planning thread**: A thread started from the Plan button that runs `grill-with-docs` with the owner. Multi-ticket specs continue through `to-spec` and `to-tickets`; one-piece work becomes a work item.
 
 **Blocker**: An issue that must be Done before another may start, as recorded in the repo's ticket tracker.
 _Avoid_: dependency in owner-facing copy, prerequisite → Blocker

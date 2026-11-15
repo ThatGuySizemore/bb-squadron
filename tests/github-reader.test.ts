@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -109,6 +110,7 @@ test("Doctor rejects a github.com-only login for the checkout's enterprise host 
 test("the tracker reader selects GitHub on the selected project's host without a Linear binding", async () => {
   const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, recorded));
   const { bb, harness } = createFakePluginHost({ experimental_hostEntry: true, sdk: {
+      providers: fixtureProviders,
     projects: { get: async () => ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
       sources: [{ id: "source", projectId: "project", hostId: "repo-host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
     files: { read: async ({ path }) => ({ content: path.endsWith("issue-tracker.md") ? "# Issue tracker: GitHub" : "", contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: 0 }) },
@@ -163,6 +165,7 @@ test("a failed or partial gh read preserves the last complete snapshot and the r
     return recorded(command, args, options);
   }));
   const { bb, harness } = createFakePluginHost({ experimental_hostEntry: true, sdk: {
+      providers: fixtureProviders,
     projects: { get: async () => {
       if (!sourceAvailable) throw new Error("private offline diagnostic");
       return ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,

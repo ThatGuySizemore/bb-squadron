@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 // SIZE-953: Set up, and seeing a board before starting. The real server.ts on
 // the SDK's fake plugin host, with recorded Linear responses.
 import { test, mock } from "node:test";
@@ -8,6 +9,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import plugin from "../server.js";
 import { needsYou, type Board } from "../lib/board-model.js";
 import { parseSquadronSettings, SETTINGS_UNREADABLE } from "../lib/squadron-settings.js";
+import { house } from "./fixtures/model-routes.js";
 import { DEFAULT_SQUADRON_TEMPLATE } from "../lib/squadron-template.js";
 import { workspace } from "./fixtures/board-workspace.js";
 
@@ -23,6 +25,7 @@ function host(options: { setupFiles: string[]; timeout?: boolean }) {
     pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-setup-key" },
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async ({ projectId }) => ({
         id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId, hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
@@ -128,6 +131,6 @@ test("Set up refuses calls that don't come from the board", async (t) => {
 
 test("the default squadron.md template is valid settings for every tracker", () => {
   for (const kind of ["linear", "github", "local-markdown"] as const) {
-    assert.equal(parseSquadronSettings(DEFAULT_SQUADRON_TEMPLATE, kind).ok, true, kind);
+    assert.equal(parseSquadronSettings(DEFAULT_SQUADRON_TEMPLATE, kind, house).ok, true, kind);
   }
 });

@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -10,6 +11,7 @@ import { createDoctorHost } from "../host.js";
 import plugin from "../server.js";
 import type { Board } from "../lib/board-model.js";
 import { canMerge } from "../lib/board-model.js";
+import { withoutLaunch } from "./fixtures/launch.js";
 
 function git(root: string, ...args: string[]) {
   return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -44,6 +46,7 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const metadata = new Map<string, Record<string, unknown>>();
   const { bb, harness } = createFakePluginHost({ pluginId: "squadron", experimental_hostEntry: true, sdk: {
+      providers: fixtureProviders,
     projects: { list: async () => [{ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }],
       get: async () => ({ id: "project", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
       sources: [{ id: "source", projectId: "project", hostId: "repo-host", path: root, isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
@@ -68,6 +71,7 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
     },
   }, experimental_callHostRpc: async ({ method, input, hostId }) => {
     assert.equal(hostId, "repo-host");
+    if (method === "readModelRoutes") return { markdown: null, policy: null };
     if (method === "inspectFiles") return { homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
       regularSkillFiles: (input as { skillPaths: string[] }).skillPaths };
@@ -109,7 +113,7 @@ test("Start in GitHub uses the recorded reader and seeds the Lead with the repo'
   const seed = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string; pluginMetadata: unknown };
   assert.match(seed.prompt, /Spec: https:\/\/github.example\/fixture\/repo\/issues\/1/);
   assert.match(seed.prompt, /docs\/agents\/issue-tracker\.md/);
-  assert.deepEqual(seed.pluginMetadata, { role: "lead", specId: "I_1", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(seed.pluginMetadata, { role: "Lead", launchedBy: "owner", specId: "I_1" }), { role: "lead", specId: "I_1", startedBy: "owner" });
   assert.deepEqual((await board()).lanes[0]?.tickets.map(({ id, state }) => [id, state]).sort((a, b) => a[0].localeCompare(b[0])),
     [["#2", "working"], ["#3", "done"], ["#4", "working"], ["#5", "blocked"]]);
 });

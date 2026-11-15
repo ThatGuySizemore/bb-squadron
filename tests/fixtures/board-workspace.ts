@@ -60,6 +60,8 @@ export function workspace(options: {
   issues?: () => Response; vocabulary?: () => Response;
   /** A lane spec read by id, with its completed sub-issues. Defaults to the open fixture spec and none. */
   laneSpec?: (id: string) => Response;
+  /** A ticket read by ID for the run report and checkpoint. Defaults to Linear's answer for an unknown ID. */
+  ticketHistory?: (id: string, variables: Record<string, unknown>) => Response;
 } = {}) {
   const operations: string[] = [];
   const seen = new Map<string, { team?: { id: string }; project?: { id: string } | null }>();
@@ -102,6 +104,8 @@ export function workspace(options: {
         const spec = workspaceIssues.data.issues.nodes.find((issue) => issue.id === id);
         return Response.json({ data: { issue: spec ? { ...spec, children: none } : null } });
       }
+      case "SquadronTicketHistory": return options.ticketHistory
+        ? options.ticketHistory(String(variables?.id), variables ?? {}) : Response.json({ data: { issue: null } });
       case "SquadronVocabulary": return options.vocabulary ? options.vocabulary() : Response.json(vocabularyResponse);
       default: throw new Error(`Unexpected Linear query ${name}`);
     }

@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 // SIZE-953: the board's project picker, its remembered pick and per-project
 // polling, on the SDK's fake plugin host with recorded Linear responses.
 import { test, mock } from "node:test";
@@ -42,6 +43,7 @@ function host() {
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"], regularSkillFiles: [],
     },
     sdk: {
+      providers: fixtureProviders,
       skills: { list: async () => ({ skills: [] }) },
       projects: {
         list: async () => projects.map(({ id }) => response(id)),

@@ -4,13 +4,30 @@ import { liveStepSchema } from "./live-step.js";
 import { z } from "zod";
 import { doctorReportSchema } from "./doctor-contract.js";
 import { trackerKindSchema } from "./tracker-contract.js";
+import { launchRouteSchema, reportedRouteSchema, type LaunchRoute, type ReportedRoute } from "./launch-route.js";
 
-const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
+export { launchRouteSchema, reportedRouteSchema, type LaunchRoute, type ReportedRoute };
+
+const route = z.object({ family: z.enum(["claude", "gpt", "unknown"]), providerId: z.string().optional(), model: z.string(), effort: z.string(), role: z.string().optional(), overrideNote: z.string().optional(),
+  /** BB's service tier, when read from a running thread. */
+  serviceTier: z.string().optional() });
+/** A thread's launch record beside what BB reports it runs. Derived on read, never stored. */
+const launchView = z.object({
+  role: z.string(), category: z.string().nullable(), policyResolved: z.boolean(),
+  requested: launchRouteSchema, reported: reportedRouteSchema.nullable(),
+  /** Fields where BB reports something other than the request. */
+  mismatch: z.array(z.enum(["providerId", "model", "effort", "serviceTier"])),
+  verification: z.enum(["verified", "mismatch", "unknown"]),
+  escalation: z.object({ kind: z.enum(["effort", "model"]), reason: z.string() }).nullable(),
+  replacesThreadId: z.string().nullable(),
+});
 const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "held", "ready", "working", "question", "review", "branch", "failed", "done"]),
   liveStep: liveStepSchema.optional(),
   minutes: z.number(), threadId: z.string().optional(), question: z.string().optional(), failure: z.string().optional(),
+  /** The worker thread's launch record, when it was launched through squadron launch. */
+  launch: launchView.optional(),
 });
 const lane = z.object({
   /** Absent on older/demo snapshots means spec; RPC field names stay shared. */
@@ -19,6 +36,8 @@ const lane = z.object({
   totalTicketCount: z.number().int().nonnegative().optional(),
   liveStep: liveStepSchema.optional(),
   specId: z.string(), title: z.string(), lead: route, leadThreadId: z.string(), branch: z.string(),
+  /** The Lead's launch record and BB's report of it; absent for Leads launched before records. */
+  launch: launchView.optional(),
   state: z.enum(["flying", "stopped", "spec-review", "pr-open", "merge-waits", "landed"]),
   /** A confirmed stop or unavailable idle lifecycle, independent of the PR state. Derived only. */
   stopped: z.boolean().optional(),
@@ -38,8 +57,12 @@ const lane = z.object({
   stopReason: z.string().optional(), landedAt: z.number().optional(),
   /** Latest thread update for a stop, or merge time for a landing; orders newly observed outcomes. */
   outcomeAt: z.number().optional(),
-  /** Who runs the lane's final review, from the final-review family. */
+  /** Who runs the lane's final review, chosen from who built the branch. Absent when no reviewer can be chosen. */
   reviewer: route.optional(),
+  /** The launched final review child's record beside what BB reports it runs, so a substitution stays visible. */
+  reviewerLaunch: launchView.optional(),
+  /** Which work the reviewer is independent of, or why none could be chosen, in owner words. */
+  finalReview: z.string().optional(),
   /** The spec in its planning tracker. */
   url: z.string().optional(),
   /** Child threads of the Lead that match no ticket, so no thread is hidden. */
@@ -94,6 +117,7 @@ const boardSchema = z.object({
 
 export { boardSchema };
 export type Route = z.infer<typeof route>;
+export type LaunchView = z.infer<typeof launchView>;
 export type Family = Route["family"];
 export type Ticket = z.infer<typeof ticket>;
 export type TicketState = Ticket["state"];
@@ -254,12 +278,16 @@ export function otherFamily(family: Family): Family {
   return family === "claude" ? "gpt" : "claude";
 }
 
-/** The final reviewer: the Lead's own route for "same", else the first route of the other family. */
-export function reviewerFor(lead: Route, finalReviewFamily: "other" | "same", routes: readonly Route[]): Route {
-  if (finalReviewFamily === "same") return lead;
-  const family = otherFamily(lead.family);
-  return routes.find((route) => route.family === family)
-    ?? { family, model: family === "claude" ? "Claude" : "GPT", effort: lead.effort };
+/**
+ * The demo board's stand-in reviewer, from its own ticket routes: the other family to most tickets.
+ * Live lanes carry the reviewer lib/final-reviewer.ts chooses from recorded builders.
+ */
+export function demoReviewer(routes: readonly Route[]): Route | null {
+  const claude = routes.filter((route) => route.family === "claude").length;
+  const gpt = routes.filter((route) => route.family === "gpt").length;
+  if (!claude && !gpt) return null;
+  const family = otherFamily(claude >= gpt ? "claude" : "gpt");
+  return routes.find((route) => route.family === family) ?? { family, model: family === "claude" ? "Claude" : "GPT", effort: "high" };
 }
 
 export function formatMinutes(minutes: number): string {

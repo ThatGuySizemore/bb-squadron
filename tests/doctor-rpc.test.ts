@@ -1,3 +1,5 @@
+import { fixtureProviderCatalog } from "./fixtures/provider-catalog.js";
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -22,6 +24,7 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
   return createFakePluginHost({
     experimental_hostEntry: true,
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async () => ({
         id: "project", name: "Demo", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId: "project", hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
@@ -51,6 +54,7 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
         return { authenticated: options.unknownLogin ? null : options.gh ?? true };
       }
       if (method === "codexMattSkills") return { skills: options.codex ?? [] };
+      if (method === "readModelRoutes") return { markdown: null, policy: null };
       assert.equal(method, "inspectFiles");
       assert.equal((input as { checkoutPath: string }).checkoutPath, "/repo");
       return {
@@ -153,6 +157,7 @@ test("an unavailable selected environment does not borrow the project's default 
   const { bb, harness } = createFakePluginHost({
     experimental_hostEntry: true,
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async () => ({
         id: "project", name: "Demo", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId: "project", hostId: "default-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
@@ -207,7 +212,7 @@ test("nothing the Doctor RPC returns uses a retired word", async () => {
 test("the Doctor's settings fixes for a Linear repo use owner words", async () => {
   const { retiredTerms } = await import("./fixtures/owner-text.js");
   const { doctor } = await import("../lib/doctor.js");
-  const base = { skills: {}, setupFiles: [], issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8"), linearConnected: true, ghAuthenticated: true, configurationFiles: [] };
+  const base = { providerCatalog: fixtureProviderCatalog, skills: {}, setupFiles: [], issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8"), linearConnected: true, ghAuthenticated: true, configurationFiles: [] };
   const noMapping = fixture.replace(/## Status mapping[\s\S]*/, "");
   const badMapping = fixture.replace(/## Status mapping[\s\S]*/, "## Status mapping\n\n| State | Linear status |\n|---|---|\n| Ready | Todo |\n");
   for (const settingsMarkdown of [null, fixture, noMapping, badMapping]) {
@@ -216,4 +221,17 @@ test("the Doctor's settings fixes for a Linear repo use owner words", async () =
     // The owner still learns that a Linear repo lists which Linear status each state uses.
     if (settingsMarkdown !== fixture) assert.match(settings.message, /Linear status/, settings.message);
   }
+});
+
+test("Doctor names a fix when House rules can't be read instead of showing default policy", async () => {
+  const { bb, harness } = host({ failedMethods: ["readModelRoutes"] });
+  try {
+    registerDoctor(bb, async () => ({ status: "connected" }));
+    const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+    const settings = report.checks.find((check) => check.id === "settings")!;
+    assert.equal(settings.status, "fix");
+    assert.match(settings.message, /Couldn't read House rules/);
+    assert.equal(report.ready, false);
+    assert.equal(report.policy, undefined, "no default policy is shown for unreadable House rules");
+  } finally { await harness.lifecycle.dispose(); }
 });

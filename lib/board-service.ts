@@ -11,6 +11,7 @@ import { boardChanged, publishSquadronSignal, onSquadronSignal } from "./realtim
 import { deriveBoard, type BoardInput, type PlanningThread } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
+import type { ProviderModels } from "./model-capabilities.js";
 import type { SettingsResult } from "./squadron-settings.js";
 import type { DoctorReport } from "./doctor.js";
 import type { LeadThread } from "./lead-threads.js";
@@ -59,7 +60,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     /** When a page last read this project, for a fresh read when it reopens. */
     shownAt?: number;
     connection?: { at: number; value: BoardInput["connection"] };
-    settings?: { at: number; value: SettingsResult | null };
+    settings?: { at: number; value: SettingsResult | null; catalog?: ProviderModels[] };
     doctor?: { at: number; value: DoctorReport };
     /** The refresh in progress, and whether another signal arrived during it. */
     refreshing?: Promise<void>;
@@ -83,9 +84,11 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     }
   }
 
-  async function readSettings(projectId: string, signal: AbortSignal): Promise<SettingsResult | null> {
-    try { return (await readProjectCheckout(bb, projectId, signal))?.settings ?? null; }
-    catch { return null; }
+  async function readSettings(projectId: string, signal: AbortSignal): Promise<{ value: SettingsResult | null; catalog?: ProviderModels[] }> {
+    try {
+      const checkout = await readProjectCheckout(bb, projectId, signal);
+      return { value: checkout?.settings ?? null, catalog: checkout?.providerCatalog };
+    } catch { return { value: null }; }
   }
 
   async function connection(projectId: string): Promise<BoardInput["connection"]> {
@@ -101,7 +104,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const at = now();
     const snapshot = await sources.tracker.getSnapshot(projectId);
     if (snapshot.kind === "linear" && (fresh || !entry.connection || at - entry.connection.at > REUSE_MS)) entry.connection = { at, value: await connection(projectId) };
-    if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, value: await readSettings(projectId, lifetime.signal) };
+    if (fresh || !entry.settings || at - entry.settings.at > REUSE_MS) entry.settings = { at, ...await readSettings(projectId, lifetime.signal) };
     if (sources.doctor && (fresh || !entry.doctor || at - entry.doctor.at > REUSE_MS)) entry.doctor = { at, value: await sources.doctor(projectId, lifetime.signal) };
     const planning = await sources.planning?.(projectId);
     const leads = await lanesOf(projectId, snapshot, planning);
@@ -117,7 +120,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     const pullRequests = checkEnvironments.length ? await sources.pullRequests?.(checkEnvironments, lifetime.signal) : undefined;
     const { board } = deriveBoard({
       snapshot, connection: snapshot.kind === "linear" ? entry.connection!.value : { status: "connected", message: "" },
-      settings: entry.settings.value, now: now(),
+      settings: entry.settings.value, providerCatalog: entry.settings.catalog, now: now(),
       doctor: entry.doctor?.value,
       leads, planning,
       ...progress,

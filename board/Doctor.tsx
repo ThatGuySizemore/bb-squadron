@@ -26,8 +26,39 @@ export function DoctorChecks({ report }: { report: DoctorReport }) {
         </li>
       ))}
     </ul>
+    {report.routes ? <>
+      <p className="sq-doctor-files-title">Model routes</p>
+      <ul className="sq-doctor-settings" aria-label="Model routes">
+        {report.routes.map((row) => (
+          <li key={`${row.role}:${row.category ?? ""}`} data-status={row.problem ? "fix" : row.note ? "warning" : "pass"}>
+            <span className="sq-doctor-name">{row.category ? `${row.role} for ${row.category} tickets` : row.role}</span>
+            <span className="sq-doctor-value">{row.route ? routeWords(row.route) : "Not set"}</span>
+            {row.problem || row.note ? <p>{row.problem ?? row.note}</p> : null}
+          </li>
+        ))}
+      </ul>
+    </> : null}
+    {report.policy ? <>
+      <p className="sq-doctor-files-title">Squadron policy</p>
+      <ul className="sq-doctor-settings" aria-label="Squadron policy">
+        {report.policy.map((row) => (
+          <li key={row.setting} data-status={row.source === "default" ? "warning" : "pass"}>
+            <span className="sq-doctor-name">{row.setting}</span>
+            <span className="sq-doctor-value">{row.value} <span className="sq-tag">{row.source === "default" ? "Default" : "House rules"}</span></span>
+            {row.source === "default" ? <p>House rules doesn't set this, so Squadron uses its default.</p> : null}
+          </li>
+        ))}
+      </ul>
+    </> : null}
     </>
   );
+}
+
+/** Provider, model, effort and tier in the words the Doctor shows; BB's defaults are named as such. */
+function routeWords(route: NonNullable<NonNullable<DoctorReport["routes"]>[number]["route"]>): string {
+  const model = route.providerId && route.model ? `${route.providerId} · ${route.model}` : "BB's default model";
+  const effort = route.effort === "default" ? "BB's default effort" : `${route.effort} effort`;
+  return `${model} · ${effort} · ${route.serviceTier} tier`;
 }
 
 export function DoctorPanel({ open, id, projectId: chosen }: { open: boolean; id: string; projectId?: string | null }) {

@@ -6,7 +6,30 @@ export interface SquadronRoute extends Route {
   label: string | null;
 }
 
+export const MODEL_ROLES = ["Lead", "Worker", "Worker (hard)", "Planning", "Planning (hard)", "Review of claude-code", "Review of codex", "Mechanical"] as const;
+export type ModelRole = typeof MODEL_ROLES[number];
+
+/** The owner's Squadron policy from House rules. The two-strike stop and carrying counts and budgets over are fixed, not settings. */
+export interface SquadronPolicy {
+  escalation: "diagnose first" | "retry";
+  lowEffort: "mechanical only" | "off";
+  /** Completed routine tickets between observation reports; null means none. */
+  checkpoint: number | null;
+}
+export const DEFAULT_POLICY: SquadronPolicy = { escalation: "retry", lowEffort: "off", checkpoint: null };
+export const POLICY_SETTINGS = [
+  { key: "escalation", name: "Escalation", values: ["diagnose first", "retry"] },
+  { key: "lowEffort", name: "Low effort", values: ["mechanical only", "off"] },
+  { key: "checkpoint", name: "Checkpoint", values: [] },
+] as const;
+export type PolicySource = "House rules" | "default";
+
 export interface SquadronSettings {
+  /** Resolved Squadron policy; every unset setting holds its default. */
+  policy: SquadronPolicy;
+  policySource: Record<keyof SquadronPolicy, PolicySource>;
+  modelRoutes?: Partial<Record<ModelRole, Route>>;
+  routeDefaults?: "house-rules";
   quickCheck: string;
   /** Optional preparation command for the isolated merged-main check only. */
   checkSetup?: string;
@@ -57,9 +80,10 @@ export interface LinearScope { team?: string; project?: string; initiative?: str
 export const SCOPE_KEYS = ["Team", "Project", "Initiative", "Label", "View"] as const;
 export type ScopeKey = typeof SCOPE_KEYS[number];
 export const SETTINGS_UNREADABLE = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
+export const HOUSE_RULES_UNREADABLE = "Couldn't read House rules (~/.bb-squadron/house-rules.md). Squadron won't use default routes or policy in its place. Make sure this repo's machine is online and the file is readable, then check again.";
 export const SCOPE_MISSING = "Add the Scope section to docs/agents/squadron.md, naming at least one of Team, Project, Initiative, Label or View.";
 
-export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels";
+export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels" | "Squadron policy";
 export interface SettingsIssue { section: SettingsSection; message: string }
 export type SettingsResult =
   | { ok: true; settings: SquadronSettings }
@@ -78,6 +102,8 @@ function sections(markdown: string): Map<string, string> {
   }
   return result;
 }
+
+export function markdownSection(markdown: string, heading: string): string | undefined { return sections(markdown).get(heading); }
 
 function table(body: string): string[][] {
   return body.split("\n").filter((line) => line.trim().startsWith("|"))
@@ -104,8 +130,41 @@ export function parseLinearScope(markdown: string): { ok: true; scope: LinearSco
   return Object.keys(scope).length ? { ok: true, scope } : { ok: false, message: SCOPE_MISSING };
 }
 
+/**
+ * House rules `## Squadron policy`, a Setting / Value table read like Model routes. A missing file, section or row keeps its default;
+ * an unknown setting or value is an issue that names it, so Doctor and Start refuse rather than guess.
+ */
+export function parseSquadronPolicy(houseRulesMarkdown?: string | null): {
+  ok: true; policy: SquadronPolicy; source: Record<keyof SquadronPolicy, PolicySource>;
+} | { ok: false; issues: SettingsIssue[] } {
+  const policy: SquadronPolicy = { ...DEFAULT_POLICY };
+  const source: Record<keyof SquadronPolicy, PolicySource> = { escalation: "default", lowEffort: "default", checkpoint: "default" };
+  const issues: SettingsIssue[] = [];
+  const fail = (message: string) => issues.push({ section: "Squadron policy", message: `House rules Squadron policy: ${message}` });
+  const body = sections(houseRulesMarkdown ?? "").get("Squadron policy");
+  const seen = new Set<string>();
+  for (const [rawName = "", rawValue = "", ...extra] of table(body ?? "")) {
+    const unquote = (cell: string) => cell.replace(/^`(.*)`$/, "$1").trim();
+    const name = unquote(rawName);
+    const value = unquote(rawValue).toLowerCase();
+    const setting = POLICY_SETTINGS.find((entry) => entry.name.toLowerCase() === name.toLowerCase());
+    if (!setting) { fail(`unknown setting ${name || "(empty)"}. Use Escalation, Low effort or Checkpoint.`); continue; }
+    if (seen.has(setting.key) || extra.length) { fail(`${setting.name} is malformed or set twice. Set it once, with one value.`); continue; }
+    seen.add(setting.key);
+    if (setting.key === "checkpoint") {
+      if (/^[1-9]\d*$/.test(value) && Number.isSafeInteger(Number(value))) { policy.checkpoint = Number(value); source.checkpoint = "House rules"; }
+      else fail(`Checkpoint ${value ? `"${unquote(rawValue)}"` : "has no value"}; use a positive whole number, or remove the row for none.`);
+      continue;
+    }
+    const allowed: readonly string[] = setting.values;
+    if (allowed.includes(value)) { (policy as unknown as Record<string, string>)[setting.key] = value; source[setting.key] = "House rules"; }
+    else fail(`${setting.name} ${value ? `"${unquote(rawValue)}"` : "has no value"}; use ${allowed.join(" or ")}, or remove the row for the default.`);
+  }
+  return issues.length ? { ok: false, issues } : { ok: true, policy, source };
+}
+
 /** Read the repo-owned Markdown without executing its quick check. */
-export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind = detectTracker(null, markdown).kind ?? "linear"): SettingsResult {
+export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind = detectTracker(null, markdown).kind ?? "linear", houseRulesMarkdown?: string | null): SettingsResult {
   const parts = sections(markdown);
   const issues: SettingsIssue[] = [];
   for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping", "Scope"] as const) {
@@ -124,18 +183,20 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
     const match = /^(\d+)\s*(h|m|s)$/.exec(value ?? "");
     return match ? Number(match[1]) * ({ h: 3_600_000, m: 60_000, s: 1_000 }[match[2]] ?? 0) : 0;
   };
-  const routeRows = table(parts.get("Routes") ?? "");
-  const routes = routeRows.map(([label = "", family = "", model = "", effort = ""]) => ({
-    label: label === "(default)" ? null : label.replace(/^`|`$/g, ""),
-    family: family.toLowerCase() as Route["family"], model, effort: effort as Route["effort"],
-  }));
+  const routing = parseRoutes(parts.get("Routes") ?? "", houseRulesMarkdown);
+  issues.push(...routing.issues);
+  const policy = parseSquadronPolicy(houseRulesMarkdown);
+  if (!policy.ok) issues.push(...policy.issues);
+  const routes = routing.routes;
   const settings: SquadronSettings = {
+      policy: policy.ok ? policy.policy : { ...DEFAULT_POLICY }, policySource: policy.ok ? policy.source : { escalation: "default", lowEffort: "default", checkpoint: "default" },
       quickCheck, stopList,
       ...(checkSetup ? { checkSetup } : {}),
       limits: {
         laneTimeLimitMs: duration(values.get("Lane time limit")), workerTimeLimitMs: duration(values.get("Worker time limit")),
       },
       routes,
+      ...(routing.modelRoutes ? { modelRoutes: routing.modelRoutes, routeDefaults: "house-rules" as const } : {}),
       finalReviewFamily: "other",
       statusMapping: {
         lane: { ready: "Todo", flying: "In Progress", inReview: "In Review", landed: "Done" },
@@ -149,11 +210,6 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   if (!stopList.length) issues.push({ section: "Stop list", message: "List the problems that stop a merge under Stop list." });
   if (Object.values(settings.limits).some((value) => !Number.isSafeInteger(value) || value <= 0)) {
     issues.push({ section: "Time limits", message: "Set positive durations such as 8 h for both lane and worker time limits." });
-  }
-  if (!routes.length || routes.filter((row) => row.label === null).length !== 1 ||
-    routeRows.some((row) => row.length !== 4) ||
-    routes.some((row) => row.label === "" || !["claude", "gpt"].includes(row.family) || !row.model || !["medium", "high"].includes(row.effort))) {
-    issues.push({ section: "Routes", message: "Set each route's label, Claude or GPT family, model and medium or high effort. Include one (default) row." });
   }
   const finalReview = (parts.get("Final review") ?? "").trim().toLowerCase();
   if (finalReview === "other" || finalReview === "same") settings.finalReviewFamily = finalReview;
@@ -187,15 +243,99 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
 
 /** Matching labels keep file order and ignore case; the default is used only when none match. */
 export function resolveRoute(settings: SquadronSettings, labels: readonly string[]): Route {
+  return routeValue(matchRoute(settings, labels));
+}
+
+/** The route row a ticket's labels select, keeping its label: null for the default (Worker) row. */
+export function matchRoute(settings: SquadronSettings, labels: readonly string[]): SquadronRoute {
   const names = new Set(labels.map((label) => label.toLowerCase()));
-  const row = settings.routes.find((route) => route.label !== null && route.label.toLowerCase() !== "lead" && names.has(route.label.toLowerCase()))
+  const row = settings.routes.find((route) => route.label !== null && route.role === undefined && route.label.toLowerCase() !== "lead" && names.has(route.label.toLowerCase()))
     ?? settings.routes.find((route) => route.label === null);
   if (!row) throw new Error("Add a default route to docs/agents/squadron.md.");
-  return { family: row.family, model: row.model, effort: row.effort };
+  return row;
 }
 
 /** An explicit Lead row overrides spec labels; older settings keep their label-based routing. */
 export function resolveLeadRoute(settings: SquadronSettings, labels: readonly string[]): Route {
   const row = settings.routes.find((route) => route.label?.toLowerCase() === "lead");
-  return row ? { family: row.family, model: row.model, effort: row.effort } : resolveRoute(settings, labels);
+  return row ? routeValue(row) : resolveRoute(settings, labels);
+}
+
+/** Keep policy role identity for launch recording without conflating it with ticket labels. */
+export function resolveRoleRoute(settings: SquadronSettings, role: ModelRole): Route {
+  const route = settings.modelRoutes?.[role] ?? settings.routes.find((row) => row.role === role);
+  if (!route) throw new Error(`Add the ${role} row to House rules Model routes.`);
+  return "label" in route ? routeValue(route as SquadronRoute) : { ...route };
+}
+
+function routeValue({ label: _label, ...route }: SquadronRoute): Route { return route; }
+export const providerFor = (route: Route): string => route.providerId ?? (route.family === "claude" ? "claude-code" : "codex");
+export const familyForProvider = (provider: string): Route["family"] => provider === "claude-code" ? "claude" : provider === "codex" ? "gpt" : "unknown";
+
+function parseRoutes(body: string, houseRulesMarkdown?: string | null): {
+  routes: SquadronRoute[]; modelRoutes?: Partial<Record<ModelRole, Route>>; issues: SettingsIssue[];
+} {
+  const issues: SettingsIssue[] = [];
+  const fail = (message: string) => issues.push({ section: "Routes", message });
+  const shared = /^Defaults: House rules\s*$/m.test(body);
+  const rows = table(body);
+  const header = body.split("\n").find((line) => line.trim().startsWith("|")) ?? "";
+  const providerColumn = /\|\s*Provider\s*\|/i.test(header);
+  const noteColumn = /\|\s*Note\s*\|/i.test(header);
+  const routes: SquadronRoute[] = [];
+  const overrides = new Set<ModelRole>();
+  const modelRoutes: Partial<Record<ModelRole, Route>> = {};
+  function readRoute(name: string, provider: string, model: string, effort: string, legacy: boolean): Route {
+    if (legacy && !["medium", "high"].includes(effort)) fail(`Route ${name}: legacy Family tables use medium or high effort; use Provider for other advertised levels.`);
+    if (legacy) provider = provider.toLowerCase() === "claude" ? "claude-code" : provider.toLowerCase() === "gpt" ? "codex" : "";
+    if (!name || !provider || !model || !effort) fail(`Route ${name || "(empty)"}: name a provider, model and effort.`);
+    if (effort === "low" && name !== "Mechanical") fail(`Route ${name}: low effort is allowed only for Mechanical.`);
+    if (name.startsWith("Review") && familyForProvider(provider) === "unknown") fail(`Route ${name}: provider ${provider} has no known review family.`);
+    return { family: familyForProvider(provider), model, effort, ...(!legacy || shared ? { providerId: provider } : {}) };
+  }
+  if (shared) {
+    const policy = sections(houseRulesMarkdown ?? "").get("Model routes");
+    if (policy === undefined) fail("Defaults: House rules requires a Model routes table in House rules.");
+    else {
+      const policyRows = table(policy);
+      if (!/\|\s*Role\s*\|\s*Provider\s*\|\s*Model\s*\|\s*Effort\s*\|/.test(policy)) fail("House rules Model routes needs Role, Provider, Model and Effort columns.");
+      for (const [name = "", provider = "", model = "", effort = "", ...extra] of policyRows) {
+        if (!MODEL_ROLES.includes(name as ModelRole)) { fail(`House rules Model routes: unknown role ${name}.`); continue; }
+        if (extra.length || modelRoutes[name as ModelRole]) fail(`House rules Model routes: malformed or duplicate ${name} row.`);
+        modelRoutes[name as ModelRole] = { ...readRoute(name, provider, model, effort, false), role: name };
+      }
+      for (const role of MODEL_ROLES) if (!modelRoutes[role]) fail(`House rules Model routes: add the ${role} row.`);
+    }
+  } else if (/^Defaults:/m.test(body)) fail("Set Routes Defaults to House rules, or omit the Defaults line.");
+  for (const cells of rows) {
+    const [raw = "", provider = "", model = "", effort = "", note = ""] = cells;
+    const name = raw.replace(/^`|`$/g, "");
+    if (cells.length !== (noteColumn ? 5 : 4)) fail(`Route ${name}: use the table's columns.`);
+    const role = MODEL_ROLES.find((role) => role.toLowerCase() === name.toLowerCase()) ?? (name === "(default)" ? "Worker" : undefined);
+    const value = readRoute(role ?? name, provider, model, effort, !providerColumn);
+    if (shared && (role || name.toLowerCase() === "review")) {
+      if (!/^override:\s*[^,]+\S\s*,\s*\S.+$/i.test(note)) fail(`Route ${name}: Note must say override: <task category or ticket>, <approval source>.`);
+      if (!role) fail(`Route ${name}: name Review of claude-code or Review of codex.`);
+      else {
+        if (overrides.has(role)) fail(`Route ${name}: duplicate override row.`);
+        overrides.add(role);
+        modelRoutes[role] = { ...value, role, overrideNote: note };
+      }
+      continue;
+    }
+    if (routes.some((row) => row.label === (name === "(default)" ? null : name))) fail(`Route ${name}: duplicate row.`);
+    routes.push({ label: name === "(default)" ? null : name, ...value, ...(providerColumn && role && name !== "(default)" ? { role } : {}) });
+  }
+  if (shared) {
+    for (const role of MODEL_ROLES) {
+      const value = modelRoutes[role];
+      if (value) routes.push({ label: role === "Worker" ? null : role, ...value });
+    }
+  } else if (routes.filter((row) => row.label === null).length !== 1) fail("Include one (default) route row.");
+  return { routes, issues, ...(shared ? { modelRoutes } : {}) };
+}
+
+/** The resolved policy as the owner reads it: one row per setting with where its value came from. */
+export function policyRows(settings: Pick<SquadronSettings, "policy" | "policySource">): { setting: string; value: string; source: PolicySource }[] {
+  return POLICY_SETTINGS.map(({ key, name }) => ({ setting: name, value: String(settings.policy[key] ?? "none"), source: settings.policySource[key] }));
 }

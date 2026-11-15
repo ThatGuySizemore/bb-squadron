@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { house } from "./fixtures/model-routes.js";
 import { DEFAULT_HOLD_LABELS, isHoldLabel, parseLinearScope, parseSquadronSettings, resolveRoute, SCOPE_MISSING } from "../lib/squadron-settings.js";
 
 const fixture = readFileSync("tests/fixtures/squadron.md", "utf8");
@@ -9,6 +10,8 @@ test("repo settings supply the quick check, stop list, limits and ordered routes
   assert.deepEqual(parseSquadronSettings(fixture), {
     ok: true,
     settings: {
+      policy: { escalation: "retry", lowEffort: "off", checkpoint: null },
+      policySource: { escalation: "default", lowEffort: "default", checkpoint: "default" },
       quickCheck: "npm run check",
       stopList: ["The plugin fails to build or load.", "A test assertion is weakened."],
       limits: { laneTimeLimitMs: 28_800_000, workerTimeLimitMs: 5_400_000 },
@@ -132,7 +135,7 @@ test("the owner can choose the same final-review family and custom statuses for 
 });
 
 test("this repo maps In review and In branch to its Waiting to Merge status", () => {
-  const result = parseSquadronSettings(readFileSync("docs/agents/squadron.md", "utf8"));
+  const result = parseSquadronSettings(readFileSync("docs/agents/squadron.md", "utf8"), "linear", house);
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.settings.statusMapping.lane.inReview, "Waiting to Merge");

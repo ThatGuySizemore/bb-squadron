@@ -74,7 +74,7 @@ _Avoid_: supervisor, manager → Lead
 **Worker**: A child thread of a Lead that builds one ticket with `tdd`, in its own worktree, on a branch cut from the integration branch.
 _Avoid_: builder, implementer, subagent → Worker
 
-**Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its pull request merges.
+**Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its pull request merges. With Final review `other`, it runs on the review route for the family that built most of the branch's tickets, read from launch records.
 
 **Planning thread**: A thread started from the Plan button that runs `grill-with-docs` with the owner. Multi-ticket specs continue through `to-spec` and `to-tickets`; one-piece work becomes a work item.
 
@@ -98,7 +98,15 @@ _Avoid_: Lane state, Ticket state as separate entries → States
 
 **Family**: Which company's models a thread runs on: Claude through Claude Code or GPT through Codex.
 
-**Route**: A row that maps a ticket label to a family, model and effort.
+**Route**: A resolved provider, model and effort for a role or ticket label. Claude Code and Codex supply the Claude and GPT families; other providers have an unknown family.
+
+**Model routes**: The role defaults in the owner's House rules. A repo opts in with `Defaults: House rules` and supplies explicit exceptions in its Routes section. Named roles include Lead, Worker, Worker (hard), Planning, Planning (hard), Review of claude-code, Review of codex and Mechanical.
+
+**Launch record**: The role, ticket, provider, model, effort and service tier a thread was launched with, plus any escalation reason. Squadron seeds it into the thread's own metadata at launch and never rewrites it; the board and reports set it beside what BB reports the thread runs.
+
+**Run report**: `bb squadron report`, which derives how each ticket went from launch records, BB usage and the ticket's `squadron-result` block, on demand. Nothing is stored.
+
+**Checkpoint**: An optional House rules setting. At that many completed routine tickets since a project's first verified policy-resolved Worker launch, Squadron sends the project's Helper one plain notice. It never pauses launches.
 
 **Identity**: Who an agent appears as in Linear and in Git. It is set for each family, and Squadron never holds the credential.
 

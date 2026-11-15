@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -17,6 +18,7 @@ function host(native = nativeThreads(), settings = settingsFile) {
     pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-start-key" },
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async ({ projectId }) => ({
         id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId, hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
@@ -48,7 +50,7 @@ function host(native = nativeThreads(), settings = settingsFile) {
         },
       },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "githubLogin" ? { authenticated: true } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "readModelRoutes" ? { markdown: null, policy: null } : method === "githubLogin" ? { authenticated: true } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
       regularSkillFiles: (input as { skillPaths: string[] }).skillPaths,

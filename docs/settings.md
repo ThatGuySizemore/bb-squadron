@@ -27,8 +27,8 @@ Every tracker needs these sections before Start:
 | Quick check | The test command in a fenced code block. |
 | Stop list | A bullet list of problems that stop a merge. |
 | Time limits | A Setting / Value table with positive Lane time limit and Worker time limit durations, such as `8 h` and `3 h`. |
-| Routes | A Label / Family / Model / Effort table with one `(default)` row. Families are Claude or GPT; effort is medium or high. |
-| Final review | `other` or `same`, relative to the Lead's model family. |
+| Routes | `Defaults: House rules` plus optional label exceptions, or a legacy table with one `(default)` row. |
+| Final review | `other` reviews with the family that didn't build most of the branch; `same` reviews on the Lead's own route. |
 
 ## Quick check
 
@@ -51,11 +51,46 @@ Use your project's own preparation command. Squadron assumes no package manager 
 
 Squadron runs Check setup only in the isolated worktree at the merged main commit, then runs Quick check there if setup succeeds. Both receive `SQUADRON_BASE` set to the commit before the merge and share a 30-minute command budget. Setup output and quick-check output stay in the check's log. A setup failure skips Quick check and pauses Autopilot through the main-check brake with the log link. The owner's checkout is never used to execute either command. Lane checks keep their existing behavior.
 
+## Squadron policy
+
+House rules can add a `## Squadron policy` table, read like Model routes: a Setting / Value table where a missing file, section or row keeps the default. Squadron reads only this section, stopping at the next heading; `## Models and effort` prose is never policy.
+
+| Setting | Values | Default |
+|---|---|---|
+| Escalation | `diagnose first` or `retry` | `retry` |
+| Low effort | `mechanical only` or `off` | `off` |
+| Checkpoint | a positive whole number | none |
+
+`retry` keeps a retry, then a stop after two strikes. `diagnose first` diagnoses after the first qualifying strike before the replacement. `off` refuses every low route; `mechanical only` allows low for the Mechanical role alone. A route whose effort is `default` counts as low when BB advertises low as that model's default; when BB doesn't report the default, Doctor and the Lead's brief say the low-effort limit isn't proved for that route. The two-strike stop, and carrying strike counts, deadlines and budgets to replacement workers, are fixed for everyone. Checkpoint is an optional evaluation point that never affects launches; see [the run report](report.md).
+
+Doctor shows the resolved values and where each came from. An unknown setting or value is a Doctor fix that names it, and Start refuses until it is fixed. Start puts the resolved policy in the Lead's brief.
+
 ## Lead and worker routes
 
-Routes may include one `Lead` row, such as `| Lead | GPT | gpt-6.1-sol | medium |`. It selects the Lead regardless of spec labels. The Lead coordinates and merges; workers build tickets, including UI. Without a Lead row, Start keeps the existing behaviour: the first matching spec label wins, then the default row.
+House rules can supply a `## Model routes` table with these fixed Role names: Lead, Worker, Worker (hard), Planning, Planning (hard), Review of claude-code, Review of codex and Mechanical. The other columns are Provider, Model and Effort. Use BB provider IDs and exact model IDs from `bb provider models <provider>`. An effort can be any level that model advertises, or `default` to use its native default. Low is allowed only for Mechanical; later policy enforcement may disable low entirely. Worker (hard) and Planning (hard) are separate roles, resolved explicitly rather than selected by similarly named ticket labels.
 
-Ticket labels still select worker routes in table order, with `(default)` as fallback. `Lead` is reserved for the coordinator, not a ticket label. This repo uses GPT medium for Lead and default, Claude Opus high for `ui`, and an unchanged high-effort final review.
+Squadron parses only `## Model routes`, stopping at the next section. It does not interpret policy prose under `## Models and effort`. The private file is read on the selected checkout's machine. House rules wins over playbook.md, including when the selected file has no Model routes section; absence of a section does not trigger a fallback to the other file.
+
+Opt in at the top of the repo's Routes section:
+
+```md
+## Routes
+
+Defaults: House rules
+
+| Label | Provider | Model | Effort |
+|---|---|---|---|
+```
+
+The empty table is valid: all roles use House rules. Add label exceptions using your approved provider and model IDs. The first matching ticket label wins, ignoring case; Worker supplies the default. Lead always uses the Lead role, regardless of spec labels. The resolved provider and effort appear on the board and reach Start unchanged. Start keeps service tier `default`.
+
+A repo role exception must add a Note column with `override: <task category or ticket>, <approval source>`. A bare `override` is refused. An example of the required note shape is `override: storage work, owner approval on PROJ-123`. The note must describe the scope and cite the approval; it does not itself grant authority. This applies to Lead, Worker, `(default)`, hard roles, Planning, Mechanical and named review roles. Use the full review role name rather than a generic Review row.
+
+Doctor validates every configured row, including legacy Family rows, against BB's advertised provider, model and effort on that machine. For capability lookup, Claude means claude-code and GPT means codex; this keeps valid legacy route selection and resolved objects unchanged. A failed catalogue read or unsupported value blocks Start with the row name and problem. Squadron never substitutes another model. The family is derived from the provider: claude-code is Claude and codex is GPT. Other providers can build work, but cannot be named in review roles until their independence is defined.
+
+Without `Defaults: House rules`, repos retain their own ordered label routes and one `(default)` fallback. An optional Lead row selects the coordinator; without it, spec labels select the Lead as before. The legacy Label / Family / Model / Effort table still accepts Claude or GPT with medium/high effort. A Provider column enables other providers and efforts. Doctor warns when shared Model routes exist but the repo has not opted in. It does not change the repo's routes automatically.
+
+This repo opts in and keeps only its approved `ui` exception. Launch records, builder-based final review and configurable Squadron policy are delivered separately under SQD-229.
 
 ## Hold labels
 

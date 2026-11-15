@@ -89,3 +89,13 @@ test("wide pegs share live steps, problem words and the empty fallback with narr
   assert.equal(byClass(pegs[5]!, "sq-live-step").length, 0, "waiting tickets have no active thread to read");
   assert.equal(byClass(pegs[6]!, "sq-live-step").length, 0, "in-branch pegs stay compact");
 });
+
+test("route chips show the provider and advertised effort without relabeling it medium", async () => {
+  const root = await view([lane("FIX-1", { lead: {
+    providerId: "fixture-provider", family: "unknown", model: "fixture-model", effort: "max",
+  } })]);
+  const chip = byClass(root, "sq-ai").find((element) => element.attrs.title?.includes("fixture-model"));
+  assert.ok(chip);
+  assert.equal(chip.attrs.title, "fixture-provider · fixture-model · max effort");
+  assert.match(visibleText(chip), /max/);
+});

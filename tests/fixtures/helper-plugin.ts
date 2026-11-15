@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./provider-catalog.js";
 import type { TestContext } from "node:test";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -8,7 +9,7 @@ import type { Board } from "../../lib/board-model.js";
 import { workspace } from "./board-workspace.js";
 
 export async function settle() { for (let i = 0; i < 40; i++) await setImmediate(); }
-export async function helperFixture(t: TestContext, epoch: number, options: Parameters<typeof workspace>[0] = {}, storedNotifications?: unknown, storedSummary?: unknown, storedAutopilot?: unknown) {
+export async function helperFixture(t: TestContext, epoch: number, options: Parameters<typeof workspace>[0] = {}, storedNotifications?: unknown, storedSummary?: unknown, storedAutopilot?: unknown, host: { houseRules?: string } = {}) {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: epoch });
   const linear = workspace(options);
   t.mock.method(globalThis, "fetch", linear.fetch);
@@ -18,6 +19,7 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
   let mainCheck = async (_prNumber: number) => ({ passed: true, logPath: "/scratch/main.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) });
   const fake = createFakePluginHost({ pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-wake-key" }, sdk: {
+      providers: fixtureProviders,
       projects: { list: async () => projects, get: async ({ projectId }) => ({ ...projects.find((p) => p.id === projectId)!,
         sources: [{ id: "source", projectId, hostId: "host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
       files: { read: async ({ path }) => { const content = readFileSync(path.endsWith("issue-tracker.md") ? "tests/fixtures/trackers/bb-squadron.md" : "tests/fixtures/squadron.md", "utf8");
@@ -36,7 +38,7 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
         defaultExecutionOptions: async () => ({ model: "gpt-6.1-sol", reasoningLevel: "medium", permissionMode: "auto", serviceTier: "default", source: "client/turn/start" }),
         send: async () => ({ ok: true, delivery: "queued" }),
       },
-    }, experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck((input as { prNumber: number }).prNumber) : method === "githubLogin" ? { authenticated: true } : method === "readRepositoryState"
+    }, experimental_callHostRpc: async ({ method, input }) => method === "readModelRoutes" ? { markdown: null, policy: host.houseRules ?? null } : method === "runMainQuickCheck" ? mainCheck((input as { prNumber: number }).prNumber) : method === "githubLogin" ? { authenticated: true } : method === "readRepositoryState"
       ? { hasRemote: true, mainUpdatedAt: null, mergedBranches: [], mergedBranchUpdatedAt: {} }
       : { homePath: "/owner", repoRulesExists: true, playbookExists: true, machineProfileExists: true,
         setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"], regularSkillFiles: (input as { skillPaths: string[] }).skillPaths },

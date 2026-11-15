@@ -1,5 +1,6 @@
 // The board's Plan buttons open seeded planning threads in the project's checkout.
 import { cliCommand, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
+import { LAUNCH_METADATA_KEY, requestedRoute, resolveLaunch, spawnRoute, type LaunchRecord } from "./launch-record.js";
 import { planningContract, setupContract, type PlanningStarted } from "./planning-contract.js";
 import type { DoctorReport } from "./doctor.js";
 import { DEFAULT_SQUADRON_TEMPLATE } from "./squadron-template.js";
@@ -57,7 +58,7 @@ export async function readPlanningThreads(bb: BbPluginApi, projectId: string): P
 }
 
 const routeText = (route: SquadronRoute) =>
-  `${route.label === null ? "(default, no route label)" : `\`${route.label}\``} → ${route.family === "claude" ? "Claude" : "GPT"} ${route.model} ${route.effort}`;
+  `${route.label === null ? "(default, no route label)" : `\`${route.label}\``} → ${route.providerId ?? (route.family === "claude" ? "Claude" : "GPT")} ${route.model} ${route.effort}`;
 
 function seedPrompt(seed: Seed): string {
   const source = seed.kind ? trackerName(seed.kind) : "the tracker";
@@ -90,7 +91,7 @@ function seedPrompt(seed: Seed): string {
     if (issue.description) lines.push(`- Description: ${quote(issue.description.slice(0, 8_000))}`);
   }
   if (seed.routes.length) {
-    lines.push("", "Routes from docs/agents/squadron.md (the first matching label wins):", ...seed.routes.map((route) => `- ${routeText(route)}`));
+    lines.push("", "Resolved routes from House rules and docs/agents/squadron.md (role rows are reserved; the first matching ticket label wins):", ...seed.routes.map((route) => `- ${routeText(route)}`));
   }
   return lines.join("\n");
 }
@@ -171,8 +172,19 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     }
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to plan in.");
+    // Absent settings keep legacy planning on BB's default. Configured settings that don't resolve refuse by name rather than fall back.
+    if (checkout.settings && !checkout.settings.ok) {
+      throw new Error(`Fix docs/agents/squadron.md and House rules before planning: ${checkout.settings.issues.map((issue) => issue.message).join(" ")}`);
+    }
+    const settings = checkout.settings?.ok ? checkout.settings.settings : null;
+    const resolved = settings ? resolveLaunch(settings, { role: "Planning" }, checkout.providerCatalog) : null;
+    const requested = requestedRoute(resolved?.route ?? null);
+    const launch: LaunchRecord = { version: 1, role: "Planning", category: null, policyResolved: resolved?.policyResolved ?? false,
+      overrideNote: resolved?.overrideNote ?? null, specId: issue?.id ?? null, tickets: [], leadThreadId: null,
+      launchedBy: "owner", launchedAt: Date.now(), requested, replacesThreadId: null, escalation: null };
     const thread = await bb.sdk.threads.spawn({
-      projectId, visibility: "visible", pluginMetadata: { role: "planning", ...(issue ? { issueId: issue.id } : {}) },
+      projectId, visibility: "visible", ...spawnRoute(requested),
+      pluginMetadata: { role: "planning", ...(issue ? { issueId: issue.id } : {}), [LAUNCH_METADATA_KEY]: launch },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "unmanaged", path: checkout.path } },
       prompt: seedPrompt({ issue, tickets: Boolean(issue && step === "tickets"), kind: snapshot.kind,
         existingTickets: issue ? snapshot.issues.filter((ticket) => ticket.parentId === issue.id && ticket.inProject) : [],

@@ -11,6 +11,8 @@ import plugin from "../server.js";
 import { needsYou, type Board } from "../lib/board-model.js";
 import { STOP_MESSAGE, RESUME_MESSAGE } from "../lib/lane-contract.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
+import { withoutLaunch } from "./fixtures/launch.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 const skillNames = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
@@ -19,12 +21,13 @@ function nativeThreads() {
     metadata: new Map<string, Record<string, unknown>>(), routes: new Map<string, { model: string; reasoningLevel: string }>() };
 }
 function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile,
-  mainCheck: (input: unknown) => unknown = () => ({ passed: true, logPath: "/scratch/check.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) })) {
+  mainCheck: (input: unknown) => unknown = () => ({ passed: true, logPath: "/scratch/check.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) }), policy?: string) {
   const { threads, metadata, routes } = native;
   return { native, ...createFakePluginHost({
     pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-start-key" },
     sdk: {
+      providers: fixtureProviders,
       projects: {
         list: async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }],
         get: async ({ projectId }) => ({
@@ -58,7 +61,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
         },
       },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : method === "codexMattSkills" ? { skills: [] } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "readModelRoutes" ? { markdown: policy ?? null } : method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : method === "codexMattSkills" ? { skills: [] } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       ...(ownerHost ? await ownerHost.experimental_call("inspectFiles", { checkoutPath: "/repo", skillPaths: [] }) as Record<string, unknown> : {}),
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
@@ -66,10 +69,10 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
     },
   }) };
 }
-async function setup(t: import("node:test").TestContext, issues?: () => Response, ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile) {
+async function setup(t: import("node:test").TestContext, issues?: () => Response, ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile, policy?: string) {
   const linear = workspace({ issues });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
-  const { bb, harness, native } = host(undefined, ownerHost, settings);
+  const { bb, harness, native } = host(undefined, ownerHost, settings, undefined, policy);
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
@@ -89,7 +92,8 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
   assert.equal(args.serviceTier, "default");
   assert.equal(args.visibility, "visible");
   assert.equal(args.title, "Lead FIX-5");
-  assert.deepEqual(args.pluginMetadata, { role: "lead", specId: "fix-5", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(args.pluginMetadata, { role: "Lead", launchedBy: "owner", specId: "fix-5", tickets: [], escalation: null, policyResolved: false,
+    requested: { providerId: "codex", model: "gpt-6.1-sol", effort: "high", serviceTier: "default" } }), { role: "lead", specId: "fix-5", startedBy: "owner" });
   assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: {
     type: "managed-worktree", baseBranch: { kind: "default" },
   } });
@@ -98,6 +102,20 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
     "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
     "House rules: /owner/.bb-squadron/house-rules.md", "This machine: /owner/.bb-squadron/machine.md",
     "Held tickets carry one of these labels or Status lines: hold, needs-triage, needs-info, ready-for-human, wontfix.",
+    "Routes resolved at Start. Launch every worker, reviewer, research and merger thread with bb squadron launch so its route is recorded:",
+    "- Lead: codex gpt-6.1-sol, high effort, default tier",
+    "- Worker: codex gpt-6.1-sol, high effort, default tier",
+    "- Worker (hard): not set. Add a Worker (hard) row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
+    "- Planning: BB's default model, default effort, default tier",
+    "- Planning (hard): not set. Add a Planning (hard) row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
+    "- Review of claude-code: codex gpt-6.1-sol, high effort, default tier",
+    "- Review of codex: claude-code claude-opus-5-5, high effort, default tier",
+    "- Mechanical: not set. Add a Mechanical row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
+    "- Worker for ui tickets: claude-code claude-opus-5-5, high effort, default tier",
+    "- Worker for data tickets: codex gpt-6.1-sol, medium effort, default tier",
+    "Squadron policy resolved at Start (follow these values, and the squadron-lead skill's text for each mode):",
+    "- Escalation: retry", "- Low effort: off", "- Checkpoint: none",
+    "Final review: once every ticket is integrated, launch it once with `bb squadron launch final-review --base-branch <branch> --prompt-stdin`. It runs on the Review of <provider> route above for the family that built the most integrated tickets, never your own family by default, and it prints which work the reviewer is independent of.",
   ].join("\n"));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes.map(({ specId, state, leadThreadId }) => [specId, state, leadThreadId]), [["FIX-5", "flying", "thr_lead_1"]]);
@@ -127,7 +145,8 @@ test("Start uses the Lead row even on a ui spec and keeps ticket routes separate
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel], ["codex", "gpt-6.1-sol", "medium"]);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes[0].tickets[0].route, { family: "claude", model: "claude-opus-5-5", effort: "high" });
-  assert.deepEqual(board.lanes[0].reviewer, { family: "claude", model: "claude-opus-5-5", effort: "high" });
+  // A GPT Lead with Claude-built tickets still gets the GPT reviewer: the Lead only coordinates.
+  assert.deepEqual(board.lanes[0].reviewer, { family: "gpt", model: "gpt-6.1-sol", effort: "high" });
 });
 
 test("a ready-marked spec with open planning is Shaping in the board and picker and cannot Start through RPC", async (t) => {
@@ -222,7 +241,7 @@ test("the bundled Lead skill points to installed Matt skills and adds BB lane ru
   const skill = readFileSync("skills/squadron-lead/SKILL.md", "utf8");
   assert.match(skill, /^---\nname: squadron-lead\ndescription: .+\n---\n/);
   for (const pointer of ["`implement-spec`", "`tdd`", "`code-review`", "AGENTS.md", "docs/agents/squadron.md",
-    "House rules", "This machine", "parent-self", "accept:owner", "two strikes", "Stop", "Resume", "status mapping"]) {
+    "House rules", "This machine", "bb squadron launch", "--replaces", "--reason", "accept:owner", "two strikes", "Stop", "Resume", "status mapping"]) {
     assert.ok(skill.includes(pointer), `the Lead skill names ${pointer}`);
   }
   assert.ok(!/squadron_\w+/.test(skill), "the Lead names no Squadron agent tools");
@@ -536,14 +555,14 @@ test("Autopilot starts one Ready spec per watcher cycle through Start and stops 
   for (let i = 0; i < 200 && native.count === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
   cycle.controller.abort(); await cycle.done;
   assert.equal(native.count, 1);
-  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_1"), { role: "Lead", launchedBy: "autopilot", specId: "fix-1" }), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.laneCapacity, 1);
   assert.equal(board.autoStart, true);
   // A manual start still uses precisely the same first message, and may exceed the limit.
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   assert.equal(native.count, 2);
-  assert.deepEqual(native.metadata.get("thr_lead_2"), { role: "lead", specId: "fix-5", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_2"), { role: "Lead", launchedBy: "owner", specId: "fix-5" }), { role: "lead", specId: "fix-5", startedBy: "owner" });
   const spawns = harness.inspection.sdk.callsTo("threads.spawn").map(([args]) => args as { prompt: string });
   assert.equal(spawns[0].prompt.replace("FIX-1", "FIX-5"), spawns[1].prompt);
 });
@@ -676,7 +695,7 @@ test("an enabled project restarts its watcher without opening the board", async 
   t.after(() => reloaded.harness.lifecycle.dispose());
   await watcherCycle(reloaded.harness);
   assert.equal(native.count, 1);
-  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_1"), { role: "Lead", launchedBy: "autopilot", specId: "fix-1" }), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
 });
 
 
@@ -1010,7 +1029,7 @@ test("a landed spec with remaining un-held tickets returns Ready and starts a fr
   assert.equal(after.lanes[0].needs, undefined, "old worker failures never become this lane's questions");
   assert.ok(native.threads.has("old-worker"));
   assert.ok(native.threads.has("thr_lead_1"), "the old Lead and its environment remain attributable in BB");
-  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-5", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_1"), { role: "Lead", launchedBy: "owner", specId: "fix-5" }), { role: "lead", specId: "fix-5", startedBy: "owner" });
   assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_2" });
 });
 
@@ -1226,19 +1245,22 @@ test("work-item Start shares CLI and board dedupe, uses its labels over Lead, an
   assert.equal(args.parentThreadId, undefined);
   assert.equal(args.title, "Work item FIX-9");
   assert.equal(args.visibility, "visible");
-  assert.deepEqual(args.pluginMetadata, { role: "lead", specId: "fix-9", kind: "work-item", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(args.pluginMetadata, { role: "Worker", launchedBy: "owner", specId: "fix-9", tickets: [{ id: "fix-9", identifier: "FIX-9" }] }),
+    { role: "lead", specId: "fix-9", kind: "work-item", startedBy: "owner" });
   assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: {
     type: "managed-worktree", baseBranch: { kind: "default" },
   } });
   const prompt = String(args.prompt);
   for (const text of ["https://linear.app/fixture/issue/FIX-9", "AGENTS.md", "GLOSSARY.md", "docs/agents/",
     "docs/agents/squadron.md", "/owner/.bb-squadron/house-rules.md", "/owner/.bb-squadron/machine.md",
-    "implement", "fresh", "code-review", "subagent", "review thread", "fix", "pr", "accept:owner",
+    "implement", "fresh", "code-review", "bb squadron launch final-review", "independent of", "fix", "pr", "accept:owner",
     "5400000 ms", "whole lane", "two strikes", "Stop", "Resume", "In Progress", "Done",
     "hold, needs-triage, needs-info, ready-for-human, wontfix", "identity", "read back"]) {
     assert.ok(prompt.includes(text), `prompt includes ${text}`);
   }
   assert.match(prompt, /accept:owner.*wait/i);
+  // SQD-258: this thread builds the work item on Claude, so the GPT review route reviews it.
+  assert.ok(prompt.includes("From today's route: codex gpt-6.1-sol, high effort, default tier. Claude builds 1 of 1 ticket so far, so the Review of claude-code route reviews. Independent of FIX-9 (not launched yet)."), prompt);
   assert.match(prompt, /Treat the test approach named in the issue's acceptance criteria as the confirmed seam for tdd\./);
   assert.match(prompt, /Ask the owner about test seams only when the issue names none\./);
   const { harness: reloaded } = await harness.lifecycle.reload(plugin);
@@ -1402,3 +1424,138 @@ for (const reason of ["hold or blocker", "two strikes", "time limit"]) {
     assert.match(prompt, /Track cumulative elapsed time across Stop\/Resume/);
   });
 }
+
+test("shared model defaults reach Doctor, board and Start without a substitute", async (t) => {
+  const { shared, house } = await import("./fixtures/model-routes.js");
+  const { harness } = await setup(t, undefined, undefined, shared, house);
+  harness.sdk.stub("providers.list", async () => [{ id: "claude-code" }, { id: "codex" }]);
+  harness.sdk.stub("providers.models", async ({ providerId }: { providerId: string }) => ({ modelLoadError: null,
+    models: (providerId === "claude-code" ? ["claude-sonnet-5-5", "claude-opus-5-5"] : ["gpt-6.1-sol"]).map((id) => ({
+      id, supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })),
+    })),
+  }));
+  const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+  assert.equal(report.ready, true, JSON.stringify(report.checks));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier],
+    ["claude-code", "claude-sonnet-5-5", "high", "default"]);
+});
+
+test("Doctor and Start refuse unrunnable rows by name and never spawn a fallback", async (t) => {
+  const { shared, house } = await import("./fixtures/model-routes.js");
+  for (const [replacement, named] of [
+    ["| ui | absent-provider | claude-opus-5-5 | high |", "absent-provider"],
+    ["| ui | claude-code | absent-model | high |", "absent-model"],
+    ["| ui | claude-code | claude-opus-5-5 | ultra |", "ultra"],
+    ["| ui | claude-code | claude-opus-5-5 | low |", "low"],
+  ]) {
+    await t.test(named, async (t) => {
+      const settings = shared.replace("| ui | claude-code | claude-opus-5-5 | high |", replacement);
+      const { harness } = await setup(t, undefined, undefined, settings, house);
+      harness.sdk.stub("providers.list", async () => [{ id: "claude-code" }, { id: "codex" }]);
+      harness.sdk.stub("providers.models", async ({ providerId }: { providerId: string }) => ({ modelLoadError: null,
+        models: (providerId === "claude-code" ? ["claude-sonnet-5-5", "claude-opus-5-5"] : ["gpt-6.1-sol"]).map((id) => ({
+          id, supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })),
+        })),
+      }));
+      const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+      assert.equal(report.ready, false);
+      const message = report.checks.find((check) => check.id === "settings")!.message;
+      assert.ok(message.includes("ui") && message.includes(named), message);
+      await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { message });
+      const cli = await harness.behavior.runCli(["start", "FIX-5"], { projectId: "proj-one" });
+      assert.equal(cli.exitCode, 1);
+      assert.equal(cli.stderr.trim(), message);
+      assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+    });
+  }
+});
+
+test("Start uses any advertised provider and native default effort, and the board reports it accurately", async (t) => {
+  const { shared, house } = await import("./fixtures/model-routes.js");
+  const settings = shared.replace("| Label | Provider | Model | Effort |", "| Label | Provider | Model | Effort | Note |")
+    .replace("|---|---|---|---|", "|---|---|---|---|---|")
+    .replace("| ui | claude-code | claude-opus-5-5 | high |", "| Lead | fixture-provider | fixture-model | default | override: tooling task, owner approval on FIX-5 |");
+  const { harness } = await setup(t, undefined, undefined, settings, house);
+  harness.sdk.stub("providers.list", async () => [{ id: "claude-code" }, { id: "codex" }, { id: "fixture-provider" }]);
+  harness.sdk.stub("providers.models", async ({ providerId }: { providerId: string }) => ({ modelLoadError: null,
+    models: (providerId === "fixture-provider" ? ["fixture-model"] : providerId === "claude-code" ? ["claude-sonnet-5-5", "claude-opus-5-5"] : ["gpt-6.1-sol"]).map((id) => ({
+      id, supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })),
+    })),
+  }));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["fixture-provider", "fixture-model", undefined, "default"]);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes[0].lead, { providerId: "fixture-provider", family: "unknown", model: "fixture-model", effort: "default", serviceTier: "default" });
+  assert.deepEqual(board.lanes[0].launch?.requested, { providerId: "fixture-provider", model: "fixture-model", effort: "default", serviceTier: "default" });
+  assert.equal((args.pluginMetadata as { launch: { overrideNote: string } }).launch.overrideNote, "override: tooling task, owner approval on FIX-5");
+});
+
+test("Doctor's host reads only Model routes from House rules, falling back only when the file is absent", async (t) => {
+  const { house } = await import("./fixtures/model-routes.js");
+  const root = await mkdtemp(join(tmpdir(), "sqd256-policy-fixture-"));
+  const folder = join(root, ".bb-squadron");
+  await mkdir(folder);
+  const ownerHost = experimental_createHostEntryHarness(createDoctorHost(undefined, () => root));
+  t.after(() => ownerHost.experimental_dispose());
+  await writeFile(join(folder, "playbook.md"), house);
+  const legacy = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null; policy: string | null };
+  assert.ok(legacy.markdown?.includes("Worker (hard)"));
+  assert.equal(legacy.markdown?.includes("Squadron policy"), false);
+  assert.equal(legacy.markdown?.includes("prose-only"), false);
+  // Squadron policy travels separately, and never with Models and effort prose.
+  const policy = legacy.policy;
+  assert.ok(policy?.startsWith("## Squadron policy") && policy.includes("| Low effort | mechanical only |"));
+  assert.equal(policy?.includes("prose-only") || policy?.includes("Models and effort"), false);
+  await writeFile(join(folder, "house-rules.md"), "# House rules\n## Models and effort\nPolicy prose only.\n");
+  assert.deepEqual(await ownerHost.experimental_call("readModelRoutes", {}), { markdown: null, policy: null });
+  await writeFile(join(folder, "house-rules.md"), house.replace("claude-sonnet-5-5", "fixture-preferred-model"));
+  const preferred = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null };
+  assert.ok(preferred.markdown?.includes("fixture-preferred-model"));
+});
+
+test("legacy Family routes discover BB capabilities before Doctor and Start without changing launch selection", async (t) => {
+  const { fixtureProviders } = await import("./fixtures/provider-catalog.js");
+  const { harness } = await setup(t);
+  harness.sdk.stub("providers.list", fixtureProviders.list);
+  harness.sdk.stub("providers.models", fixtureProviders.models);
+  const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+  assert.equal(report.ready, true, JSON.stringify(report.checks));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["codex", "gpt-6.1-sol", "high", "default"]);
+});
+
+test("legacy Family rows fail Doctor and both Start controls by row without spawning a fallback", async (t) => {
+  const cases = [
+    { name: "worker model", row: "data", value: "bogus-legacy-model", settings: settingsFile.replace("| `data` | GPT | gpt-6.1-sol |", "| `data` | GPT | bogus-legacy-model |") },
+    { name: "Lead model", row: "Lead", value: "bogus-lead-model", settings: settingsFile.replace("| `ui` |", "| Lead | GPT | bogus-lead-model | high |\n| `ui` |") },
+    { name: "review model", row: "Review of codex", value: "bogus-review-model", settings: settingsFile.replace("| `ui` |", "| Review of codex | Claude | bogus-review-model | high |\n| `ui` |") },
+    { name: "unsupported worker effort", row: "data", value: "medium", settings: settingsFile },
+    { name: "missing provider", row: "ui", value: "claude-code", settings: settingsFile },
+    { name: "unavailable catalogue", row: "ui", value: "claude-code", settings: settingsFile },
+  ];
+  for (const sample of cases) await t.test(sample.name, async (t) => {
+    const { harness } = await setup(t, undefined, undefined, sample.settings);
+    if (sample.name === "unsupported worker effort") harness.sdk.stub("providers.models", async (args?: { providerId?: string }) => {
+      const result = await fixtureProviders.models(args);
+      return { ...result, models: result.models.map((model) => ({ ...model,
+        supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+      })) };
+    });
+    if (sample.name === "missing provider") harness.sdk.stub("providers.list", async () => []);
+    if (sample.name === "unavailable catalogue") harness.sdk.stub("providers.models", async () => { throw new Error("fixture catalogue unavailable"); });
+    const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+    assert.equal(report.ready, false);
+    const fix = report.checks.find((check) => check.id === "settings")!;
+    assert.equal(fix.status, "fix");
+    assert.ok(fix.message.includes(`Route ${sample.row}:`) && fix.message.includes(sample.value), fix.message);
+    await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { message: fix.message });
+    const cli = await harness.behavior.runCli(["start", "FIX-5"], { projectId: "proj-one" });
+    assert.equal(cli.exitCode, 1);
+    assert.equal(cli.stderr.trim(), fix.message);
+    assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+  });
+});

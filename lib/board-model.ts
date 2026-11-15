@@ -54,6 +54,7 @@ const boardSchema = z.object({
   tick: z.number(), laneCapacity: z.number(), workersPerLane: z.number(), autoStart: z.boolean(),
   lanes: z.array(lane),
   ready: z.array(z.object({
+    planningThreadId: z.string().optional(),
     /** Total for the kind tag; ticketCount stays the open count for frontier math. */
     totalTicketCount: z.number().int().nonnegative().optional(),
     /** Absent on older/demo snapshots means spec. */
@@ -70,12 +71,14 @@ const boardSchema = z.object({
   })),
   /** Specs that aren't Ready: what's missing, and the one button that fixes it. */
   shaping: z.array(z.object({
+    planningThreadId: z.string().optional(),
     totalTicketCount: z.number().int().nonnegative().optional(),
     id: z.string(), title: z.string(), url: z.string().optional(), ticketCount: z.number(), missing: z.string(),
     /** "resume" reopens the open planning thread; "tickets" plans the spec's tickets. */
     action: z.enum(["resume", "tickets"]), threadId: z.string().optional(),
   })),
   openIssues: z.array(z.object({
+    planningThreadId: z.string().optional(),
     kind: z.enum(["spec", "ticket", "work-item"]).optional(),
     id: z.string(), title: z.string(), labels: z.array(z.string()), url: z.string().optional(), under: z.string().optional(),
     priority: z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).optional(),
@@ -121,14 +124,17 @@ export function needsYou(board: Board): NeedsYouItem[] {
   for (const [id, text] of Object.entries(board.autopilot?.skippedMainChecks ?? {})) {
     items.push({ key: `autopilot-check:${id}`, kind: "autopilot-check", specId: "", threadId: null, text });
   }
-  if (board.autopilot?.status === "paused") {
+  if (board.autopilot?.status === "paused" && !board.autopilot.waitingForLinear) {
     items.push({ key: "autopilot-paused", kind: "autopilot-paused", specId: "", threadId: null,
       text: board.autopilot.pauseReason ?? "Autopilot is paused.",
       ...(board.autopilot.pauseLog ? { log: board.autopilot.pauseLog } : {}) });
   }
   const fixes = (board.doctor?.checks ?? []).filter((check) => check.status === "fix");
+  const setupUnavailable = board.tracker?.state === "unscoped" && board.doctor?.checks.some((check) =>
+    (check.id === "settings" || check.id === "tracker") && check.status === "warning");
   // A Scope problem Doctor already names needs one row, not two.
   if ((board.tracker?.state === "disconnected" || board.tracker?.state === "unscoped")
+    && !setupUnavailable
     && !fixes.some((check) => check.message.includes(board.tracker!.message))) {
     items.push({ key: "setup", kind: "setup", specId: "", text: board.tracker.message, threadId: null });
   }

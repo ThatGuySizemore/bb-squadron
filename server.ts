@@ -22,20 +22,21 @@ export default async function plugin(bb: BbPluginApi) {
   const mirror = registerLinearReader(bb, linear, {
     shouldPoll: (projectId) => board.isShown(projectId),
     laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId) });
-  const doctor = registerDoctor(bb, () => linear.getConnection(), (projectId) => mirror.scopeProblem(projectId));
+  const connection = (projectId: string) => linear.getConnection(mirror.getSnapshot(projectId).syncedAt);
+  const doctor = registerDoctor(bb, connection, (projectId) => mirror.scopeProblem(projectId));
   const tracker = registerTracker(bb, mirror);
   const outside = createOutsideLaneReader(bb);
   const helper = registerHelper(bb);
   const notifier = registerHelperNotifier(bb, helper);
   const summary = registerHelperSummary(bb, helper);
   const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside, onAction: mirror.resetCadence });
-  const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection: () => linear.getConnection(),
+  const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection,
     observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); },
     tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   summary.register(board.read);
-  registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
-  registerSquadronCli(bb, board, lanes, helper, autopilot);
+  const planning = registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
+  registerSquadronCli(bb, board, lanes, helper, autopilot, planning);
   bb.log.info("loaded");
 }

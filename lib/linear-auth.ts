@@ -34,7 +34,7 @@ const identityResponse = z.object({
   organization: z.object({ id: z.string(), name: z.string() }),
 });
 export interface LinearAuth {
-  getConnection(): Promise<LinearConnectionState>;
+  getConnection(readingAt?: number | null): Promise<LinearConnectionState>;
   graphql<T>(query: string, variables?: Record<string, unknown>, signal?: AbortSignal): Promise<T>;
 }
 
@@ -108,11 +108,16 @@ export function registerLinearAuth(bb: BbPluginApi, options: { fetch?: typeof fe
     if (!body.data) throw new LinearRequestError("invalid_response");
     return body.data;
   }
-  async function getConnection(): Promise<LinearConnectionState> {
+  async function getConnection(readingAt?: number | null): Promise<LinearConnectionState> {
     const expectedGeneration = generation;
     const { linearApiKey } = await settings.get();
     const mode = "personal";
     if (!linearApiKey) return { status: "disconnected", mode: null, actor: null, workspace: null, message: messages.not_connected };
+    // The board has a complete saved reading and checks its age separately.
+    // Don't hold that display on another network request. The connection RPC
+    // still checks Linear directly, and removing the key still disconnects.
+    if (readingAt !== null && readingAt !== undefined && readingAt <= now()) return { status: "connected", mode, actor: null, workspace: null,
+      message: "Using the last complete Linear reading." };
     try {
       if (generation !== expectedGeneration) throw new LinearRequestError("not_connected");
       if (budgetResetAt > now()) throw new LinearRequestError("rate_limited", budgetResetAt - now());

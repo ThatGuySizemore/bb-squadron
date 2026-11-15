@@ -25,4 +25,8 @@ With the owner, run these skills from Matt Pocock's installed plugin, in order a
 
 Invoke each skill when the provider allows it. Otherwise read its `SKILL.md` in the installed plugin and follow it. If the plugin or a skill is missing, ask the owner to install Matt's plugin.
 
-Publish with your own verified tracker tools as `docs/agents/issue-tracker.md` says. Report the spec and ticket links, or the work item link. Specs stay under Shaping with Resume planning while planning is open. Work items stay in Open issues with Plan while planning is open. Once published, tell the owner to archive this thread. A spec then appears under Ready with `ready-for-agent` and an open, unblocked ticket that is not held. A work item appears under Ready with `ready-for-agent` and no hold.
+Publish with your own verified tracker tools as `docs/agents/issue-tracker.md` says. Specs stay under Shaping with Resume planning while planning is open. Work items stay in Open issues with Plan while planning is open.
+
+After publishing and reading back the spec or work item, run `bb squadron planning done <identifier>` in this planning thread, using the published issue's identifier. For New spec, this also links the thread to the new issue. Check that the command succeeds before reporting planning finished. It marks this thread's planning done and leaves the thread available to read.
+
+Report the spec and ticket links, or the work item link, and its board position. A spec is now Ready or Shaping based on its own readiness: Ready needs `ready-for-agent` and an open, unblocked ticket that is not held; otherwise say what keeps it Shaping. A work item appears under Ready with `ready-for-agent` and no hold; otherwise it stays in Open issues. The row keeps a Planning thread link. Resume planning reopens this thread if the owner wants to continue.

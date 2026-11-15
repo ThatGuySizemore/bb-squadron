@@ -37,7 +37,7 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
   const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async (_command, args) => {
     if (kind !== "github") throw new Error("A no-remote local lane must not need gh");
     if (args[0] === "repo") return { code: 0, stdout: JSON.stringify({ nameWithOwner: "fixture/repo", url: "https://github.example/fixture/repo" }) };
-    if (args[0] === "auth") return { code: 0, stdout: "" };
+    if (args[0] === "auth") return { code: 0, stdout: "signed-in" };
     assert.equal(args[0], "api");
     return { code: 0, stdout: pages };
   }));

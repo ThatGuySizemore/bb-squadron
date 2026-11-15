@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
 import { registerDoctor } from "../lib/doctor-service.js";
 import type { DoctorReport } from "../lib/doctor.js";
+import { needsYou, type Board } from "../lib/board-model.js";
 
 const fixture = readFileSync("tests/fixtures/squadron.md", "utf8");
 const names = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
@@ -16,7 +17,7 @@ function skills(provider: string, root = `/owner/.${provider === "codex" ? "code
 }
 function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; unavailable?: boolean; gh?: boolean; ownerFiles?: boolean; expectedCheckout?: string;
   /** What the machine finds for Codex when the catalogue lists no Codex Matt skills. */
-  codex?: string[] } = {}) {
+  codex?: string[]; failedMethods?: string[]; unknownLogin?: boolean; missingFiles?: boolean; filesUnavailable?: boolean } = {}) {
   const available = options.skills ?? [...skills("claude-code"), ...skills("codex")];
   return createFakePluginHost({
     experimental_hostEntry: true,
@@ -27,6 +28,8 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
       }) },
       files: { read: async ({ hostId, path }) => {
         if (options.unavailable) throw new Error("private file diagnostic");
+        if (options.filesUnavailable) throw new Error("private host timeout");
+        if (options.missingFiles) throw Object.assign(new Error("missing"), { code: "ENOENT" });
         assert.equal(hostId, "repo-machine");
         if (path === "/repo/docs/agents/issue-tracker.md") {
           const content = readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8");
@@ -36,23 +39,23 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
         return { content: fixture, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: fixture.length };
       } },
       skills: { list: async () => {
-        if (options.unavailable) throw new Error("private skill diagnostic");
+        if (options.unavailable || options.failedMethods?.includes("skills")) throw new Error("private skill diagnostic");
         return { skills: available };
       } },
     },
     experimental_callHostRpc: async ({ hostId, method, input }) => {
       assert.equal(hostId, "repo-machine");
-      if (options.unavailable) throw new Error("private process diagnostic");
+      if (options.unavailable || options.failedMethods?.includes(method)) throw new Error("private process diagnostic");
       if (method === "githubLogin") {
         if (options.expectedCheckout) assert.equal((input as { checkoutPath?: string }).checkoutPath, options.expectedCheckout);
-        return { authenticated: options.gh ?? true };
+        return { authenticated: options.unknownLogin ? null : options.gh ?? true };
       }
       if (method === "codexMattSkills") return { skills: options.codex ?? [] };
       assert.equal(method, "inspectFiles");
       assert.equal((input as { checkoutPath: string }).checkoutPath, "/repo");
       return {
         homePath: "/owner", repoRulesExists: true, playbookExists: options.ownerFiles ?? true, machineProfileExists: options.ownerFiles ?? true,
-        setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
+        setupFiles: options.missingFiles ? [] : ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
         regularSkillFiles: options.linked ? [] : available.map((skill) => skill.filePath),
       };
     },
@@ -100,16 +103,49 @@ test("Doctor requires Matt's installed plugin in each provider and rejects copie
   }
 });
 
-test("unavailable sources fail without leaking private diagnostics", async () => {
+test("unavailable sources warn without leaking private diagnostics or creating Needs you", async () => {
   const { bb, harness } = host({ unavailable: true });
   try {
     registerDoctor(bb, async () => { throw new Error("private connection diagnostic"); });
     const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
     assert.equal(report.ready, false);
-    assert.deepEqual(report.checks.map((check) => check.status), ["fix", "fix", "fix", "fix", "warning", "warning", "fix"]);
-    assert.match(report.checks[0].message, /machine is online/);
+    assert.ok(report.checks.every((check) => check.status === "warning"));
+    assert.deepEqual(needsYou({ doctor: report, lanes: [] } as unknown as Board), []);
     assert.equal(JSON.stringify(report).includes("private"), false);
   } finally { await harness.lifecycle.dispose(); }
+});
+
+test("unavailable Doctor host checks warn and retry; definite missing plugins and signed out remain fixes", async () => {
+  for (const method of ["skills", "inspectFiles", "codexMattSkills", "githubLogin", "unknown-login"]) {
+    const options = { failedMethods: [method], skills: method === "codexMattSkills" ? skills("claude-code") : undefined,
+      codex: names, unknownLogin: method === "unknown-login" };
+    const { bb, harness } = host(options);
+    try {
+      registerDoctor(bb, async () => ({ status: "connected" }));
+      const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+      const id = method.includes("Login") || method === "unknown-login" ? "github" : "skills";
+      assert.equal(report.checks.find((c) => c.id === id)?.status, "warning", method);
+      assert.equal(report.ready, false);
+      assert.deepEqual(needsYou({ doctor: report, lanes: [] } as unknown as Board), [], method);
+      options.failedMethods.length = 0;
+      options.unknownLogin = false;
+      const retried = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+      assert.equal(retried.ready, true, method);
+    } finally { await harness.lifecycle.dispose(); }
+  }
+});
+
+test("Doctor distinguishes unavailable setup reads from confirmed missing files", async () => {
+  for (const unavailable of [true, false]) {
+    const { bb, harness } = host({ filesUnavailable: unavailable, missingFiles: !unavailable });
+    try {
+      registerDoctor(bb, async () => ({ status: "connected" }));
+      const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+      assert.equal(report.checks.find((c) => c.id === "settings")?.status, unavailable ? "warning" : "fix");
+      assert.equal(report.checks.find((c) => c.id === "tracker")?.status, unavailable ? "warning" : "fix");
+      if (!unavailable) assert.equal(report.checks.find((c) => c.id === "setup")?.status, "fix");
+    } finally { await harness.lifecycle.dispose(); }
+  }
 });
 
 test("an unavailable selected environment does not borrow the project's default checkout", async () => {

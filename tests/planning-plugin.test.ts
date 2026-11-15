@@ -55,6 +55,12 @@ function host(options: HostOptions = {}) {
         },
         list: async () => [...threads.values()],
         getPluginMetadata: async ({ threadId }) => metadata.get(threadId) ?? {},
+        updatePluginMetadata: async ({ threadId, set, remove }) => {
+          const value = { ...metadata.get(threadId), ...set };
+          for (const key of remove ?? []) delete value[key];
+          metadata.set(threadId, value);
+          return value;
+        },
         get: async ({ threadId }) => makeThreadResponse({ id: threadId, projectId: "proj-one" }),
         defaultExecutionOptions: async () => ({ model: "claude-opus-5-5", permissionMode: "auto", reasoningLevel: "high", serviceTier: "default", source: "client/turn/start" }),
       },
@@ -131,6 +137,89 @@ test("Plan on an issue that already has a planning thread reopens that thread, e
   const fresh = await harness.behavior.callRpc("planning.start", { projectId: "proj-one" }) as { threadId: string };
   assert.equal(fresh.threadId, "thr_plan_2", "New spec always starts a new thread");
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 2);
+});
+
+test("finishing planning makes a spec Ready without archiving its planning thread", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const { threadId } = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" }) as { threadId: string };
+  const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.match(before.shaping.find((row) => row.id === "FIX-5")!.missing, /Planning is still open/);
+  const result = await harness.behavior.runCli(["planning", "done", "FIX-5"], { threadId, projectId: "proj-one" });
+  assert.equal(result.exitCode, 0, result.stderr);
+  const after = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.ok(after.ready.some((row) => row.id === "FIX-5"));
+  assert.equal(Reflect.get(after.ready.find((row) => row.id === "FIX-5")!, "planningThreadId"), threadId);
+  assert.ok(!after.shaping.some((row) => row.id === "FIX-5"));
+  assert.equal(harness.inspection.sdk.callsTo("threads.archive").length, 0);
+});
+
+test("Resume planning reopens a finished planning thread and puts its spec back in Shaping", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const { threadId } = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" }) as { threadId: string };
+  assert.equal((await harness.behavior.runCli(["planning", "done", "FIX-5"], { threadId, projectId: "proj-one" })).exitCode, 0);
+  const resumed = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" });
+  assert.deepEqual(resumed, { threadId });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.match(board.shaping.find((row) => row.id === "FIX-5")?.missing ?? "", /Planning is still open/);
+  assert.ok(!board.ready.some((row) => row.id === "FIX-5"));
+});
+
+test("New spec links its published work item on completion and retains that link after reload", async (t) => {
+  let published = false;
+  const { harness: first } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: [...workspaceIssues.data.issues.nodes, ...(published ? [{ ...workspaceIssues.data.issues.nodes[5],
+      id: "fix-99", identifier: "FIX-99", title: "A newly published work item", url: "https://linear.app/fixture/issue/FIX-99",
+    }] : [])],
+  } } }));
+  first.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const { threadId } = await first.behavior.callRpc("planning.start", { projectId: "proj-one" }) as { threadId: string };
+  published = true;
+  const finished = await first.behavior.runCli(["planning", "done", "FIX-99"], { threadId, projectId: "proj-one" });
+  assert.equal(finished.exitCode, 0, finished.stderr);
+  const { harness } = await first.lifecycle.reload((api) => plugin(api));
+  t.after(() => harness.lifecycle.dispose());
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.openIssues.find((row) => row.id === "FIX-99")?.planningThreadId, threadId);
+  assert.deepEqual(await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-99" }), { threadId });
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+});
+
+test("finishing planning leaves a spec without its ready label Shaping for that reason", async (t) => {
+  const { harness } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.id === "fix-5" ? { ...node, labels: { nodes: [], pageInfo: end } } : node),
+  } } }));
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const { threadId } = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" }) as { threadId: string };
+  assert.equal((await harness.behavior.runCli(["planning", "done", "FIX-5"], { threadId, projectId: "proj-one" })).exitCode, 0);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  const row = board.shaping.find((row) => row.id === "FIX-5")!;
+  assert.equal(row.missing, "Has 1 ticket but no ready-for-agent label.");
+  assert.equal(row.planningThreadId, threadId);
+  assert.ok(!board.ready.some((row) => row.id === "FIX-5"));
+});
+
+test("planning done refuses other issues, projects, non-planning callers and archived threads", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("skills.list", async () => ({ skills: [] }));
+  const { threadId } = await harness.behavior.callRpc("planning.start", { projectId: "proj-one", issueId: "FIX-5" }) as { threadId: string };
+  for (const [issueId, caller] of [
+    ["FIX-9", { threadId, projectId: "proj-one" }],
+    ["OUT-10", { threadId, projectId: "proj-one" }],
+    ["FIX-5", { threadId, projectId: "another-project" }],
+    ["FIX-5", { threadId: "thr_other", projectId: "proj-one" }],
+    ["FIX-5", {}],
+  ] as const) {
+    assert.equal((await harness.behavior.runCli(["planning", "done", issueId], caller)).exitCode, 1);
+  }
+  assert.equal(harness.inspection.sdk.callsTo("threads.updatePluginMetadata").length, 0);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.match(board.shaping.find((row) => row.id === "FIX-5")!.missing, /Planning is still open/);
+  harness.sdk.stub("threads.list", async () => [makeThreadResponse({ id: threadId, projectId: "proj-one", archivedAt: 1 })]);
+  assert.equal((await harness.behavior.runCli(["planning", "done", "FIX-5"], { threadId, projectId: "proj-one" })).exitCode, 1);
+  assert.equal(harness.inspection.sdk.callsTo("threads.updatePluginMetadata").length, 0);
 });
 
 test("after a plugin reload, Plan finds the same renamed thread through BB metadata", async (t) => {
@@ -257,6 +346,31 @@ test("the bundled planner points at Matt's skills and the repo's issue tracker i
   for (const removed of ["squadron_linear_write", "squadron_linear_receipt", "## Receipts", "## Publishing"]) {
     assert.ok(!skill.includes(removed), `the removed write path is absent: ${removed}`);
   }
+});
+
+test("the planner finishes its own thread after publishing and never asks the owner to archive it", () => {
+  const skill = readFileSync("skills/squadron-planner/SKILL.md", "utf8");
+  assert.match(skill, /bb squadron planning done <identifier>/);
+  assert.match(skill, /Ready or Shaping/);
+  assert.doesNotMatch(skill, /tell the owner to archive|ask.*owner.*archive/i);
+});
+
+test("finished planning stays linked on Ready, Shaping and Open issues, with Resume planning on Ready", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const board: Board = { ...emptyBoard,
+    ready: [{ id: "FIX-5", title: "Ready spec", ticketCount: 1, routes: [], blockedBy: [], acceptOwner: false, startReason: null, planningThreadId: "thr_ready" }],
+    shaping: [{ id: "FIX-7", title: "Needs a label", ticketCount: 1, missing: "No ready label", action: "tickets", planningThreadId: "thr_shaping" }],
+    openIssues: [{ id: "FIX-9", title: "Work item", kind: "work-item", labels: [], planningThreadId: "thr_item" }],
+  };
+  const html = renderToStaticMarkup(createElement(BoardView, {
+    board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+  }));
+  const buttons = buttonLabels(html);
+  assert.equal(buttons.filter((label) => label === "Planning thread").length, 3);
+  assert.equal(buttons.filter((label) => label === "Resume planning").length, 1);
 });
 
 test("the board's Plan opens the planning thread beside the board and reports start failures", async () => {

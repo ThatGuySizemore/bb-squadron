@@ -16,6 +16,7 @@ export function openNeeds(board: Board | null): NeedsYouItem[] {
   const items = needsYou(board);
   // A failed read can't establish that Needs you is empty. Keep its safe tracker message.
   if (board.tracker?.state === "failed"
+    && board.tracker.syncedAt === null
     && !(board.tracker.kind === "linear" && board.tracker.message === LINEAR_RATE_LIMIT_MESSAGE)
     && !items.some((item) => item.text === board.tracker!.message)) {
     items.unshift({ key: "tracker", kind: "setup", specId: "", text: board.tracker.message, threadId: null });

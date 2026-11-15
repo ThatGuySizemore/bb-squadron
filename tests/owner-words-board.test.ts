@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import type { Board, Lane, Route, Ticket } from "../lib/board-model.js";
 import { doctor, type ConfigurationFile } from "../lib/doctor.js";
 import { OWNER_WORDS } from "../lib/owner-words.js";
-import { elements, parse, readable, retiredTerms, texts, textOf, type Element } from "./fixtures/owner-text.js";
+import { elements, parse, readable, retiredTerms, texts, textOf, visibleText, type Element } from "./fixtures/owner-text.js";
 
 const route: Route = { family: "claude", model: "claude-opus-5-5", effort: "high" };
 const ticket = (id: string, state: Ticket["state"], extra: Partial<Ticket> = {}): Ticket =>
@@ -111,6 +111,21 @@ test("owner-word label coverage rejects longer, lowercase and plural labels with
     assert.throws(() => assertDefinitions(parse(`<button>${label}</button>`), "fixture"), /shown with no definition/, label);
   }
   assert.deepEqual(ownerWordsInLabel("Already ticketed"), [], "only whole words are terms");
+});
+
+test("mixed button labels keep their spaces in one text run in both layouts", async () => {
+  for (const placement of ["page", "panel"] as const) {
+    const buttons = elements(parse(await render(placement))).filter((element) => element.tag === "button");
+    for (const label of ["New spec", "Plan tickets", "Start Helper"]) {
+      assert.ok(buttons.some((button) => visibleText(button) === label), `${placement}: renders ${label}`);
+    }
+    for (const button of buttons.filter((button) => elements(button).some((element) => "data-term" in element.attrs))) {
+      // Separate flex items trim their edge spaces. Each button's complete
+      // label must stay together, including the inline hover definition.
+      const runs = button.children.map((child) => "text" in child ? child.text.trim() : visibleText(child).trim()).join("");
+      assert.equal(runs, visibleText(button).trim(), `${placement}: ${visibleText(button)} keeps its spaces inside its flex item`);
+    }
+  }
 });
 
 test("nothing the owner reads on the board or in Doctor uses a retired word", async () => {

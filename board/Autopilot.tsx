@@ -20,6 +20,7 @@ export function Autopilot({ state, saving = false, onChange }: {
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((limit) => <option key={limit} value={limit}>{limit}</option>)}
       </select>
     </label>
+    {state.waitingForLinear ? <span className="sq-autopilot-note" role="status">{state.pauseReason}</span> : null}
     {state.checkingMain ? <span className="sq-autopilot-note" role="status">Checking main…</span> : null}
     {saving ? <span className="sq-autopilot-note" role="status">Saving…</span> : null}
   </section>;

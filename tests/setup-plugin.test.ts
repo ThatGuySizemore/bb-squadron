@@ -15,7 +15,7 @@ const skillNames = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec"
 const allSetupFiles = ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"];
 
 /** A project with Matt's plugin installed but no docs/agents/squadron.md. */
-function host(options: { setupFiles: string[] }) {
+function host(options: { setupFiles: string[]; timeout?: boolean }) {
   const spawned: Parameters<BbPluginApi["sdk"]["threads"]["spawn"]>[0][] = [];
   const threads = new Map<string, ReturnType<typeof makeThreadResponse>>();
   const metadata = new Map<string, Record<string, unknown>>();
@@ -33,7 +33,8 @@ function host(options: { setupFiles: string[] }) {
           return { content, contentEncoding: "utf8", path, sha256: "tracker", sizeBytes: content.length };
         }
         assert.equal(path, "/repo/docs/agents/squadron.md");
-        throw new Error("ENOENT: no such file");
+        if (options.timeout) throw new Error("private host timeout");
+        throw Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
       } },
       skills: { list: async () => ({ skills: ["claude-code", "codex"].flatMap((provider) => skillNames.map((name) => ({
         id: `${provider}-${name}`, name: `mattpocock-skills:${name}`, description: null,
@@ -59,7 +60,7 @@ function host(options: { setupFiles: string[] }) {
   return { ...fake, spawned };
 }
 
-async function setup(t: import("node:test").TestContext, options: { setupFiles: string[] }) {
+async function setup(t: import("node:test").TestContext, options: { setupFiles: string[]; timeout?: boolean }) {
   const linear = workspace();
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const found = host(options);
@@ -80,6 +81,15 @@ test("a Linear project without squadron.md has no Scope, so the board offers Set
   assert.equal(board.doctor?.configurationFiles.find((file) => file.id === "project-settings")?.exists, false, "so the Set up button shows");
   await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }));
   assert.equal(spawned.length, 0, "no Lead starts");
+});
+
+test("a timed-out settings check warns without a setup item in Needs you or allowing Start", async (t) => {
+  const { harness, spawned } = await setup(t, { setupFiles: allSetupFiles, timeout: true });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.doctor?.checks.find((check) => check.id === "settings")?.status, "warning");
+  assert.deepEqual(needsYou(board).filter((item) => item.kind === "setup"), []);
+  await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }));
+  assert.equal(spawned.length, 0);
 });
 
 test("Set up starts one thread in the project checkout that runs Matt's setup when it's missing, then writes squadron.md from the default template", async (t) => {

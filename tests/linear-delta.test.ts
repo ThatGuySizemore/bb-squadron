@@ -12,6 +12,7 @@ const epoch = Date.parse("2026-11-14T12:00:00Z");
 const settle = async () => { for (let i = 0; i < 40; i++) await setImmediate(); };
 type Node = Omit<typeof specIssue, "parent" | "relations" | "inverseRelations"> & {
   parent: { id: string } | null;
+  childSummary?: { totalCount: number };
   relations: { nodes: unknown[]; pageInfo: typeof end };
   inverseRelations: { nodes: unknown[]; pageInfo: typeof end };
 };
@@ -261,4 +262,22 @@ test("a board action's reset survives an unchanged delta already in flight", asy
   assert.equal(f.requests.length, count);
   await f.advance(1);
   assert.equal(f.requests.length, count + 1, "the action keeps its 30 second deadline");
+});
+
+
+test("delta reads retain and refresh total child counts alongside label removal", async (t) => {
+  const f = await fixture(t);
+  const spec: Node = { ...specIssue, childSummary: { totalCount: 3 },
+    updatedAt: new Date(epoch + 1_000).toISOString() };
+  f.setNodes([spec]);
+  await f.reader.sync("one");
+  assert.equal(f.reader.getSnapshot("one").issues[0]?.childCount, 3);
+  await f.reader.sync("one");
+  assert.equal(f.reader.getSnapshot("one").issues[0]?.childCount, 3, "quiet deltas retain all children, including closed ones");
+  f.setNodes([{ ...spec, childSummary: { totalCount: 0 }, labels: { nodes: [], pageInfo: end },
+    updatedAt: new Date(epoch + 2_000).toISOString() }]);
+  await f.reader.sync("one");
+  const issue = f.reader.getSnapshot("one").issues[0];
+  assert.equal(issue?.childCount, 0, "a changed total can turn a spec into a work item");
+  assert.deepEqual(issue?.labels, [], "an explicit empty label list clears the cached labels");
 });

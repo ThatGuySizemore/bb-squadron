@@ -203,4 +203,19 @@ const queue: Fixture = {
     ] },
 };
 
-export const FIXTURES: Fixture[] = [squadronFlying, squadronReady, squadronPublished, bbBot, empty, states, liveSteps, queue];
+const workItems: Fixture = {
+  name: "work-items", projectName: "Synthetic work item lanes", tracker: { kind: "linear" },
+  board: { ...base, laneCapacity: 3, tracker: linear("Synthetic work item lanes"), ready: [], shaping: [], openIssues: [], lanes: [
+    { specId: "FIX-9", kind: "work-item", title: "Keep the work item's live step visible while its checks run", lead: codex,
+      leadThreadId: "work-item", branch: "work/fix-9", state: "flying", minutes: 12, acceptOwner: false, tickets: [], workingThreads: 1,
+      liveStep: { status: "active", step: "Running npm test", since: now - MIN } },
+    { specId: "FIX-10", kind: "work-item", title: "A stopped work item ready to Resume", lead: codex, leadThreadId: "stopped-item",
+      branch: "work/fix-10", state: "stopped", stopped: true, minutes: 21, acceptOwner: false, tickets: [] },
+    { specId: "FIX-20", title: "A spec with completed tickets included in its total", totalTicketCount: 5, lead: claude,
+      leadThreadId: "spec", branch: "spec/fix-20", state: "flying", minutes: 18, acceptOwner: false, workingThreads: 1,
+      tickets: [ticket("FIX-21", "Build the compact row", [], codex, "working")],
+      liveStep: { status: "active", step: "Waiting on worker", since: now - MIN } },
+  ] },
+};
+
+export const FIXTURES: Fixture[] = [squadronFlying, squadronReady, squadronPublished, bbBot, empty, states, liveSteps, queue, workItems];

@@ -1220,6 +1220,7 @@ button.sq-peg:hover {
 
 /* ---------- the narrow layout: a side panel, or a board 900px wide and under ---------- */
 
+.sq .sq-line-work-item,
 .sq[data-layout="narrow"] .sq-line {
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;

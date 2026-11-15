@@ -58,12 +58,14 @@ const routeText = (route: SquadronRoute) =>
 
 function seedPrompt(seed: Seed): string {
   const source = seed.kind ? trackerName(seed.kind) : "the tracker";
-  const lines = ["Use the squadron-planner skill to plan a spec with me."];
+  const lines = ["Use the squadron-planner skill to plan work with me."];
   if (seed.kind === "linear") { if (seed.project) lines.push("", `Linear project: ${seed.project}.`); }
   else if (seed.kind) lines.push("", `Tracker: ${source}${seed.project ? ` (${seed.project})` : ""}.`);
   if (!seed.issue) {
-    lines.push("", "Start from nothing: run `grill-with-docs` with me on what I want to build, then `to-spec` and `to-tickets`. " +
-      "Publish the spec and its tickets to this repo's tracker as docs/agents/issue-tracker.md says.");
+    lines.push("", "Start from nothing: run `grill-with-docs` with me on what I want to build, then choose the kind of work using GLOSSARY.md. " +
+      "For one piece of work, publish a work item with no parent spec and no child tickets; skip `to-spec` and `to-tickets`. " +
+      "For work needing multiple tickets, run `to-spec` and `to-tickets`, then publish the spec and its tickets. " +
+      "Publish to this repo's tracker as docs/agents/issue-tracker.md says.");
   } else if (seed.tickets) {
     if (seed.existingTickets.length) {
       lines.push("", "This spec already exists. Review the existing tickets and their readiness with me. Do not create duplicate tickets. " +

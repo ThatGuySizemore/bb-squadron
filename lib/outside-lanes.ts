@@ -4,7 +4,7 @@ import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { readWorkers, threadRoute, type LeadThread } from "./lead-threads.js";
 import { escapeRegExp } from "./issue-text.js";
 import { isActiveProjectThread } from "./project-thread.js";
-import { openSpecs, type PlanningThread } from "./board-derive.js";
+import { openLaneCandidates, type PlanningThread } from "./board-derive.js";
 
 /** One non-archived thread in a BB project, as outside-lane matching sees it. */
 export interface ProjectThread {
@@ -55,10 +55,10 @@ export function namedIntegrationBranches(text: string | null): string[] {
   return [...(text ?? "").matchAll(/integration branch[^`\n]{0,40}`([^`\s]+)`/gi)].map((match) => match[1]);
 }
 
-/** Specs an outside lane may fly: open, not being planned in Squadron, and without a Squadron Lead. */
+/** Top-level work an outside lane may fly: open, not being planned, and without a Squadron Lead. */
 export function outsideLaneSpecs(snapshot: TrackerSnapshot, leads: readonly LeadThread[], planning: readonly PlanningThread[] = []): TrackerIssue[] {
   const taken = new Set([...leads.map((lead) => lead.specId), ...planning.map((thread) => thread.issueId)]);
-  return openSpecs(snapshot, new Set()).filter((spec) => !taken.has(spec.id));
+  return openLaneCandidates(snapshot, new Set()).filter((spec) => !taken.has(spec.id));
 }
 
 export type OutsideLaneReader = (projectId: string, specs: readonly TrackerIssue[]) => Promise<LeadThread[]>;

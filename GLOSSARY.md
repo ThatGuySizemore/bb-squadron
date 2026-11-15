@@ -8,21 +8,23 @@ These one-line definitions are also exported by `lib/owner-words.ts` for the boa
 
 **Board**: The Squadron page where you plan work, start it and see how it is going.
 
-**Spec**: A plan for one feature, split into tickets.
+**Spec**: A plan whose tickets are its sub-issues.
 _Avoid_: epic, feature issue, PRD → Spec
 
-**Ticket**: One piece of a spec that a worker can finish in one sitting.
+**Ticket**: One piece of a spec.
 _Avoid_: story → Ticket; task for a piece of a spec → Ticket
 
-**Ready**: A spec with at least one ticket that can start now.
+**Work item**: An issue that stands alone: no parent spec, no tickets of its own.
+
+**Ready**: A spec with a ticket that can start now, or a work item ready to start.
 
 **Shaping**: A spec that still needs planning or has no ticket that can start now.
 
-**Lane**: Work on one spec, from Start to a merged pull request.
+**Lane**: Work on one spec or work item, from Start to a merged pull request.
 
-**Flying**: A spec whose lane is underway.
+**Flying**: A spec or work item whose lane is underway.
 
-**Landed**: A spec whose work has merged into the main branch.
+**Landed**: A spec or work item whose work has merged into the main branch.
 
 **Held**: A ticket set aside until its hold is cleared.
 _Avoid_: paused, skipped ticket → Held; blocked for a hold → Held
@@ -51,7 +53,7 @@ _Avoid_: Helper for the orchestrator or plugin code → Squadron
 
 **Trigger**: An event or owner action that starts a task, such as pressing Plan or Start on the board.
 
-**Run**: One execution of a task. A lane is a run of the `implement-spec` task, carried out by a Lead with workers, on one integration branch with one pull request.
+**Run**: One execution of a task. A spec lane runs `implement-spec`, carried out by a Lead with workers. A work item lane runs `implement` in one standalone thread. Each uses one branch and one pull request.
 
 **Runner**: What executes a task. For an `implement-spec` run, this is the Lead's agent thread in BB.
 
@@ -74,7 +76,7 @@ _Avoid_: builder, implementer, subagent → Worker
 
 **Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its pull request merges.
 
-**Planning thread**: A thread started from the Plan button that runs `grill-with-docs`, then `to-spec` and `to-tickets`, with the owner.
+**Planning thread**: A thread started from the Plan button that runs `grill-with-docs` with the owner. Multi-ticket specs continue through `to-spec` and `to-tickets`; one-piece work becomes a work item.
 
 **Blocker**: An issue that must be Done before another may start, as recorded in the repo's ticket tracker.
 _Avoid_: dependency in owner-facing copy, prerequisite → Blocker
@@ -83,11 +85,11 @@ _Avoid_: dependency in owner-facing copy, prerequisite → Blocker
 
 **Held ticket**: An open ticket carrying `hold`, `needs-triage`, `needs-info`, `ready-for-human`, `wontfix`, or a hold label the repo adds. In trackers without labels, a `Status:` line can name a hold. The Lead skips it and the board shows Held. A lane can finish delivered with held tickets, leaving them and the spec open.
 
-**Open issue**: An open issue that is neither a spec nor one of its tickets. It waits in the board's Open issues section until planning turns it into a spec.
+**Open issue**: An open issue waiting for planning, including a work item that is not ready to start.
 
 **Outside lane**: Work started outside Squadron and shown read-only, with a link to its thread. Squadron offers no Stop, Resume or Merge for it.
 
-**States**: Specs are Shaping or Ready before a lane starts. Lane states include Flying, Stopped, In review and Landed, read from threads, the tracker and the pull request or local merge, never stored. Ticket states are Waiting, Held, Working, In branch and Done. Ready requires `ready-for-agent` and at least one open, unblocked ticket that is not held. A spec stays Shaping while planning is open or no ticket can start.
+**States**: Specs are Shaping or Ready before a lane starts. Lane states include Flying, Stopped, In review and Landed, read from threads, the tracker and the pull request or local merge, never stored. Ticket states are Waiting, Held, Working, In branch and Done. A Ready spec requires `ready-for-agent` and at least one open, unblocked ticket that is not held. A spec stays Shaping while planning is open or no ticket can start. A Ready work item requires `ready-for-agent`, no hold and no open planning thread. Other work items wait in Open issues with Plan.
 _Avoid_: Lane state, Ticket state as separate entries → States
 
 **Status mapping**: The table naming the Linear statuses for spec and ticket states. Only Linear repos need it; Held comes from hold labels rather than a mapped status.

@@ -3,7 +3,8 @@ import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from 
 import { deriveBoard } from "./board-derive.js";
 import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import { resolveLeadRoute } from "./squadron-settings.js";
+import { resolveLeadRoute, resolveRoute } from "./squadron-settings.js";
+import { workItemPrompt } from "./work-item-prompt.js";
 import type { DoctorReport } from "./doctor.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { PULL_REQUEST_PLUGIN, readPullRequests } from "./pull-requests.js";
@@ -47,7 +48,10 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
       connection: { status: "connected", message: "" }, now: Date.now() }).board;
     const returning = existing && previous.lanes.some((lane) => lane.leadThreadId === existing.thread.id && lane.state === "landed")
       && previous.ready.some((row) => row.id === specId);
-    if (existing && (isRunningThread(existing.thread) || !returning)) return { threadId: existing.thread.id };
+    if (existing && (isRunningThread(existing.thread) || !returning)) {
+      if (existing.kind === "work-item") throw new Error(`${specId} already has a lane. Open its thread or use Resume if it is stopped.`);
+      return { threadId: existing.thread.id };
+    }
     const doctor = await sources.doctor(projectId);
     const { board } = deriveBoard({ snapshot, leads: [...leads, ...outside], planning, settings: checkout.settings, doctor, ...progress, pullRequests,
       connection: { status: "connected", message: "" }, now: Date.now() });
@@ -55,16 +59,22 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     if (!ready || !spec) throw new Error(`${specId} isn't a ready spec in this project's tracker. Read the board again.`);
     if (ready.startReason) throw new Error(ready.startReason);
     if (!checkout.settings?.ok) throw new Error("Fix docs/agents/squadron.md, then try Start again.");
-    const route = resolveLeadRoute(checkout.settings.settings, spec.labels.map((label) => label.name));
+    const workItem = ready.kind === "work-item";
+    // Autopilot never starts work items, even if a caller supplies one directly.
+    if (workItem && startedBy === "autopilot") return null;
+    const route = (workItem ? resolveRoute : resolveLeadRoute)(checkout.settings.settings, spec.labels.map((label) => label.name));
     const { holdLabels } = checkout.settings.settings;
     const ownerPath = (id: "playbook" | "machine-profile") => doctor.configurationFiles.find((file) => file.id === id)?.path;
     if (allowed && !await allowed()) return null;
     const thread = await bb.sdk.threads.spawn({
-      projectId, title: `Lead ${spec.identifier}`, visibility: "visible",
+      projectId, title: `${workItem ? "Work item" : "Lead"} ${spec.identifier}`, visibility: "visible",
       providerId: route.family === "claude" ? "claude-code" : "codex", model: route.model, reasoningLevel: route.effort, serviceTier: "default",
-      pluginMetadata: { role: "lead", specId: spec.id, startedBy, ...(returning ? { previousLeadId: existing.thread.id } : {}) },
+      pluginMetadata: { role: "lead", specId: spec.id, startedBy, ...(workItem ? { kind: "work-item" } : {}), ...(returning ? { previousLeadId: existing.thread.id } : {}) },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
-      prompt: ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
+      prompt: workItem ? workItemPrompt({ identifier: spec.identifier, url: spec.url, settings: checkout.settings.settings,
+        houseRules: ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md",
+        machine: ownerPath("machine-profile") ?? "~/.bb-squadron/machine.md", acceptOwner: ready.acceptOwner,
+      }) : ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
         ...(returning ? [
           `This spec's previous lane landed. Start a fresh integration branch from this new worktree's default branch; never reuse the landed branch ${existing.branch}.`,
           `Previous Lead: ${existing.thread.id}. Its branch, workers and PR are evidence for that lane only. Read remaining tickets afresh.`,

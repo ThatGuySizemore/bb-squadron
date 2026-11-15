@@ -44,6 +44,34 @@ test("reported questions survive reload, clear when work resumes, and notify aga
   assert.equal(f.sends().length, 1, "a cleared question returning is a new event");
 });
 
+test("a stopped work item sends one Needs you line across repeated observations and reload", async (t) => {
+  const f = await fixture(t, { issues: () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.filter((node) => node.identifier === "FIX-9"),
+  } } }) });
+  f.harness.sdk.stub("threads.getPluginMetadata", async ({ threadId }: { threadId: string }) =>
+    threadId === "lead-one" ? { role: "lead", specId: "fix-9", kind: "work-item" } : {});
+  const lead = f.lead("one", "Work item FIX-9");
+  f.threads.set(lead.id, { ...lead, status: "idle", runtime: { displayStatus: "idle" } });
+  f.events.set(lead.id, [
+    { id: "completed", threadId: lead.id, seq: 4, createdAt: epoch, scope: { kind: "thread" },
+      type: "turn/completed", data: { status: "completed", providerThreadId: null } },
+    { id: "stop", threadId: lead.id, seq: 3, createdAt: epoch - 1, scope: { kind: "thread" }, type: "client/turn/requested", data: {
+      direction: "outbound", execution: { model: "fixture", permissionMode: "auto", reasoningLevel: "medium", serviceTier: "default", source: "client/turn/requested" },
+      source: "tell", senderThreadId: null, initiator: "user", input: [{ type: "text", text: STOP_MESSAGE, mentions: [] }],
+      request: { method: "turn/start", params: {} }, requestId: "stop", target: { kind: "auto", expectedTurnId: null } } },
+  ]);
+  await f.startWatcher();
+  assert.deepEqual((await f.board()).lanes.map((lane) => [lane.specId, lane.kind, lane.state]), [["FIX-9", "work-item", "stopped"]]);
+  await f.advance(120_000);
+  assert.deepEqual(f.sends().map((send) => send.input[0].text), [
+    "Fixture | Stopped | FIX-9 | The lane stopped. | @thread:lead-one",
+  ]);
+  await f.advance(120_000);
+  assert.equal(f.sends().length, 1);
+  await f.reload(); await f.startWatcher(); await f.advance(120_000);
+  assert.equal(f.sends().length, 0, "reload retains the existing notification receipt");
+});
+
 
 test("a normally completed quiet Lead becomes a Question at five minutes in the board and Helper batch", async (t) => {
   const f = await fixture(t);

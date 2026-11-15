@@ -21,6 +21,7 @@ const reference = z.object({
   updatedAt: z.string().datetime(), team: z.object({ id: z.string() }), project: z.object({ id: z.string() }).nullable(),
   parent: z.object({ id: z.string() }).nullable(), state: mirrorStateSchema,
   assignee: z.object({ id: z.string(), name: z.string() }).nullable().optional(),
+  childSummary: z.object({ totalCount: z.number().int().nonnegative() }).optional(),
 });
 const issueNode = reference.extend({ labels: connection(mirrorLabelSchema) });
 const self = z.object({ id: z.string() });
@@ -299,6 +300,8 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
         ...(node.priority !== undefined ? { priority: node.priority } : {}),
         ...(node.createdAt !== undefined ? { createdAt: node.createdAt } : {}),
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
+        ...(node.childSummary ? { childCount: node.childSummary.totalCount }
+          : existing?.childCount !== undefined ? { childCount: existing.childCount } : {}),
         state: node.state, labels: labels ?? existing?.labels ?? [],
         assignees: node.assignee === undefined ? existing?.assignees ?? [] : node.assignee ? [node.assignee] : [],
         inProject: walked.has(node.id),

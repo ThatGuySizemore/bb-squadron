@@ -39,7 +39,8 @@ function parse(query: string): Field[] {
     expect("{");
     const fields: Field[] = [];
     while (peek() !== "}") {
-      const name = next();
+      let name = next();
+      if (peek() === ":") { next(); name = next(); }
       const { first = null } = args();
       while (peek() === "@") { next(); next(); args(); }
       fields.push({ name, first, children: peek() === "{" ? selection() : null });

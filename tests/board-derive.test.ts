@@ -79,6 +79,7 @@ test("a spec waits for Doctor, open tickets and an available frontier", () => {
     issue("FIX-1", { labels: ["ready-for-agent"] }),
     issue("FIX-2", { parent: "FIX-1" }),
     issue("FIX-5", { labels: ["ready-for-agent"] }),
+    issue("FIX-51", { parent: "FIX-5", done: true }),
     issue("FIX-6", { labels: ["ready-for-agent"] }),
     issue("FIX-7", { parent: "FIX-6" }),
   ], [blocks("FIX-2", "FIX-7")])));
@@ -156,15 +157,17 @@ test("Open issues lists every open issue that isn't a spec or a ticket, each rea
   ])));
   assert.deepEqual(board.openIssues.map(({ id, title, labels }) => ({ id, title, labels })), [
     { id: "FIX-3", title: "Idea", labels: ["bug"] },
-    { id: "FIX-5", title: "Only closed children", labels: [] },
   ], "a Duplicate issue is closed, like a Done one");
   assert.deepEqual(board.ready.map((spec) => spec.id), ["FIX-1"]);
-  assert.deepEqual(board.shaping, []);
+  assert.deepEqual(board.shaping.map(({ id, ticketCount, totalTicketCount }) => ({ id, ticketCount, totalTicketCount })), [
+    { id: "FIX-5", ticketCount: 0, totalTicketCount: 1 },
+  ], "a spec with only completed tickets stays a spec");
 });
 
 test("a spec is Shaping while its planning thread is open, it has tickets but no ready label, or the label but no tickets", () => {
   const { board } = deriveBoard(input(snapshot([
     issue("FIX-10", { title: "Being planned" }),
+    issue("FIX-11", { parent: "FIX-10", done: true }),
     issue("FIX-20", { title: "Tickets, no label" }),
     issue("FIX-21", { parent: "FIX-20" }), issue("FIX-22", { parent: "FIX-20" }),
     issue("FIX-30", { title: "Label, no tickets", labels: ["ready-for-agent"] }),
@@ -173,13 +176,13 @@ test("a spec is Shaping while its planning thread is open, it has tickets but no
     issue("FIX-41", { parent: "FIX-40" }),
   ]), { planning: [{ issueId: "fix-10", threadId: "thr_plan_10" }, { issueId: "fix-40", threadId: "thr_plan_40" }] }));
   assert.deepEqual(board.shaping, [
-    { id: "FIX-10", title: "Being planned", url: "https://linear.app/fixture/issue/FIX-10", ticketCount: 0,
+    { id: "FIX-10", title: "Being planned", url: "https://linear.app/fixture/issue/FIX-10", ticketCount: 0, totalTicketCount: 1,
       missing: "Planning is still open in its thread.", action: "resume", threadId: "thr_plan_10" },
-    { id: "FIX-20", title: "Tickets, no label", url: "https://linear.app/fixture/issue/FIX-20", ticketCount: 2,
+    { id: "FIX-20", title: "Tickets, no label", url: "https://linear.app/fixture/issue/FIX-20", ticketCount: 2, totalTicketCount: 2,
       missing: "Has 2 tickets but no ready-for-agent label.", action: "tickets" },
-    { id: "FIX-30", title: "Label, no tickets", url: "https://linear.app/fixture/issue/FIX-30", ticketCount: 0,
+    { id: "FIX-30", title: "Label, no tickets", url: "https://linear.app/fixture/issue/FIX-30", ticketCount: 0, totalTicketCount: 1,
       missing: "Has the ready-for-agent label but no open tickets.", action: "tickets" },
-    { id: "FIX-40", title: "Still planning tickets", url: "https://linear.app/fixture/issue/FIX-40", ticketCount: 1,
+    { id: "FIX-40", title: "Still planning tickets", url: "https://linear.app/fixture/issue/FIX-40", ticketCount: 1, totalTicketCount: 1,
       missing: "Planning is still open in its thread.", action: "resume", threadId: "thr_plan_40" },
   ]);
   assert.deepEqual(board.openIssues, [], "a spec being shaped and its tickets leave Open issues");

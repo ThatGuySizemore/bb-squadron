@@ -11,7 +11,8 @@ const reference = "id identifier title description url updatedAt sortOrder prior
 /** `relations` lists this issue as `issue`; `inverseRelations` lists it as `relatedIssue`. Only the other end needs its fields. */
 const outgoing = `nodes { id type issue { id } relatedIssue { ${reference} } } ${pageInfo}`;
 const incoming = `nodes { id type issue { ${reference} } relatedIssue { id } } ${pageInfo}`;
-const issueFields = `${reference} labels(first: ${PAGE.labels}) { nodes { id name color } ${pageInfo} }`;
+const issueFields = `${reference} childSummary: children(first: 1) { totalCount }
+  labels(first: ${PAGE.labels}) { nodes { id name color } ${pageInfo} }`;
 const graphFields = `${issueFields}
   relations(first: ${PAGE.relations}) { ${outgoing} } inverseRelations(first: ${PAGE.relations}) { ${incoming} }`;
 

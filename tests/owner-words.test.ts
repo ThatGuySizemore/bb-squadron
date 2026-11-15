@@ -14,7 +14,7 @@ function glossaryOwnerWords(): Record<string, string> {
 
 test("the glossary gives every agreed owner word a one-line definition", () => {
   assert.deepEqual(Object.keys(glossaryOwnerWords()).sort(), [
-    "Board", "Spec", "Ticket", "Ready", "Shaping", "Lane", "Flying", "Landed",
+    "Board", "Spec", "Ticket", "Work item", "Ready", "Shaping", "Lane", "Flying", "Landed",
     "Held", "Needs you", "Helper", "House rules", "Scope", "Autopilot",
   ].sort());
 });

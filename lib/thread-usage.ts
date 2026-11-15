@@ -19,10 +19,11 @@ export type ThreadUsage =
     seq: number;
     at: number;
     /**
-     * one: the earliest and latest usage events name the same provider session.
-     * several: they don't, so the total covers only the latest session and earlier sessions are left out, not added.
+     * Always the latest provider session's total only; BB doesn't prove it covers the thread's whole life.
+     * earlierSessionSeen: the thread's earliest usage event names a different session, whose usage is left out, not added.
      */
-    sessions: "one" | "several";
+    coverage: "latest provider session";
+    earlierSessionSeen: boolean;
   }
   | { state: "unknown"; reason: string };
 
@@ -42,7 +43,7 @@ export async function readThreadUsage(bb: BbPluginApi, threadId: string): Promis
     const { inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens, totalTokens } = latest.data.tokenUsage.total;
     return { state: "reported", total: { inputTokens, cachedInputTokens, outputTokens, reasoningOutputTokens, totalTokens },
       providerThreadId: latest.data.providerThreadId, seq: latest.seq, at: latest.createdAt,
-      sessions: earliest && earliest.data.providerThreadId !== latest.data.providerThreadId ? "several" : "one" };
+      coverage: "latest provider session", earlierSessionSeen: earliest !== null && earliest.data.providerThreadId !== latest.data.providerThreadId };
   } catch {
     return { state: "unknown", reason: "BB couldn't read this thread's usage." };
   }

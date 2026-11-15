@@ -10,12 +10,12 @@ It reads the caller's project unless `--project` names another. `--since` keeps 
 
 ## Where each field comes from
 
-- **Tickets and attempts**: launch records in each thread's metadata, active and archived. Every attempt shows, including replaced, stopped and failed ones. Tickets worked without a launch record aren't listed; Lead children without one are listed separately with their usage.
+- **Tickets and attempts**: launch records in each thread's metadata, active and archived. Every attempt shows, including replaced, stopped and failed ones. Tickets worked without a launch record, including all work from before launch records existed, aren't listed; Lead children without one are listed separately with their usage.
 - **Category**: set by the ticket's first launch: `routine` (the Worker route), `hard` (Worker (hard)), `label:<name>` (a repo label exception) or another role. A routine ticket later finished by a higher effort or a Worker (hard) replacement stays routine, with every attempt, strike and escalation in its row.
 - **Route**: what Squadron requested beside what BB reports the thread runs, with any difference named.
-- **Completion**: the tracker's state and completion date, read by ticket ID. For Linear this is a live read. GitHub Issues and Local markdown give only their saved state, so dates and results stay unknown.
+- **Completion**: the tracker's state and completion date, read by ticket ID. For Linear this is a live read. GitHub Issues and Local markdown give only their saved state, so dates and results stay unknown. A saved GitHub CLOSED doesn't say whether the issue was completed or not planned, so its outcome is unknown and it never counts; Local markdown counts only an explicit `Status: Done`. Each read is fresh: a ticket reopened since, or one the read can't confirm, isn't completed.
 - **Checks, first pass, review defects, repair rounds, strikes and owner interventions**: the `squadron-result` block in the ticket's completion comment (see `report.md` beside the Lead skill). Anything missing is unknown.
-- **Token usage**: the latest cumulative total BB reported for each thread, with its event. A thread whose provider session changed shows only its latest session. Usage BB didn't report is unknown, never zero. Leads, reviewers, planning threads and workers on several tickets are listed once under shared threads and never split across tickets. The report has no prices, savings or account-window figures.
+- **Token usage**: the latest cumulative total BB reported for each thread's latest provider session, with its event. BB doesn't prove that covers the whole thread, so the report says latest session; when the thread's earliest usage names a different session, it says that session's usage isn't included. Totals are never added across sessions. Usage BB didn't report is unknown, never zero. Leads, reviewers, planning threads and workers on several tickets are listed once under shared threads and never split across tickets. The report has no prices, savings or account-window figures.
 
 ## Checkpoint
 

@@ -27,8 +27,6 @@ export function registerCheckpoint(bb: BbPluginApi, sources: CheckpointSources) 
   const lifetime = new AbortController();
   const checkedAt = new Map<string, number>();
   const running = new Set<string>();
-  /** Tickets already read as Done this session, so a repeated check reads only the rest. Not stored. */
-  const completed = new Map<string, Set<string>>();
   let disposed = false;
   const work = new Set<Promise<void>>();
   bb.onDispose(async () => { disposed = true; lifetime.abort(); await Promise.allSettled([...work]); });
@@ -43,14 +41,9 @@ export function registerCheckpoint(bb: BbPluginApi, sources: CheckpointSources) 
     const candidates = checkpointCandidates(records);
     // Fewer launched routine tickets than the setting can't reach it, so the tracker isn't read.
     if (!start || candidates.length < setting) return;
-    const seen = completed.get(projectId) ?? new Set<string>();
-    completed.set(projectId, seen);
-    const unread = candidates.filter((ticket) => !seen.has(ticket.id));
-    if (unread.length) {
-      const history = await sources.history.read(projectId, unread, { comments: false, signal: lifetime.signal });
-      for (const ticket of unread) if (history.tickets.get(ticket.id)?.outcome === "completed") seen.add(ticket.id);
-    }
-    const counted = candidates.filter((ticket) => seen.has(ticket.id)).length;
+    // Every candidate is read afresh each check: a reopened ticket, or one this read can't confirm, doesn't count.
+    const history = await sources.history.read(projectId, candidates, { comments: false, signal: lifetime.signal });
+    const counted = candidates.filter((ticket) => history.tickets.get(ticket.id)?.outcome === "completed").length;
     if (counted < setting || disposed) return;
     await sources.notifier.notice(projectId, CHECKPOINT_NOTICE, checkpointLine(projectName, counted, setting, start.threadId));
   }

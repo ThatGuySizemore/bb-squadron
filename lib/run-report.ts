@@ -188,7 +188,7 @@ export function deriveRunReport(input: ReportInput): RunReport {
   if (!history) notes.push("The tracker wasn't read, so every ticket's outcome is unknown.");
   else if (history.source === "snapshot") notes.push("This tracker gives no completion dates or comments here, so dates and results are unknown.");
   if (records.unrecorded.length) notes.push(`${records.unrecorded.length} thread${records.unrecorded.length === 1 ? "" : "s"} started by a Lead without a launch record ${records.unrecorded.length === 1 ? "is" : "are"} listed separately; their tickets are unknown.`);
-  notes.push("Tickets come from launch records. Work done without one isn't listed.");
+  notes.push("Tickets come from launch records. Work done without one, including all work before launch records existed, isn't listed.");
   const shared = records.attempts.filter((attempt) => attempt.record.tickets.length !== 1)
     .filter((attempt) => input.since === null || attempt.record.launchedAt >= input.since
       || attempt.record.tickets.some((ticket) => rows.some((row) => row.id === ticket.id)));
@@ -231,7 +231,7 @@ function usageText(usage: AttemptUsage): string {
   if (usage.state === "shared") return `usage shared with ${usage.tickets.join(", ")}, listed under shared threads`;
   if (usage.state === "unknown") return `usage unknown (${usage.reason})`;
   const { total } = usage;
-  return `${number(total.totalTokens)} tokens (input ${number(total.inputTokens)}, cached ${number(total.cachedInputTokens)}, output ${number(total.outputTokens)}, reasoning ${number(total.reasoningOutputTokens)})${usage.sessions === "several" ? ", latest provider session only" : ""}`;
+  return `${number(total.totalTokens)} tokens in its latest provider session (input ${number(total.inputTokens)}, cached ${number(total.cachedInputTokens)}, output ${number(total.outputTokens)}, reasoning ${number(total.reasoningOutputTokens)})${usage.earlierSessionSeen ? "; an earlier session's usage isn't included" : ""}`;
 }
 function routeText(route: LaunchRoute) {
   return `${route.providerId ?? "BB default"} ${route.model ?? "default model"} ${route.effort}`;
@@ -266,7 +266,7 @@ export function formatRunReport(report: RunReport): string {
     if (row.escalations.length) lines.push(`  Escalations: ${row.escalations.map((item) => `${item.kind}: ${item.reason}`).join("; ")}`);
     for (const problem of row.problems) lines.push(`  Note: ${problem}`);
   };
-  if (!completed.length) lines.push("", "No completed tickets.");
+  if (!completed.length) lines.push("", "No completed tickets in launch records.");
   completed.forEach(ticket);
   if (other.length) { lines.push("", "Not completed (shown for their attempts and usage; they never count):"); other.forEach(ticket); }
   if (report.sharedThreads.length) {

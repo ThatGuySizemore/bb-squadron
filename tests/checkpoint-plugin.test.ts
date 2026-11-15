@@ -12,10 +12,12 @@ const route = { providerId: "codex", model: "gpt-6.1-sol", effort: "medium", ser
 
 async function fixture(t: TestContext, checkpoint: string | null) {
   const done = new Set<string>();
+  /** Tickets whose Linear read fails. */
+  const failing = new Set<string>();
   const comments = new Map<string, string>();
   const ticketVariables: Record<string, unknown>[] = [];
   const f = await helperFixture(t, epoch, {
-    ticketHistory: (id, variables) => (ticketVariables.push(variables), Response.json({ data: { issue: { id, identifier: id.toUpperCase(), title: `Ticket ${id}`, url: `https://linear.app/fixture/issue/${id}`,
+    ticketHistory: (id, variables) => (ticketVariables.push(variables), failing.has(id) ? Response.json({ errors: [{ message: "unavailable" }] }, { status: 500 }) : Response.json({ data: { issue: { id, identifier: id.toUpperCase(), title: `Ticket ${id}`, url: `https://linear.app/fixture/issue/${id}`,
       completedAt: done.has(id) ? "2026-11-15T11:00:00.000Z" : null, state: { type: done.has(id) ? "completed" : "started" },
       ...variables.withComments ? { comments: { nodes: comments.has(id) ? [{ id: `c-${id}`, body: comments.get(id), createdAt: "2026-11-15T11:00:00.000Z" }] : [],
         pageInfo: { hasNextPage: false, endCursor: null } } } : {} } } })),
@@ -38,7 +40,7 @@ async function fixture(t: TestContext, checkpoint: string | null) {
   const historyReads = () => f.linear.operations.filter((name) => name === "SquadronTicketHistory").length;
   const original = f.reload;
   const reload = async () => { await original(); stub(); };
-  return Object.assign(f, { done, comments, ticketVariables, launch, historyReads, metadata, reload });
+  return Object.assign(f, { done, failing, comments, ticketVariables, launch, historyReads, metadata, reload });
 }
 
 test("the checkpoint wakes only that project's Helper once, at n completed routine tickets", async (t) => {
@@ -109,6 +111,25 @@ test("the checkpoint starts at the first policy Worker BB confirms, skipping one
   assert.match(f.sends()[0].input[0].text, new RegExp(`1 routine tickets[^]*@thread:${start}$`), "fix-20 predates the verified start and doesn't count");
 });
 
+test("a ticket reopened before the threshold, or one a fresh read can't confirm, never counts from an earlier Done", async (t) => {
+  const f = await fixture(t, "2");
+  f.launch("one", "fix-21"); f.launch("one", "fix-24"); f.launch("one", "fix-25");
+  f.done.add("fix-21");
+  await f.startWatcher(); await f.advance(CHECKPOINT_CHECK_MS);
+  // fix-21 was Done at the last check, then reopened; fix-24 completes. Only one is Done now.
+  f.done.delete("fix-21"); f.done.add("fix-24");
+  await f.advance(CHECKPOINT_CHECK_MS); await f.advance(120_000);
+  assert.equal(f.sends().length, 0, "a reopened ticket's earlier Done doesn't count");
+  // fix-21 is Done again but its fresh read fails: an older Done never fills in for an unknown read.
+  f.done.add("fix-21"); f.failing.add("fix-21");
+  await f.advance(CHECKPOINT_CHECK_MS); await f.advance(120_000);
+  assert.equal(f.sends().length, 0, "a failed read is unknown, not Done");
+  f.failing.delete("fix-21");
+  await f.advance(CHECKPOINT_CHECK_MS); await f.advance(120_000);
+  assert.equal(f.sends().length, 1);
+  assert.match(f.sends()[0].input[0].text, /\| Checkpoint \| 2 routine tickets \|/);
+});
+
 test("a failed send stays pending and is delivered once on retry", async (t) => {
   const f = await fixture(t, "1");
   f.launch("one", "fix-21");
@@ -143,7 +164,8 @@ test("bb squadron report reads the caller's project by default, as text or JSON,
   const json = await f.harness.behavior.runCli(["report", "--json", "--project", "Fixture"], { threadId: "helper" });
   const report = JSON.parse(json.stdout);
   assert.equal(report.projectId, "one");
-  assert.deepEqual(report.tickets[0].attempts[0].usage, { state: "reported", total, providerThreadId: "provider-1", seq: 12, at: epoch - 5000, sessions: "one" });
+  assert.deepEqual(report.tickets[0].attempts[0].usage, { state: "reported", total, providerThreadId: "provider-1", seq: 12, at: epoch - 5000,
+    coverage: "latest provider session", earlierSessionSeen: false });
   assert.deepEqual(report.tickets[1].checks, { state: "unknown", reason: "The ticket has no result block in its comments." });
   const since = await f.harness.behavior.runCli(["report", "--since", "2026-11-16"], { threadId: "helper", projectId: "one" });
   assert.doesNotMatch(since.stdout, /FIX-21/);

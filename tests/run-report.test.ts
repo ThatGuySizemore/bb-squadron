@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { deriveRunReport, formatRunReport, type ReportInput } from "../lib/run-report.js";
 import type { LaunchAttempt, LaunchRecord, LaunchRecords } from "../lib/launch-record.js";
-import type { HistoryRead, TicketHistory } from "../lib/ticket-history.js";
+import { createTicketHistoryReader, type HistoryRead, type TicketHistory } from "../lib/ticket-history.js";
+import type { TrackerSnapshot } from "../lib/tracker-contract.js";
 import { latestResult } from "../lib/ticket-result.js";
 import type { ThreadUsage } from "../lib/thread-usage.js";
 
@@ -32,7 +33,8 @@ function done(id: string, completedAt: string | null, body?: string): TicketHist
 }
 const history = (...tickets: TicketHistory[]): HistoryRead => ({ source: "linear", tickets: new Map(tickets.map((item) => [item.id, item])) });
 const block = (value: object) => `Done. Merged into the integration branch.\n\n\`\`\`squadron-result\n${JSON.stringify({ version: 1, ...value })}\n\`\`\`\n`;
-const used = (total: number, providerThreadId = "p"): ThreadUsage => ({ state: "reported", providerThreadId, seq: 7, at: 1, sessions: "one",
+const used = (total: number, providerThreadId = "p", earlierSessionSeen = false): ThreadUsage => ({ state: "reported", providerThreadId, seq: 7, at: 1,
+  coverage: "latest provider session", earlierSessionSeen,
   total: { inputTokens: total - 100, cachedInputTokens: 10, outputTokens: 100, reasoningOutputTokens: 5, totalTokens: total } });
 function input(launches: LaunchRecords, read: HistoryRead | null, usage: Record<string, ThreadUsage> = {}, extra: Partial<ReportInput> = {}): ReportInput {
   return { projectId: "p1", projectName: "Fixture", readAt: Date.parse("2026-11-15T12:00:00Z"), since: null, checkpoint: 3,
@@ -59,7 +61,7 @@ test("a clean first pass reports its route, checks, review and usage from the ti
   assert.match(text, /A Ticket a \| completed 2026-11-15T10:00:00Z \| routine \| counts toward the checkpoint/);
   assert.match(text, /Checks: npm run check passed; npm test passed/);
   assert.match(text, /First pass: yes \| Review defects: 0 \| Repair rounds: 0 \| Strikes: 0 \| Owner interventions: 0/);
-  assert.match(text, /1,200 tokens/);
+  assert.match(text, /1,200 tokens in its latest provider session \(/);
   assert.doesNotMatch(text, /\$|price|cost|saving|%/i);
 });
 
@@ -72,7 +74,7 @@ test("a strike and escalation keep every attempt, its usage and the reason, and 
   const report = deriveRunReport(input(records([first, raised, hard]), history(done("b", "2026-11-15T11:00:00Z", block({
     checks: [{ command: "npm run check", result: "passed" }], firstPass: false, reviewDefects: 2, repairRounds: 2,
     strikes: [{ reason: "Quick check failed after done." }], ownerInterventions: 1 }))),
-  { w1: used(500), w2: used(700), w3: { state: "unknown", reason: "BB has no token usage for this thread." } }));
+  { w1: used(500), w2: used(700, "p2", true), w3: { state: "unknown", reason: "BB has no token usage for this thread." } }));
   const [row] = report.tickets;
   // Regression: a routine ticket finished by a raised effort or Worker (hard) replacement still counts once as routine.
   assert.equal(row.category, "routine");
@@ -87,6 +89,8 @@ test("a strike and escalation keep every attempt, its usage and the reason, and 
   const text = formatRunReport(report);
   assert.match(text, /Strikes: 1 \(Quick check failed after done\.\)/);
   assert.match(text, /effort escalation: Checks were too thin\./);
+  // Usage is never claimed for a whole thread: the latest session only, and a different earlier session is named.
+  assert.match(text, /700 tokens in its latest provider session \([^)]*\); an earlier session's usage isn't included/);
   assert.match(text, /usage unknown \(BB has no token usage for this thread\.\)/);
 });
 
@@ -167,4 +171,30 @@ test("shipped docs describe the Checkpoint neutrally, with no owner's value bake
     const text = readFileSync(file, "utf8");
     assert.doesNotMatch(text, /Checkpoint \| \d|\bten\b|first 10\b/i, file);
   }
+});
+
+test("no completed tickets is scoped to launch records, and the historical gap stays stated", () => {
+  const report = deriveRunReport(input(records([]), history()));
+  const text = formatRunReport(report);
+  assert.match(text, /No completed tickets in launch records\./);
+  assert.match(text, /Work done without one, including all work before launch records existed, isn't listed\./);
+});
+
+test("saved GitHub CLOSED is unknown, not completed; Local markdown counts only an explicit Done", async () => {
+  const issue = (id: string, name: string, type: string) => ({ id, identifier: id, title: id, description: null, url: `u/${id}`, updatedAt: "2026-11-15T00:00:00Z",
+    parentId: null, state: { id: name, name, type }, labels: [], assignees: [], inProject: true });
+  const snapshot = (kind: TrackerSnapshot["kind"], issues: ReturnType<typeof issue>[]): TrackerSnapshot =>
+    ({ kind, bbProjectId: "p1", project: { name: "Fixture" }, issues, relations: [], labels: [], states: [], syncedAt: 1, error: null });
+  const linear = { graphql: async () => { throw new Error("not Linear"); } };
+  const read = async (kind: TrackerSnapshot["kind"], issues: ReturnType<typeof issue>[]) =>
+    (await createTicketHistoryReader(linear, { getSnapshot: () => snapshot(kind, issues) })
+      .read("p1", issues.map((item) => ({ id: item.id, identifier: item.id })), { comments: false })).tickets;
+  const github = await read("github", [issue("#1", "CLOSED", "completed"), issue("#2", "OPEN", "started")]);
+  assert.deepEqual([github.get("#1")?.outcome, github.get("#2")?.outcome], ["unknown", "open"]);
+  assert.match(github.get("#1")?.problem ?? "", /completed or not planned/);
+  const local = await read("local-markdown", [issue("a", "Done", "completed"), issue("b", "closed", "completed"), issue("c", "resolved", "completed")]);
+  assert.deepEqual(["a", "b", "c"].map((id) => local.get(id)?.outcome), ["completed", "unknown", "unknown"]);
+  // A GitHub project's closed routine tickets therefore never reach the checkpoint.
+  const launches = records([attempt("w1", { tickets: [ticket("#1")] })]);
+  assert.equal(deriveRunReport(input(launches, { source: "snapshot", tickets: github }, {}, { checkpoint: 1 })).checkpoint.reached, false);
 });

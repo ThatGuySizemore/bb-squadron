@@ -41,6 +41,18 @@ const unknown = (ticket: { id: string; identifier: string }, problem: string): T
   ({ id: ticket.id, identifier: ticket.identifier, title: null, url: null, outcome: "unknown", completedAt: null, result: "unread", problem });
 const outcomeOf = (type: string): TicketOutcome => type === "completed" ? "completed" : isDeclinedIssue({ state: { type } }) ? "declined" : "open";
 
+/**
+ * What a saved GitHub or Local markdown state proves. GitHub's saved CLOSED doesn't say whether the issue was
+ * completed or closed as not planned, so it stays unknown. Local markdown counts only an explicit `Status: Done`.
+ */
+export function savedOutcome(kind: string | null, state: { name: string; type: string }): { outcome: TicketOutcome; problem?: string } {
+  if (state.type !== "completed") return { outcome: isDeclinedIssue({ state }) ? "declined" : "open" };
+  if (kind === "local-markdown" && state.name.trim().toLowerCase() === "done") return { outcome: "completed" };
+  return { outcome: "unknown", problem: kind === "github"
+    ? "GitHub's saved reading says CLOSED without saying whether the issue was completed or not planned."
+    : `Status ${state.name} isn't an explicit Done.` };
+}
+
 export function createTicketHistoryReader(linear: Pick<LinearAuth, "graphql">, tracker: Pick<TrackerReader, "getSnapshot">): TicketHistoryReader {
   async function linearTicket(ticket: { id: string; identifier: string }, comments: boolean, signal?: AbortSignal): Promise<TicketHistory> {
     const found: { id: string; body: string; createdAt: string }[] = [];
@@ -79,10 +91,10 @@ export function createTicketHistoryReader(linear: Pick<LinearAuth, "graphql">, t
       // GitHub Issues and Local markdown: the saved reading gives state only, so dates and results stay unknown.
       for (const ticket of tickets) {
         const issue = snapshot.error === null && snapshot.syncedAt !== null ? snapshot.issues.find((item) => item.id === ticket.id) : undefined;
-        result.set(ticket.id, issue
-          ? { id: ticket.id, identifier: issue.identifier, title: issue.title, url: issue.url, outcome: outcomeOf(issue.state.type), completedAt: null, result: "unread",
-            problem: "This tracker's saved reading has no completion date or comments." }
-          : unknown(ticket, snapshot.error ?? "The tracker's saved reading doesn't include this ticket."));
+        if (!issue) { result.set(ticket.id, unknown(ticket, snapshot.error ?? "The tracker's saved reading doesn't include this ticket.")); continue; }
+        const saved = savedOutcome(snapshot.kind, issue.state);
+        result.set(ticket.id, { id: ticket.id, identifier: issue.identifier, title: issue.title, url: issue.url, outcome: saved.outcome, completedAt: null, result: "unread",
+          problem: saved.problem ?? "This tracker's saved reading has no completion date or comments." });
       }
       return { source: "snapshot", tickets: result };
     },

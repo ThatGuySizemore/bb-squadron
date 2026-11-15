@@ -316,7 +316,13 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       const ids = [...new Set(ticketBlockers.flat().map((blocker) => blocker.id))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
       const which = heldTickets.length ? "Every ticket that isn't held" : "Every ticket";
       shaping.push({ ...row, missing: `${which} waits on a blocker: ${ids.join(", ")}`, action: "tickets" });
-    } else ready.push(readyRow(spec, tickets));
+    } else {
+      // Tickets in the landed branch are that lane, not new work. Until the tracker marks them Done the spec
+      // stays Ready for an owner Start, but Autopilot must not return it.
+      const landedOnly = returning.has(spec.identifier)
+        && tickets.every((ticket) => held(ticket) || trackerTicketState(ticket, snapshot.kind, settings) === "branch");
+      ready.push({ ...readyRow(spec, tickets), ...(landedOnly ? { justLanded: true } : {}) });
+    }
   }
   for (const item of workItems) {
     if (readyMarked(item) && !held(item) && !planning.has(item.id) && !leads.has(item.id)) {

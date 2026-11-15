@@ -69,7 +69,15 @@ export function registerTracker(bb: BbPluginApi, mirror: {
   /** A Linear ticket's labels, read by ID. GitHub and local readers read fresh on every getSnapshot, so they have no separate read. */
   async function readTicketLabels(bbProjectId: string, ticket: { id: string }): Promise<TrackerLabel[]> {
     const found = await detect(bbProjectId);
-    if (found.kind !== "linear") return (await getSnapshot(bbProjectId)).issues.find((issue) => issue.id === ticket.id)?.labels ?? [];
+    if (found.kind !== "linear") {
+      // GitHub and local readers keep a 30 s reading and hold the old issues when a read fails: read again, and reject on any error.
+      const reader = found.kind === "github" ? github : local;
+      const snapshot = await (reader.refresh?.(bbProjectId) ?? reader.getSnapshot(bbProjectId));
+      if (snapshot.error) throw new Error(snapshot.error);
+      const issue = snapshot.issues.find((item) => item.id === ticket.id);
+      if (!issue) throw new Error("The tracker no longer lists it.");
+      return issue.labels;
+    }
     if (!linear) throw new LinearRequestError("not_connected");
     const labels: TrackerLabel[] = [];
     const cursors = new Set<string>();

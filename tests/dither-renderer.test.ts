@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createDitherRenderer, type RendererEnv } from "../lib/dither-renderer.js";
 import { airstream, createSurface, formation, formationSize, FORMATION_SIZE, pixelsOf } from "../lib/dither.js";
+import { windSpeed } from "../lib/working-agents.js";
 
 /** A browser stand-in: frames run only when the test says so. */
 function fakeEnv(options: { reduced?: boolean } = {}) {
@@ -173,21 +174,21 @@ test("SQD-214: planes face right with the contrail trailing behind them, to the 
   assert.ok(trail.every(([, y]) => y > top && y < bottom), "the contrail streams from the fuselage");
 });
 
-test("an airstream with no working threads is still; with work it flows", () => {
+test("an airstream with no wind is still; with working agents it flows", () => {
   const ink = 0xffd6a73f;
   const still = createSurface(200, 48, 1);
-  const paintStill = airstream({ pace: 0, ink });
+  const paintStill = airstream({ speed: windSpeed(0), ink });
   paintStill(still, 0);
   const a = [...still.buf];
   paintStill(still, 3);
-  assert.deepEqual([...still.buf], a, "pace 0 draws the same frame at any time");
+  assert.deepEqual([...still.buf], a, "no wind draws the same frame at any time");
 
   const moving = createSurface(200, 48, 1);
-  const paintMoving = airstream({ pace: 2, ink });
+  const paintMoving = airstream({ speed: windSpeed(2), ink });
   paintMoving(moving, 0);
   const b = [...moving.buf];
   paintMoving(moving, 0.5);
-  assert.notDeepEqual([...moving.buf], b, "working threads move the streaks");
+  assert.notDeepEqual([...moving.buf], b, "working agents move the streaks");
 });
 
 

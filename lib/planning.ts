@@ -1,5 +1,5 @@
 // The board's Plan buttons open seeded planning threads in the project's checkout.
-import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { cliCommand, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { planningContract, setupContract, type PlanningStarted } from "./planning-contract.js";
 import type { DoctorReport } from "./doctor.js";
 import { DEFAULT_SQUADRON_TEMPLATE } from "./squadron-template.js";
@@ -13,7 +13,7 @@ import { trackerName } from "./tracker-detection.js";
 import { readingProblem } from "./linear-reading.js";
 
 export interface PlanningSources {
-  tracker: Pick<TrackerReader, "getSnapshot">;
+  tracker: Pick<TrackerReader, "getSnapshot" | "refresh">;
   onAction?(projectId: string): void;
   /** Says which setup steps a project lacks. Without it, Set up asks the thread to check. */
   doctor?(projectId: string): Promise<DoctorReport>;
@@ -49,7 +49,9 @@ async function* pluginThreads(bb: BbPluginApi, projectId: string) {
 export async function readPlanningThreads(bb: BbPluginApi, projectId: string): Promise<PlanningThread[]> {
   const found: PlanningThread[] = [];
   for await (const { threadId, metadata } of pluginThreads(bb, projectId)) {
-    if (metadata.role === "planning" && typeof metadata.issueId === "string") found.push({ issueId: metadata.issueId, threadId });
+    if (metadata.role === "planning" && typeof metadata.issueId === "string") found.push({
+      issueId: metadata.issueId, threadId, ...(metadata.planning === "done" ? { done: true } : {}),
+    });
   }
   return found;
 }
@@ -121,6 +123,22 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     return null;
   }
   const settingUp = new Map<string, Promise<PlanningStarted>>();
+  async function done(threadId: string, projectId: string, identifier: string) {
+    // Check the caller itself rather than accepting a target thread from the CLI.
+    let caller: Record<string, unknown> | undefined;
+    for await (const item of pluginThreads(bb, projectId)) {
+      if (item.threadId === threadId && item.metadata.role === "planning") caller = item.metadata;
+    }
+    if (!caller) throw new PluginCliError("Run planning done inside this project's planning thread.");
+    // Publication may have happened after the last board poll.
+    const snapshot = await (sources.tracker.refresh?.(projectId) ?? sources.tracker.getSnapshot(projectId));
+    const issue = snapshot.issues.find((item) => item.identifier === identifier && item.inProject && isOpenIssue(item));
+    if (!issue) throw new PluginCliError(`${identifier} isn't an open issue in this project's tracker.`);
+    if (caller.issueId !== undefined && caller.issueId !== issue.id)
+      throw new PluginCliError("This planning thread belongs to a different issue.");
+    await bb.sdk.threads.updatePluginMetadata({ threadId, set: { issueId: issue.id, planning: "done" } });
+    sources.onAction?.(projectId);
+  }
   async function setUp(projectId: string): Promise<PlanningStarted> {
     const existing = await openThread(projectId, (metadata) => metadata.role === "setup");
     if (existing) return { threadId: existing };
@@ -146,7 +164,10 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
       // One planning thread per issue: Plan and Resume planning reopen it.
       const id = issue.id;
       const existing = await openThread(projectId, (metadata) => metadata.role === "planning" && metadata.issueId === id);
-      if (existing) return { threadId: existing };
+      if (existing) {
+        await bb.sdk.threads.updatePluginMetadata({ threadId: existing, remove: ["planning"] });
+        return { threadId: existing };
+      }
     }
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to plan in.");
@@ -199,5 +220,16 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
       return startOnce(projectId, issueId, step);
     },
   });
-  return { start: startOnce, setUp };
+  const commands = {
+    "planning done": cliCommand({
+      summary: "Finish planning in this thread after publishing its spec or work item.",
+      positionals: [{ name: "issue", description: "Published spec or work item identifier.", required: true }],
+      async run({ positionals }, context) {
+        if (!context.threadId || !context.projectId) throw new PluginCliError("Run planning done inside this project's planning thread.");
+        await done(context.threadId, context.projectId, positionals.issue);
+        return { exitCode: 0, stdout: `Planning finished for ${positionals.issue}.\n` };
+      },
+    }),
+  };
+  return { start: startOnce, setUp, commands };
 }

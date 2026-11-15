@@ -22,7 +22,7 @@ export interface LeadThread {
   /** The latest reply in the completed turn explicitly asks the owner to act. */
   asksOwner?: boolean;
   /** A policy stop recorded by a fixed control input, never inferred from reply prose. */
-  stopReason?: string;
+  stopReason?: "two-strikes";
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
   route: Route;
@@ -73,7 +73,7 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: thread.id });
       if (metadata.role !== "lead" || typeof metadata.specId !== "string" || !metadata.specId) continue;
       const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
-      const idle = await readIdleState(bb, thread);
+      const idle = await readLeadLifecycle(bb, thread);
       leads.push({ ...(metadata.kind === "work-item" || metadata.kind === "spec" ? { kind: metadata.kind } : {}),
         ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...idle, specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
         asksOwner: idle.idleSince !== undefined && await readOwnerQuestion(bb, thread.id),
@@ -111,30 +111,50 @@ async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boo
       if (mark) { fence = mark[1]; return false; }
       return true;
     }).join("\n").replace(/(`+)[\s\S]*?\1(?!`)/g, "");
-    return /\bNeeds you(?:\*{1,2}|_{1,2})?:(?:\*{1,2}|_{1,2})?\s*\S/i.test(prose) ||
-      /^\s*(?:Josh[,.:]?\s+)?(?:can|could|would|will|do|are) you\b[^\n]*\?\s*$/im.test(prose);
+    // A marker starts a line/sentence or has explicit Markdown emphasis. An
+    // incidental phrase such as "Nothing needs you:" is status, not a marker.
+    const markers = /(?:^|[.!?;:,]\s+|(?=[*_]))[ \t]*(?:[-+#]\s+)?(?:[*_]{1,3})?Needs you(?:[*_]{1,3})?:[ \t]*(?:[*_]{1,3})?/gim;
+    for (const marker of prose.matchAll(markers)) {
+      // Consume formatting before checking payload, so it cannot backtrack
+      // into a fake request. A next-line list remains a real request.
+      const request = prose.slice(marker.index + marker[0].length).trim().replace(/^[*_]+/, "").trim();
+      if (request && !/^(?:none|nothing|0)[.!]?(?:\s*$|\n)/i.test(request)) return true;
+    }
+    return /^\s*(?:Josh[,.:]?\s+)?(?:can|could|would|will|do|are) you\b[^\n]*\?\s*$/im.test(prose);
   } catch { return false; }
 }
 
 /** Unknown history retains the existing Stopped fallback. No assistant text is classified. */
-async function readIdleState(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<Pick<LeadThread, "idleSince" | "stopReason">> {
+async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<Pick<LeadThread, "idleSince" | "stopReason">> {
   if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return {};
   try {
-    const [terminal, requests] = await Promise.all([
+    const [terminal, request] = await Promise.all([
       bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/completed", "system/thread/interrupted", "turn/started"] }),
-      bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["client/turn/requested"] }),
+      readLatestControl(bb, thread.id),
     ]);
     const end = terminal[0];
-    const request = requests[0];
     // The board/CLI Stop sends this exact fixed input. A normal wind-down completion stays Stopped.
     if (request?.type === "client/turn/requested") {
       if (request.data.input?.some((part) => part.type === "text" && part.text === TWO_STRIKES_STOP_MESSAGE))
-        return { stopReason: "Stopped after two strikes, wants a new go" };
+        return { stopReason: "two-strikes" };
       if (request.data.input?.some((part) => part.type === "text" && part.text === STOP_MESSAGE)) return {};
     }
     if (end?.type === "turn/completed" && end.data.status === "completed" && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
   } catch { /* Unreadable lifecycle isn't evidence of a normal idle Lead. */ }
   return {};
+}
+
+/** Child outcomes and other automatic system deliveries aren't Stop or Resume.
+ * Page past them so saving workers cannot erase the lane's latest control. */
+async function readLatestControl(bb: BbPluginApi, threadId: string) {
+  let beforeSeq: string | undefined;
+  for (;;) {
+    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested"] });
+    const control = events.find((event) => event.type === "client/turn/requested" &&
+      (!event.data.systemMessageKind || event.data.systemMessageKind === "unlabeled"));
+    if (control || events.length < 200) return control;
+    beforeSeq = String(events[events.length - 1].seq);
+  }
 }
 
 /** A live turn or work running behind one must finish before a quiet Question. */

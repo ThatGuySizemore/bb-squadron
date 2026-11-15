@@ -198,6 +198,19 @@ test("an idle lane blocked outside itself stays quiet, but an explicit owner que
   assert.deepEqual(board.lanes[0].waitingOn, ["OUT-10"]);
   assert.deepEqual(needsYou(board), []);
   assert.equal(f.sends().length, 0);
+  for (const text of [
+    "FIX-6 waits on OUT-10. Nothing needs you: it starts when OUT-10 lands.",
+    "FIX-6 waits on OUT-10. **Needs you:**",
+    "FIX-6 waits on OUT-10. Needs you: none",
+    "FIX-6 waits on OUT-10. Needs you: 0",
+  ]) {
+    f.events.set(lead.id, events(text));
+    await f.advance(30_000); await f.advance(120_000);
+    board = await f.board();
+    assert.deepEqual(board.lanes[0].waitingOn, ["OUT-10"]);
+    assert.deepEqual(needsYou(board), [], text);
+    assert.equal(f.sends().length, 0, text);
+  }
   f.events.set(lead.id, events("Can you choose the wording while OUT-10 finishes?"));
   await f.advance(30_000); await f.advance(120_000);
   board = await f.board();

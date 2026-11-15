@@ -130,6 +130,23 @@
   font-weight: 650;
   color: var(--sq-sky-ink);
 }
+/* Each lit plane is a button over its air box; the canvas draws the plane, the
+   button only takes the click and the focus ring. */
+.sq-runway-plane {
+  position: absolute;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.sq-runway-plane:focus-visible {
+  outline: 2px solid var(--sq-sky-ink);
+  outline-offset: -2px;
+}
+.sq-runway-plane[data-beacon]:focus-visible {
+  outline-color: var(--sq-amber);
+}
 
 .sq-controls {
   display: flex;

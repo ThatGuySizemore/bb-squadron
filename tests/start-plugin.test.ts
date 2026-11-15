@@ -74,6 +74,8 @@ async function setup(t: import("node:test").TestContext, issues?: () => Response
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const { bb, harness, native } = host(undefined, ownerHost, settings, undefined, policy);
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  // A fixture Lead has no recorded history unless a test stubs one; an unstubbed read would throw, which is no longer a Stop (SQD-275).
+  harness.sdk.stub("threads.events.list", async () => []);
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   return { harness, native };
@@ -885,6 +887,7 @@ test("pause and outcome deduplication survive reload; only owner Resume clears t
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const once = await harness.lifecycle.reload(plugin);
   t.after(() => once.harness.lifecycle.dispose());
+  once.harness.sdk.stub("threads.events.list", async () => []);
   await watcherCycle(once.harness);
   let board = await once.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.autopilot?.consecutiveStops, 1, "historical stop isn't counted after reload");
@@ -893,6 +896,7 @@ test("pause and outcome deduplication survive reload; only owner Resume clears t
   assert.equal(board.autopilot?.status, "paused");
   const twice = await once.harness.lifecycle.reload(plugin);
   t.after(() => twice.harness.lifecycle.dispose());
+  twice.harness.sdk.stub("threads.events.list", async () => []);
   board = await twice.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.autopilot, { status: "paused", laneLimit: 1, consecutiveStops: 2, pauseReason: "Two lanes in a row stopped" });
   await assert.rejects(twice.harness.behavior.callRpc("autopilot.resume", { projectId: "proj-one" },

@@ -1644,17 +1644,16 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const [planning, setPlanning] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
   const [acting, setActing] = useState<LaneAction | null>(null);
-  // The board belongs to the project it was read for; another project's is never shown.
-  const [held, setHeld] = useState<{ projectId: string; board: Board } | null>(null);
-  const board = projectId !== null && held?.projectId === projectId ? held.board : lastBoardOf(projectId);
+  // The board shown is the last one read for this project, never another's. The memory is the one
+  // source, so a view that left a project and came back shows what any view read since.
+  const [, redraw] = useReducer((count: number) => count + 1, 0);
+  const board = lastBoardOf(projectId);
   const setBoard = useCallback((update: (board: Board | null) => Board | null) => {
     if (projectId === null) return;
-    setHeld((value) => {
-      const next = update(value?.projectId === projectId ? value.board : lastBoardOf(projectId));
-      if (next === null) return null;
-      rememberBoard(projectId, next);
-      return { projectId, board: next };
-    });
+    const next = update(lastBoardOf(projectId));
+    if (next === null) return;
+    rememberBoard(projectId, next);
+    redraw();
   }, [projectId]);
   const [failed, setFailed] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);

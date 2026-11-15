@@ -65,6 +65,51 @@ test("a remount on a project already read shows its last board with no loading s
   }
 });
 
+test("a view that leaves a project and returns shows what another view read in between", async () => {
+  await import("./fixtures/app-runtime.js");
+  const dom = new JSDOM("<!doctype html><html><body><div id='a'></div><div id='b'></div></body></html>", { pretendToBeVisual: true });
+  const browser = dom.window;
+  browser.matchMedia = (() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) as unknown as typeof browser.matchMedia;
+  browser.HTMLCanvasElement.prototype.getContext = (() => null) as typeof browser.HTMLCanvasElement.prototype.getContext;
+  const globals = { window: browser, document: browser.document, HTMLElement: browser.HTMLElement, Element: browser.Element,
+    ResizeObserver: class { observe() {} disconnect() {} }, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = Object.fromEntries(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, globals);
+  const { createElement, act } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const runtime = (globalThis as any).__bbPluginRuntime.pluginSdkApp;
+  const oldRpc = runtime.useRpc, oldRealtime = runtime.useRealtime;
+  const { forgetBoards } = await import("../board/board-memory.js");
+  forgetBoards();
+  let serving = "OLD";
+  const rpc = { call: async (method: string, value: any) => {
+    if (method === "helper.read") return null;
+    if (method === "board.projects") return { projects: [{ id: "proj-one", name: "One" }, { id: "proj-two", name: "Two" }], lastPick: null };
+    return boardOf(`${serving} ${value.projectId}`);
+  } };
+  runtime.useRpc = () => rpc;
+  runtime.useRealtime = () => undefined;
+  const { LiveBoard } = await import("../board/Board.js");
+  const first = createRoot(browser.document.getElementById("a")!), second = createRoot(browser.document.getElementById("b")!);
+  const show = (root: ReturnType<typeof createRoot>, context: string) => act(async () => root.render(createElement(LiveBoard, { modeSwitch: null, context })));
+  try {
+    await show(first, "proj-one");
+    assert.match(browser.document.getElementById("a")!.textContent ?? "", /OLD proj-one/);
+    await show(first, "proj-two");
+    serving = "NEW";
+    await show(second, "proj-one");
+    await show(first, "proj-one");
+    assert.match(browser.document.getElementById("a")!.textContent ?? "", /NEW proj-one/, "not the older snapshot this view held");
+  } finally {
+    await act(async () => { first.unmount(); second.unmount(); });
+    runtime.useRpc = oldRpc; runtime.useRealtime = oldRealtime;
+    browser.close();
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
 test("canvases share one reading of the inks per theme instead of restyling per canvas", async () => {
   const dom = new JSDOM("<!doctype html><html><body><div id='a'></div><div id='b'></div></body></html>", { pretendToBeVisual: true });
   const browser = dom.window;

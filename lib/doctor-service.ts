@@ -19,7 +19,7 @@ function mattSkill(skill: { name: string; pluginId: string | null; scope: string
   return family ? { name: skill.name.slice(prefix.length), family, path: skill.filePath } : null;
 }
 
-export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ status: string; message?: string }>,
+export function registerDoctor(bb: BbPluginApi, getLinearState: (projectId: string) => Promise<{ status: string; message?: string }>,
   /** The Linear reader's last Scope problem for a project, if any. */
   linearScopeProblem: (projectId: string) => string | null = () => null) {
   const host = bb.hosts.experimental_client({ contract: doctorHostContract });
@@ -41,7 +41,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: () => Promise<{ 
       { checkoutPath: path, branches: [] }, { hostId, signal, timeoutMs: 15_000 }).then((state) => !state.hasRemote).catch(() => false);
     const [skills, linear, github] = await Promise.allSettled([
       bb.sdk.skills.list({ projectId, environmentId: environmentId ?? null, signal }),
-      config.tracker.kind === "linear" ? getLinearState() : Promise.resolve({ status: "not-needed", message: undefined }),
+      config.tracker.kind === "linear" ? getLinearState(projectId) : Promise.resolve({ status: "not-needed", message: undefined }),
       localOnly ? Promise.resolve({ authenticated: false, hostname: undefined })
         : host.call("githubLogin", { checkoutPath: path }, { hostId, signal, timeoutMs: 15_000 }),
     ]);

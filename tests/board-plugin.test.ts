@@ -107,6 +107,19 @@ test("Ready rows label specs with their ticket count and work items without a ti
   }
 });
 
+test("spec tags show exactly 25 tickets or 25+ for overflow at both placements", async () => {
+  const board: Board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], shaping: [], openIssues: [], ready: [
+    { id: "FIX-25", title: "Exactly 25", kind: "spec", ticketCount: 1, totalTicketCount: 25, routes: [], blockedBy: [], acceptOwner: false },
+    { id: "FIX-26", title: "More than 25", kind: "spec", ticketCount: 1, totalTicketCount: 26, routes: [], blockedBy: [], acceptOwner: false },
+  ] };
+  for (const placement of ["page", "panel"] as const) {
+    const document = await boardDocument(board, placement);
+    const tags = [...document.querySelectorAll(".sq-ready .sq-work-kind")];
+    for (const tag of tags) tag.querySelectorAll('[role="tooltip"]').forEach((tip) => tip.remove());
+    assert.deepEqual(tags.map((tag) => tag.textContent), ["Spec · 25 tickets", "Spec · 25+ tickets"]);
+  }
+});
+
 test("a Ready spec counts completed tickets in its tag while keeping the open count for its frontier", async (t) => {
   const linear = workspace({ issues: () => Response.json({ data: { issues: {
     ...workspaceIssues.data.issues,

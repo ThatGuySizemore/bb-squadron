@@ -680,7 +680,7 @@ function Plate({ id, landed = false }: { id: string; landed?: boolean }) {
 /** Shared normal-type tag for Ready and Shaping, and the lane headers. */
 export function WorkKindTag({ kind = "spec", ticketCount }: { kind?: "spec" | "work-item"; ticketCount: number }) {
   return <span className="sq-tag sq-work-kind sq-num">{kind === "work-item" ? <Term text="Work item" />
-    : <><Term text="Spec" /> · {ticketCount} <Term text={ticketCount === 1 ? "ticket" : "tickets"} word="Ticket" /></>}</span>;
+    : <><Term text="Spec" /> · {ticketCount > 25 ? "25+" : ticketCount} <Term text={ticketCount === 1 ? "ticket" : "tickets"} word="Ticket" /></>}</span>;
 }
 
 function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false, next = false }: { spec: ReadySpec; next?: boolean; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {

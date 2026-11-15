@@ -2,13 +2,16 @@
 // to its box at device-pixel density, joins the one shared frame loop, and
 // leaves it when it unmounts or scrolls off screen.
 import { useEffect, useRef, type CSSProperties } from "react";
+import { windSpeed } from "../lib/working-agents.js";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
-import { airstream, burst, BURST_SECONDS, createSurface, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
+import { airstream, burst, BURST_SECONDS, contrail, createSurface, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
 import { runway, runwayMotion, type RunwayState } from "../lib/runway.js";
 
 /** What a canvas draws. Inks are read from the board's CSS, so they follow the theme. */
 export type Fx =
-  | { kind: "airstream"; pace: number }
+  /** `wind` is the board's working-agent count (lib/working-agents.ts); 0 is still. */
+  | { kind: "airstream"; wind: number }
+  | { kind: "contrail"; done: number; total: number; wind: number; tone: "sky" | "red" }
   | { kind: "peg"; state: "working" | "question" | "review" | "branch" | "done" | "failed" }
   | { kind: "needs-you" }
   | { kind: "plate" }
@@ -20,7 +23,11 @@ type Inks = (name: string) => number;
 
 function painterFor(fx: Fx, ink: Inks): Painter {
   switch (fx.kind) {
-    case "airstream": return airstream({ pace: fx.pace, ink: ink("--sq-sky") });
+    case "airstream": return airstream({ speed: windSpeed(fx.wind), ink: ink("--sq-sky") });
+    case "contrail": {
+      const tone = ink(fx.tone === "red" ? "--sq-red" : "--sq-sky");
+      return contrail({ done: fx.done, total: fx.total, speed: windSpeed(fx.wind), trail: tone, plane: tone, guide: ink("--sq-rule-ink") });
+    }
     case "needs-you": return needsYou({ ink: ink("--sq-amber") });
     case "plate": return plate({ ink: ink("--sq-green") });
     case "section-rule": return sectionRule({ ink: ink("--sq-rule-ink") });
@@ -44,7 +51,8 @@ function painterFor(fx: Fx, ink: Inks): Painter {
 /** Whether the art moves, and the moment its still frame shows. */
 function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until"> {
   switch (fx.kind) {
-    case "airstream": return { animated: fx.pace > 0, stillAt: 2.4 };
+    case "airstream": return { animated: fx.wind > 0, stillAt: 2.4 };
+    case "contrail": return { animated: fx.wind > 0, stillAt: 2.4 };
     case "needs-you": return { animated: true, stillAt: 0.9 };
     case "runway": return runwayMotion(fx.state);
     case "burst": return { animated: true, stillAt: BURST_SECONDS, until: BURST_SECONDS };

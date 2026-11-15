@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from "./lane-contract.js";
+import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
 import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
@@ -152,7 +152,8 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   };
   const actions = {
     merge,
-    stop: (projectId: string, specId: string) => tell(projectId, specId, STOP_MESSAGE, "steer-if-active", "stop"),
+    stop: (projectId: string, specId: string, reason?: "two-strikes") =>
+      tell(projectId, specId, reason === "two-strikes" ? TWO_STRIKES_STOP_MESSAGE : STOP_MESSAGE, "steer-if-active", "stop"),
     resume: (projectId: string, specId: string) => tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume"),
     start(projectId: string, specId: string) {
       return startLane(projectId, specId, "owner").then((result): Promise<{ threadId: string }> | { threadId: string } => {

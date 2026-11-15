@@ -1,6 +1,6 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { Route } from "./board-model.js";
-import { STOP_MESSAGE } from "./lane-contract.js";
+import { STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
 type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
@@ -21,6 +21,8 @@ export interface LeadThread {
   idleSince?: number;
   /** The latest reply in the completed turn explicitly asks the owner to act. */
   asksOwner?: boolean;
+  /** A policy stop recorded by a fixed control input, never inferred from reply prose. */
+  stopReason?: string;
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
   route: Route;
@@ -71,10 +73,10 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: thread.id });
       if (metadata.role !== "lead" || typeof metadata.specId !== "string" || !metadata.specId) continue;
       const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
-      const idleSince = await readIdleSince(bb, thread);
+      const idle = await readIdleState(bb, thread);
       leads.push({ ...(metadata.kind === "work-item" || metadata.kind === "spec" ? { kind: metadata.kind } : {}),
-        ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
-        asksOwner: idleSince !== undefined && await readOwnerQuestion(bb, thread.id),
+        ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...idle, specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
+        asksOwner: idle.idleSince !== undefined && await readOwnerQuestion(bb, thread.id),
         workers: await readWorkers(bb, projectId, thread.id),
         route: threadRoute(thread.providerId, execution) });
     }
@@ -108,15 +110,15 @@ async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boo
       }
       if (mark) { fence = mark[1]; return false; }
       return true;
-    }).join("\n");
-    return /^\s*(?:\*\*)?Needs you(?:\*\*)?:\s*\S/im.test(prose) ||
+    }).join("\n").replace(/(`+)[\s\S]*?\1(?!`)/g, "");
+    return /\bNeeds you(?:\*{1,2}|_{1,2})?:(?:\*{1,2}|_{1,2})?\s*\S/i.test(prose) ||
       /^\s*(?:Josh[,.:]?\s+)?(?:can|could|would|will|do|are) you\b[^\n]*\?\s*$/im.test(prose);
   } catch { return false; }
 }
 
 /** Unknown history retains the existing Stopped fallback. No assistant text is classified. */
-async function readIdleSince(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<number | undefined> {
-  if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return;
+async function readIdleState(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<Pick<LeadThread, "idleSince" | "stopReason">> {
+  if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return {};
   try {
     const [terminal, requests] = await Promise.all([
       bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/completed", "system/thread/interrupted", "turn/started"] }),
@@ -125,9 +127,14 @@ async function readIdleSince(bb: BbPluginApi, thread: Awaited<ReturnType<BbPlugi
     const end = terminal[0];
     const request = requests[0];
     // The board/CLI Stop sends this exact fixed input. A normal wind-down completion stays Stopped.
-    if (request?.type === "client/turn/requested" && request.data.input?.some((part) => part.type === "text" && part.text === STOP_MESSAGE)) return;
-    if (end?.type === "turn/completed" && end.data.status === "completed" && Number.isFinite(end.createdAt)) return end.createdAt;
+    if (request?.type === "client/turn/requested") {
+      if (request.data.input?.some((part) => part.type === "text" && part.text === TWO_STRIKES_STOP_MESSAGE))
+        return { stopReason: "Stopped after two strikes, wants a new go" };
+      if (request.data.input?.some((part) => part.type === "text" && part.text === STOP_MESSAGE)) return {};
+    }
+    if (end?.type === "turn/completed" && end.data.status === "completed" && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
   } catch { /* Unreadable lifecycle isn't evidence of a normal idle Lead. */ }
+  return {};
 }
 
 /** A live turn or work running behind one must finish before a quiet Question. */

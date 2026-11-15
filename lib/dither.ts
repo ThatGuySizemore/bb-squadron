@@ -2,6 +2,7 @@
 // (comps/live-board/dither.js): ordered Bayer 8x8 dither, one threshold cell
 // per device pixel, painted into a packed RGBA buffer. Nothing here touches
 // the DOM; board/DitherCanvas.tsx puts the buffer on a canvas.
+import { windSpeed, WIND_TOP } from "./working-agents.js";
 
 /** A canvas-sized pixel buffer. Sizes in CSS pixels; w and h in device pixels. */
 export interface Surface {
@@ -74,7 +75,8 @@ function noise(x: number, y: number): number {
   const u = fade(xf), v = fade(yf);
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
-const fbm = (x: number, y: number) => noise(x, y) * 0.65 + noise(x * 2.1 + 17.3, y * 2.1 + 5.1) * 0.35;
+/** Two octaves of value noise, in about [0, 1]. */
+export const fbm = (x: number, y: number) => noise(x, y) * 0.65 + noise(x * 2.1 + 17.3, y * 2.1 + 5.1) * 0.35;
 
 // ---------- painting helpers ----------
 
@@ -95,6 +97,35 @@ export function field(s: Surface, ink: number, fn: (x: number, y: number) => num
     const by = (y & 7) * 8;
     const o = y * w;
     for (let x = 0; x < w; x++) {
+      const v = row[Math.min(cssW - 1, Math.floor(x / dpr))]!;
+      if (v > BAYER[by + (x & 7)]!) buf[o + x] = ink;
+    }
+  }
+}
+
+/**
+ * field(), limited to a box of CSS pixels [x0, y0, x1, y1] and sampled every
+ * `step` CSS pixels on a grid fixed to the surface, for large low-frequency
+ * art such as the banner's clouds. Thresholds stay per device pixel.
+ */
+export function fieldIn(s: Surface, ink: number, fn: (x: number, y: number) => number, box: [number, number, number, number], step = 1): void {
+  const { w, h, dpr, cssW, cssH, buf } = s;
+  const bx0 = Math.max(0, Math.floor(box[0])), by0 = Math.max(0, Math.floor(box[1]));
+  const bx1 = Math.min(cssW, Math.ceil(box[2])), by1 = Math.min(cssH, Math.ceil(box[3]));
+  if (bx1 <= bx0 || by1 <= by0) return;
+  const row = new Float32Array(cssW);
+  let lastSy = -1;
+  const x0 = Math.round(bx0 * dpr), x1 = Math.min(w, Math.round(bx1 * dpr));
+  for (let y = Math.round(by0 * dpr); y < Math.min(h, Math.round(by1 * dpr)); y++) {
+    const cy = Math.min(cssH - 1, Math.floor(y / dpr));
+    const sy = cy - (cy % step);
+    if (sy !== lastSy) {
+      for (let cx = bx0; cx < bx1; cx++) row[cx] = cx % step === 0 || cx === bx0 ? fn(cx - (cx % step), sy) : row[cx - 1]!;
+      lastSy = sy;
+    }
+    const by = (y & 7) * 8;
+    const o = y * w;
+    for (let x = x0; x < x1; x++) {
       const v = row[Math.min(cssW - 1, Math.floor(x / dpr))]!;
       if (v > BAYER[by + (x & 7)]!) buf[o + x] = ink;
     }
@@ -131,26 +162,23 @@ export function march(s: Surface, ink: number, t: number, { thickness = 2, dash 
 
 // ---------- painters ----------
 
-/** Working threads that pace an airstream; four and over fly at full pace. */
-const MAX_PACE = 4;
-
 /**
- * The sortie line's airstream: sky streaks flowing left to right along the
- * line, paced by the lane's working threads. A lane with none working is still.
+ * The sortie line's airstream: sky streaks blowing right to left along the
+ * line, like the banner's clouds, at the board's shared wind speed in CSS
+ * pixels a second (lib/working-agents.ts). Still when nobody works.
  */
-export function airstream({ pace, ink }: { pace: number; ink: number }): Painter {
-  const p = Math.max(0, Math.min(pace, MAX_PACE));
-  const speed = 12 + 12 * p;
-  const strength = 0.16 + 0.06 * p;
+export function airstream({ speed, ink }: { speed: number; ink: number }): Painter {
+  const v = Math.max(0, speed);
+  const strength = 0.16 + 0.12 * Math.min(1, v / windSpeed(WIND_TOP));
   return (s, seconds) => {
-    const t = p === 0 ? 0 : seconds;
+    const t = v === 0 ? 0 : seconds;
     const mid = s.cssH / 2, spread = Math.min(20, s.cssH * 0.36);
     field(s, ink, (x, y) => {
       const dy = (y - mid) / spread;
       const env = Math.exp(-dy * dy * 1.6);
       if (env < 0.02) return 0;
-      const n = fbm((x - t * speed) / 52, y / 3.2 + Math.sin(x / 160 + t * 0.25) * 0.5);
-      const gust = 0.5 + 0.5 * Math.sin((x - t * speed * 1.7) / 140);
+      const n = fbm((x + t * v) / 52, y / 3.2 + Math.sin(x / 160 - t * 0.25) * 0.5);
+      const gust = 0.5 + 0.5 * Math.sin((x + t * v * 1.7) / 140);
       return env * strength * (0.25 + 2.2 * Math.max(0, n - 0.42) * (0.5 + gust));
     });
   };
@@ -172,20 +200,31 @@ export function pegFill({ ink, base, amp = 0, speed = 0, edge }: { ink: number; 
 export function needsYou({ ink }: { ink: number }): Painter {
   return (s, t) => {
     const breath = 0.5 + 0.5 * Math.sin((t * Math.PI * 2) / 3.6);
-    const depth = 7 + 3 * breath;
+    const depth = 10 + 4 * breath;
     field(s, ink, (x, y) => {
-      const edge = Math.min(y, s.cssH - 1 - y, x * 0.6, (s.cssW - 1 - x) * 0.6);
+      const edge = Math.min(y, s.cssH - 1 - y, x * 1.15, (s.cssW - 1 - x) * 1.15);
       if (edge > depth + 2) return 0;
       const n = fbm((x - t * 14) / 40, y / 9 + t * 0.08);
       const falloff = Math.max(0, 1 - edge / depth);
-      return falloff * falloff * (0.22 + 0.3 * breath + 0.35 * (n - 0.4));
+      return falloff * falloff * (0.36 + 0.3 * breath + 0.4 * (n - 0.4));
     });
   };
 }
 
-/** A still plate: a flat dither level. */
-export function plate({ ink, level }: { ink: number; level: number }): Painter {
-  return (s) => field(s, ink, () => level);
+/** A still Landed stamp: green edge grain with a clean centre for the number. */
+export function plate({ ink }: { ink: number }): Painter {
+  return (s) => field(s, ink, (x, y) => {
+    const edge = Math.min(y, s.cssH - 1 - y, x, s.cssW - 1 - x);
+    const falloff = Math.max(0, 1 - edge / 7);
+    return falloff * falloff * 0.85;
+  });
+}
+
+/** A section separator: 2px square dots on an 8px pitch, as in the Runway comp. */
+export function sectionRule({ ink }: { ink: number }): Painter {
+  return (s) => {
+    for (let x = 0; x < s.cssW; x += 8) rect(s, ink, x, 0, 2, 2);
+  };
 }
 
 /**
@@ -279,6 +318,46 @@ export function formation({ slots, lit, on, off, trail = on }: { slots: number; 
         if (c === "#") rect(s, i < flying ? on : off, x + rx * CELL + dx, y + ry * CELL + dy, CELL, CELL);
       }));
     });
+  };
+}
+
+/** The contrail's plane: the formation plane on a 2px cell, 16 x 10 CSS pixels. */
+const SMALL_CELL = 2;
+const SMALL_W = PLANE[0]!.length * SMALL_CELL, SMALL_H = PLANE.length * SMALL_CELL;
+/** The dotted guide's pitch, and its gap ahead of the plane's nose. */
+const GUIDE_PITCH = 6, GUIDE_GAP = 4;
+
+/**
+ * A Flying lane's progress: a dithered contrail filling from the left as
+ * tickets reach the branch, with a small plane, nose right, at its head. A
+ * 2px solid core says how far at a glance; the dither around it thickens
+ * toward the plane and blows right to left at the shared wind speed. A
+ * dotted guide marks the way still to go. Still when the wind is.
+ */
+export function contrail({ done, total, speed, trail, plane, guide }: {
+  done: number; total: number; speed: number; trail: number; plane: number; guide: number;
+}): Painter {
+  const fill = total > 0 ? Math.max(0, Math.min(1, done / total)) : 0;
+  const v = Math.max(0, speed);
+  return (s, seconds) => {
+    const t = v === 0 ? 0 : seconds;
+    const mid = Math.round(s.cssH / 2) - 1;
+    const head = Math.round(fill * Math.max(0, s.cssW - SMALL_W));
+    if (total > 0) for (let x = head + SMALL_W + GUIDE_GAP; x + 2 <= s.cssW; x += GUIDE_PITCH) rect(s, guide, x, mid, 2, 2);
+    if (head > 0) {
+      rect(s, trail, 0, mid, head, 2);
+      field(s, trail, (x, y) => {
+        if (x >= head) return 0;
+        const age = 1 - x / head;
+        const dy = (y - mid - 0.5) / (1.2 + age * 4.5);
+        const flow = fbm((x + t * v) / 9, y / 3.5);
+        return Math.exp(-dy * dy) * (0.25 + 0.75 * flow) * (0.45 + 0.55 * (1 - age));
+      });
+    }
+    const top = mid + 1 - SMALL_H / 2;
+    PLANE.forEach((row, ry) => [...row].forEach((c, rx) => {
+      if (c === "#") rect(s, plane, head + rx * SMALL_CELL, top + ry * SMALL_CELL, SMALL_CELL, SMALL_CELL);
+    }));
   };
 }
 

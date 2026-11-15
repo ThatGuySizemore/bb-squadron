@@ -213,23 +213,34 @@ export function dependencyColumns(tickets: Ticket[]): Ticket[][] {
 
 /** How long a landing's burst plays on the sortie line before the lane moves to Landed. */
 export const LANDING_MS = 1600;
+/** How long a plane takes to roll off its stand and lift into the air when its lane starts. */
+export const TAKEOFF_MS = 1500;
 
-/** The lane states one board view has seen, and when each landing it saw plays until. */
-export interface Landings { seen: Record<string, LaneState>; until: Record<string, number> }
+/**
+ * The lane states one board view has seen, when each landing it saw plays until,
+ * and when each takeoff it saw started. The banner and the lane rows read this one record.
+ */
+export interface Landings { seen: Record<string, LaneState>; until: Record<string, number>; takeoffs: Record<string, number> }
 
 /**
  * A landing plays once: only when this view saw the lane in another state and now sees it Landed.
- * A lane already Landed when the board opens is history, so a reload never replays it.
+ * A takeoff plays once, when this view sees a lane it hadn't seen before.
+ * A lane already Landed or flying when the board opens is history, so a reload never replays it.
  */
 export function nextLandings(previous: Landings | null, lanes: readonly Lane[], now: number): Landings {
   const until: Record<string, number> = {};
+  const takeoffs: Record<string, number> = {};
   for (const lane of lanes) {
     const playing = previous?.until[lane.specId];
     const before = previous?.seen[lane.specId];
     if (playing !== undefined && playing > now) until[lane.specId] = playing;
     else if (lane.state === "landed" && before !== undefined && before !== "landed") until[lane.specId] = now + LANDING_MS;
+    const took = previous?.takeoffs?.[lane.specId];
+    if (lane.state === "landed") continue;
+    if (took !== undefined && took + TAKEOFF_MS > now) takeoffs[lane.specId] = took;
+    else if (previous && before === undefined) takeoffs[lane.specId] = now;
   }
-  return { seen: Object.fromEntries(lanes.map((lane) => [lane.specId, lane.state])), until };
+  return { seen: Object.fromEntries(lanes.map((lane) => [lane.specId, lane.state])), until, takeoffs };
 }
 
 /** Merge shows, and the server merges, only for an open PR whose checks pass. The demo's PRs carry no state. */

@@ -1,0 +1,545 @@
+// The board's runway banner (SQD-221, comp variant B): light clouds drifting
+// right to left over a tarmac strip, SQUADRON stencilled on the tarmac and one
+// stand per lane in the lane limit. One geometry, runwayLayout(), places
+// everything; the painter here and the DOM (the stencil and the label) both read
+// it, so the label never lands on a plane or a stand.
+import { fbm, fieldIn, rect, type Painter, type Surface } from "./dither.js";
+import { layoutPixels } from "./pixels.js";
+import { windSpeed } from "./working-agents.js";
+import { LANDING_MS, TAKEOFF_MS, type Landings } from "./board-model.js";
+import { FLYPAST_MS } from "./fly-past.js";
+
+export { FLYPAST_MS };
+
+/** The banner's height in CSS pixels: a full page, and the narrow layout (the side panel). */
+export const RUNWAY_HEIGHT = { wide: 164, narrow: 140 } as const;
+
+export interface Box { x: number; y: number; w: number; h: number }
+
+export interface RunwayLayout {
+  width: number;
+  height: number;
+  /** The flat strip at the foot that carries the stencil, the label and the stands. */
+  tarmac: { y: number; h: number };
+  /** The plane sprite's cell and size in CSS pixels. */
+  cell: number;
+  plane: { w: number; h: number };
+  /** A work item's smaller plane, on the same cell: drawn centred in its stand's park and air boxes. */
+  small: { w: number; h: number };
+  /** The threshold bars at the runway's left end, or null when the stands need the room. */
+  keys: { x: number; bars: number; bar: number; step: number } | null;
+  /** SQUADRON in the pixel font, on the tarmac; null only when no stencil fits. */
+  title: (Box & { cell: number; gap: number }) | null;
+  /** "M of N lanes flying" on the tarmac, or null when it would crowd: then it sits in the controls row. */
+  label: Box | null;
+  /** One per slot, right to left from the banner's right edge: where the plane parks, and where it flies. */
+  stands: Array<{ park: Box; air: Box }>;
+  /** How far a contrail reaches behind its engine, short of the next plane's stand. */
+  trail: number;
+}
+
+/** The plane seen from above, nose right, 16x9 cells: wings swept back from the middle, a T tail. */
+export const RUNWAY_PLANE = [
+  "     ###        ",
+  "      ###       ",
+  "#      ###      ",
+  "##    #######   ",
+  "################",
+  "##    #######   ",
+  "#      ###      ",
+  "      ###       ",
+  "     ###        ",
+];
+const PLANE_COLS = RUNWAY_PLANE[0]!.length, PLANE_ROWS = RUNWAY_PLANE.length;
+
+/**
+ * The engines, in sprite cells: one under each main wing, at its trailing edge.
+ * Real contrails form in engine exhaust, so each lit plane's two trails start
+ * here and run back clear of the tail.
+ */
+export const RUNWAY_ENGINES = [{ col: 6, row: 1 }, { col: 6, row: 7 }] as const;
+
+/**
+ * A work item's plane: the same jet on fewer cells, 11x7, so a one-item lane
+ * reads smaller than a spec's at a glance while keeping the banner's pixel grain.
+ */
+export const RUNWAY_WORK_PLANE = [
+  "   ##      ",
+  "    ##     ",
+  "#   ####   ",
+  "###########",
+  "#   ####   ",
+  "    ##     ",
+  "   ##      ",
+];
+/** Its engines: under each main wing at the trailing edge, as on the spec plane. */
+export const RUNWAY_WORK_ENGINES = [{ col: 4, row: 1 }, { col: 4, row: 5 }] as const;
+
+/** The sprite and engines a lane's plane is drawn with, from the lane's kind. */
+export function runwayPlane(workKind: WorkKind = "spec"): { shape: readonly string[]; engines: ReadonlyArray<{ col: number; row: number }> } {
+  return workKind === "work-item" ? { shape: RUNWAY_WORK_PLANE, engines: RUNWAY_WORK_ENGINES } : { shape: RUNWAY_PLANE, engines: RUNWAY_ENGINES };
+}
+
+/** A layout candidate: plane cell, stencil cell and gap, and whether the threshold bars stay. */
+interface Fit { cell: number; titleCell: number; titleGap: number; keys: boolean; gap?: number }
+const WIDE_FITS: Fit[] = [
+  { cell: 4, titleCell: 4, titleGap: 1, keys: true },
+  { cell: 3, titleCell: 4, titleGap: 1, keys: true },
+  { cell: 3, titleCell: 3, titleGap: 0, keys: true },
+  { cell: 2, titleCell: 3, titleGap: 0, keys: true },
+];
+const NARROW_FITS: Fit[] = [
+  { cell: 3, titleCell: 3, titleGap: 0, keys: true },
+  { cell: 2, titleCell: 3, titleGap: 0, keys: true },
+];
+/** Shared last resorts: smaller stencils, no threshold bars, then the smallest planes. */
+const LAST_FITS: Fit[] = [
+  { cell: 2, titleCell: 2, titleGap: 0, keys: true },
+  { cell: 2, titleCell: 2, titleGap: 0, keys: false },
+  { cell: 1, titleCell: 2, titleGap: 0, keys: false },
+  { cell: 1, titleCell: 1, titleGap: 0, keys: false },
+];
+
+/** Space between neighbouring stands, and from the last stand to the right edge (room for a holding ring). */
+const STAND_GAP: Record<number, number> = { 4: 26, 3: 14, 2: 10, 1: 6 };
+const RIGHT_MARGIN: Record<number, number> = { 4: 50, 3: 34, 2: 24, 1: 14 };
+/** Clear space kept between the stencil or label and anything else on the tarmac. */
+const CLEAR = 16;
+
+/** A generous width for the label's 12px semibold text, so the measured text always fits its box. */
+export function runwayLabelWidth(text: string): number {
+  return Math.ceil(text.length * 7.2) + 4;
+}
+
+export function runwayLayout(width: number, narrow: boolean, slots: number, labelText: string): RunwayLayout {
+  let W = Math.max(1, Math.round(width));
+  const height = narrow ? RUNWAY_HEIGHT.narrow : RUNWAY_HEIGHT.wide;
+  const tarmacH = narrow ? 42 : 52;
+  const tarmac = { y: height - tarmacH - 2, h: tarmacH };
+  const pad = narrow ? 14 : 30;
+  const count = Math.max(1, slots);
+  const stencil = layoutPixels("SQUADRON");
+
+  const place = (fit: Fit, withTitle: boolean, force = false): RunwayLayout | null => {
+    const { cell } = fit;
+    const plane = { w: PLANE_COLS * cell, h: PLANE_ROWS * cell };
+    const gap = fit.gap ?? STAND_GAP[cell]!, right = RIGHT_MARGIN[cell]!;
+    const keys = fit.keys ? (narrow ? { x: pad, bars: 4, bar: 3, step: 6 } : { x: pad, bars: 4, bar: 4, step: 9 }) : null;
+    const keysEnd = keys ? keys.x + (keys.bars - 1) * keys.step + keys.bar + (narrow ? 10 : 16) : pad;
+    let title: RunwayLayout["title"] = null;
+    if (withTitle) {
+      const pitch = fit.titleCell + fit.titleGap;
+      const w = stencil.width * pitch - fit.titleGap, h = stencil.height * pitch - fit.titleGap;
+      title = { x: keysEnd, y: tarmac.y + Math.round((tarmac.h - h) / 2), w, h, cell: fit.titleCell, gap: fit.titleGap };
+    }
+    const leftEdge = (title ? title.x + title.w : keysEnd) + CLEAR;
+    const firstX = W - right - plane.w - (count - 1) * (plane.w + gap);
+    if (firstX < leftEdge && !force) return null;
+    const lift = Math.round(cell * 4.5), stagger = Math.round(cell * 5.5), shift = Math.round(cell * 3.5);
+    const parkY = tarmac.y + Math.round((tarmac.h - plane.h) / 2);
+    const stands = Array.from({ length: count }, (_, i) => {
+      // Stand 0 is the rightmost, so the first lane to fly leads at the right.
+      const x = W - right - plane.w - i * (plane.w + gap);
+      return {
+        park: { x, y: parkY, w: plane.w, h: plane.h },
+        air: { x: x + shift, y: tarmac.y - plane.h - lift - (i % 2) * stagger, w: plane.w, h: plane.h },
+      };
+    });
+    const leftmost = stands[count - 1]!.park.x;
+    const labelW = labelText ? runwayLabelWidth(labelText) : 0;
+    const labelX = (title ? title.x + title.w : keysEnd) + 18;
+    const label = labelW && labelX + labelW + CLEAR <= leftmost
+      ? { x: labelX, y: tarmac.y + Math.round(tarmac.h / 2) - 9, w: labelW, h: 18 } : null;
+    const small = { w: RUNWAY_WORK_PLANE[0]!.length * cell, h: RUNWAY_WORK_PLANE.length * cell };
+    return { width: W, height, tarmac, cell, plane, small, keys, title, label, stands, trail: plane.w + gap - 10 };
+  };
+
+  // Configured limits are 1–10; outside lanes are uncapped. Beyond ten, keep
+  // whole planes and separate padded controls on a horizontally scrollable
+  // runway instead of squeezing them into negative coordinates. The fixed fit
+  // makes the DOM and painter agree when the canvas reads the expanded width.
+  if (count > 10) {
+    const fit: Fit = { cell: 2, titleCell: 3, titleGap: 0, keys: false, gap: 26 };
+    const planeW = PLANE_COLS * fit.cell;
+    W = Math.max(W, pad + stencil.width * fit.titleCell + CLEAR + 10
+      + planeW + (count - 1) * (planeW + fit.gap!) + RIGHT_MARGIN[fit.cell]!);
+    return place(fit, true)!;
+  }
+
+  const fits = [...(narrow ? NARROW_FITS : WIDE_FITS), ...LAST_FITS];
+  for (const fit of fits) {
+    const layout = place(fit, true);
+    if (layout) return layout;
+  }
+  // Too many stands for a stencil: the stands keep the tarmac, and the page's own heading still names the board.
+  const smallest = fits[fits.length - 1]!;
+  return place(smallest, false) ?? place(smallest, false, true)!;
+}
+
+/** The fly-past's formation, resting at the middle of its pass. */
+export interface RunwayFormation {
+  /** The formation's sprite cell: the stands' own, or smaller when a V of that size won't fit the sky. */
+  cell: number;
+  /** One plane per stand. The lead is first, at the right; then each rank, one above and one below, steps back and out. */
+  planes: Box[];
+  /** How far each contrail reaches behind its engine: variant A's long V trails. */
+  trail: number;
+}
+
+/**
+ * The fly-past's long V (comp variant A), fitted into the banner's sky. Each
+ * rank steps out by more than a plane's height, so no contrail runs through the
+ * plane behind it, and the whole V sits clear of the tarmac's text.
+ */
+export function runwayFormation(g: RunwayLayout): RunwayFormation {
+  const n = g.stands.length, narrow = g.height === RUNWAY_HEIGHT.narrow;
+  const up = Math.ceil((n - 1) / 2), down = Math.floor((n - 1) / 2);
+  const top = 6, room = g.tarmac.y - 8 - top;
+  const fits = (cell: number) => PLANE_ROWS * cell + (up + down) * (PLANE_ROWS * cell + Math.max(2, cell)) <= room;
+  let cell = g.cell;
+  while (cell > 1 && !fits(cell)) cell--;
+  const w = PLANE_COLS * cell, h = PLANE_ROWS * cell;
+  // Even the smallest planes can't keep a full plane's height between ranks: share out what the sky has.
+  const step = fits(cell) ? h + Math.max(2, cell) : Math.max(1, Math.floor((room - h) / Math.max(1, up + down)));
+  const span = h + (up + down) * step;
+  const leadY = top + Math.round((room - span) / 2) + up * step;
+  const back = w + cell * (narrow ? 4 : 6);
+  const ranks = up;
+  const leadX = Math.round((g.width + ranks * back + w) / 2) - w;
+  const planes = Array.from({ length: n }, (_, i): Box => {
+    const rank = Math.ceil(i / 2), side = i === 0 ? 0 : i % 2 === 1 ? -1 : 1;
+    return { x: leadX - rank * back, y: leadY + side * rank * step, w, h };
+  });
+  return { cell, planes, trail: narrow ? 150 : 280 };
+}
+
+/** Where a work item's plane sits inside a spec-sized box: centred, on whole pixels, fuselage on the same line. */
+function inset(g: RunwayLayout, workKind: WorkKind): { x: number; y: number } {
+  return workKind === "work-item" ? { x: Math.round((g.plane.w - g.small.w) / 2), y: Math.round((g.plane.h - g.small.h) / 2) } : { x: 0, y: 0 };
+}
+
+/**
+ * Stand i's plane box for a lane of this kind, parked or in the air: the
+ * stand's own box for a spec, the smaller plane centred in it for a work item.
+ * The banner's click targets read this, so they cover the plane as drawn.
+ */
+export function planeBox(g: RunwayLayout, i: number, where: "park" | "air", workKind: WorkKind): Box {
+  const box = g.stands[i]![where], o = inset(g, workKind), size = workKind === "work-item" ? g.small : g.plane;
+  return { x: box.x + o.x, y: box.y + o.y, w: size.w, h: size.h };
+}
+
+// ---------- state ----------
+
+/**
+ * What one stand shows. A lit stand's kind is its lane's moment: taking off when
+ * the lane starts, flying, holding while it's stopped, landing while its burst
+ * plays. `beacon` is the key of the lane's first Needs you row, or null: the
+ * plane blinks amber exactly while that row exists, and clicking it goes there.
+ * `since` is when a takeoff or landing started, in Date.now() milliseconds.
+ * `workKind` is the lane's kind: a work item's plane is the smaller one, from
+ * takeoff to the end of its landing.
+ */
+export type RunwayStand =
+  | { kind: "empty" }
+  /** The quiet hangar: nothing is on the Flying line, so every stand holds its plane, parked and unlit. */
+  | { kind: "parked" }
+  | { kind: "flying"; laneId: string; beacon: string | null; workKind: WorkKind }
+  | { kind: "takeoff"; laneId: string; since: number; beacon: string | null; workKind: WorkKind }
+  | { kind: "holding"; laneId: string; beacon: string | null; workKind: WorkKind }
+  | { kind: "landing"; laneId: string; since: number; workKind: WorkKind };
+
+/** What a lane carries: a spec's tickets, or one work item. Read from the lane's own kind, never its ticket count. */
+export type WorkKind = "spec" | "work-item";
+
+/** The banner's whole state, derived from the board in the same update as the lane rows. */
+export interface RunwayState {
+  stands: RunwayStand[];
+  /** The board's working-agent count (workingAgents()): the same count that paces each lane's wind. */
+  working: number;
+  /**
+   * When the banner's clock starts, in Date.now() milliseconds: the newest
+   * takeoff or landing on it, so that moment and its lane's burst share a start.
+   * Absent while no moment plays.
+   */
+  at?: number;
+  /**
+   * The fly-past, while it is due or playing: when the last Ready spec lands,
+   * the whole formation passes once in a long V, starting as the landing ends,
+   * in Date.now() milliseconds. Absent otherwise.
+   */
+  flyPast?: { since: number };
+}
+
+/** What the board view knows beyond the lanes, read in the same update: its Needs you rows and the moments it has seen. */
+export interface RunwayMoments {
+  /** needsYou(board), in the strip's order. */
+  needs: ReadonlyArray<{ key: string; specId: string }>;
+  /** nextLandings() for this update. */
+  landings: Landings | null;
+  now: number;
+  /** nextFlyPast().since for this update: when the view's latest fly-past starts, or null. */
+  flyPast?: number | null;
+}
+
+type RunwayLane = { specId: string; state: string; stopped?: boolean; kind?: WorkKind };
+
+/** One lane's stand, from its own state. Null for a lane that has landed and finished its landing. */
+function standFor(lane: RunwayLane, moments: RunwayMoments | undefined): RunwayStand | null {
+  const laneId = lane.specId, workKind: WorkKind = lane.kind ?? "spec";
+  const until = moments?.landings?.until[laneId];
+  if (lane.state === "landed") {
+    return until !== undefined && moments && until > moments.now ? { kind: "landing", laneId, since: until - LANDING_MS, workKind } : null;
+  }
+  const beacon = moments?.needs.find((item) => item.specId === laneId)?.key ?? null;
+  // Stopped exactly when the lane shows Resume.
+  if (lane.stopped ?? lane.state === "stopped") return { kind: "holding", laneId, beacon, workKind };
+  const took = moments?.landings?.takeoffs?.[laneId];
+  if (took !== undefined && moments && took + TAKEOFF_MS > moments.now) return { kind: "takeoff", laneId, since: took, beacon, workKind };
+  return { kind: "flying", laneId, beacon, workKind };
+}
+
+/**
+ * One stand per lane in the lane limit, lit in board order by the lanes on the
+ * Flying line (anything not Landed, and a lane still landing). With no lane
+ * limit the stands are the lanes flying, with one shown when none are; lanes
+ * started over the limit add stands. `working` is the board's one working-agent
+ * count, the same one each lane's wind reads. `moments` carries what the view
+ * read in this update, so each plane's state matches its lane row.
+ */
+export function runwayState(lanes: ReadonlyArray<RunwayLane>, limit: number, working: number, moments?: RunwayMoments): RunwayState {
+  const lit = lanes.map((lane) => standFor(lane, moments)).filter((stand): stand is RunwayStand => stand !== null);
+  const slots = Math.max(1, limit, lit.length);
+  // A fly-past shows until its pass ends; its start counts toward the clock once it has come.
+  const pass = moments?.flyPast ?? null;
+  const live = lit.some((stand) => stand.kind !== "landing");
+  const flyPast = !live && pass !== null && moments && pass + FLYPAST_MS > moments.now ? { since: pass } : null;
+  const starts = [...lit.flatMap((stand) => "since" in stand ? [stand.since] : []),
+    ...(flyPast && moments && flyPast.since <= moments.now ? [flyPast.since] : [])];
+  // Nothing flying: the quiet hangar, every plane parked on its stand.
+  const free: RunwayStand = lit.length ? { kind: "empty" } : { kind: "parked" };
+  return {
+    stands: Array.from({ length: slots }, (_, i): RunwayStand => lit[i] ?? free),
+    working: Math.max(0, working),
+    ...(starts.length ? { at: Math.max(...starts) } : {}),
+    ...(flyPast ? { flyPast } : {}),
+  };
+}
+
+/** Whether the banner moves, and the still frame drawn under reduced motion: late enough that every moment shows its end. */
+export function runwayMotion(state: RunwayState): { animated: boolean; stillAt: number } {
+  const moving = state.stands.some((stand) => stand.kind !== "empty" && stand.kind !== "parked");
+  // A due fly-past moves the banner; its still frame is after the pass, with the formation parked.
+  const pass = state.flyPast ? (state.flyPast.since - (state.at ?? state.flyPast.since) + FLYPAST_MS) / 1000 + 0.1 : 0;
+  return { animated: windSpeed(state.working) > 0 || moving || state.flyPast !== undefined, stillAt: Math.max(2.4, pass) };
+}
+
+// ---------- the painter ----------
+
+/** Packed inks, read from the board's CSS so they follow the theme. */
+export interface RunwayInks {
+  /** Light clouds in the sky. */
+  cloud: number;
+  /** The flat tarmac strip. */
+  tarmac: number;
+  /** Threshold bars and centre-line dashes. */
+  line: number;
+  /** The tarmac's top and bottom edges. */
+  rule: number;
+  /** An empty stand's dotted plane. */
+  stand: number;
+  /** A lit plane. */
+  plane: number;
+  /** Its two contrails. */
+  trail: number;
+  /** A plane whose lane needs the owner, and its brackets. */
+  beacon: number;
+  /** A stopped lane's plane, and its holding ring. */
+  holding: number;
+}
+
+const easeOut = (p: number) => 1 - Math.pow(1 - p, 3);
+const easeInOut = (p: number) => (p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2);
+const clamp01 = (p: number) => Math.min(1, Math.max(0, p));
+
+/** A takeoff rolls along the tarmac for this share of its time, then lifts. */
+const ROLL = 0.35;
+/** A landing glides down for this share of its time, then rolls back onto its stand. */
+const GLIDE = 0.7;
+/** One holding circuit, and one beacon blink, in seconds. */
+const HOLD_LAP = 4.5, BLINK = 2.4;
+
+/** Where a lit plane is drawn at a moment, which plane it is, how much contrail it leaves, and what marks it. */
+interface Pose { x: number; y: number; workKind: WorkKind; ink: number; trail: number; ring?: { cx: number; cy: number; r: number }; brackets?: boolean }
+
+/**
+ * A lit stand's plane at `age` seconds into its moment. Takeoff rolls off the
+ * stand then lifts into the air; landing glides down then rolls back onto the
+ * stand; holding circles inside a ring; flying bobs over its stand. A beacon
+ * turns the plane amber with blinking brackets. At the reduced-motion still
+ * frame each moment is at its end and each mark is lit. A work item's
+ * smaller plane takes the same path, centred in the same boxes.
+ */
+function pose(stand: Exclude<RunwayStand, { kind: "empty" } | { kind: "parked" }>, g: RunwayLayout, i: number, seconds: number, age: number, inks: RunwayInks): Pose | null {
+  const { workKind } = stand;
+  const park = planeBox(g, i, "park", workKind), air = planeBox(g, i, "air", workKind);
+  const phase = i * 1.7;
+  const bob = { x: Math.sin(seconds * 0.7 + phase) * 0.8, y: Math.sin(seconds * 1.3 + phase) * 1.2 };
+  switch (stand.kind) {
+    case "landing": {
+      const p = clamp01(age / (LANDING_MS / 1000));
+      const glide = easeInOut(clamp01(p / GLIDE)), roll = easeOut(clamp01((p - GLIDE) / (1 - GLIDE)));
+      return { x: air.x + (park.x - air.x) * roll, y: air.y + (park.y - air.y) * glide, workKind, ink: inks.plane, trail: 1 - clamp01(p / 0.5) };
+    }
+    case "holding": {
+      const a = -Math.PI / 4 + seconds * (Math.PI * 2 / HOLD_LAP), r = g.cell * 2;
+      return { x: air.x + Math.cos(a) * r, y: air.y + Math.sin(a) * r, workKind, ink: inks.holding, trail: 0, brackets: stand.beacon !== null,
+        ring: { cx: air.x + air.w / 2, cy: air.y + air.h / 2, r: air.w * 0.62 + r } };
+    }
+    case "takeoff":
+    case "flying": {
+      const p = stand.kind === "takeoff" ? clamp01(age / (TAKEOFF_MS / 1000)) : 1;
+      const roll = easeOut(clamp01(p / ROLL)), lift = clamp01((p - ROLL) / (1 - ROLL));
+      const x = p < 1 ? park.x + (air.x - park.x) * roll : air.x + bob.x;
+      const y = p < 1 ? park.y + (air.y - park.y) * easeOut(lift) : air.y + bob.y;
+      const beacon = stand.beacon !== null;
+      return { x, y, workKind, ink: beacon ? inks.beacon : inks.plane, trail: p < 1 ? lift * 0.5 : 1, brackets: beacon };
+    }
+  }
+}
+
+/** The brackets blink on and off; the still frame and the start of every blink are lit. */
+function blinkOn(seconds: number): boolean {
+  return Math.sin(seconds * Math.PI * 2 / BLINK) > -0.35;
+}
+
+/**
+ * Two contrails behind a plane at (x, y), one from each of its engines (the
+ * spec plane's, or a work item's smaller plane's), thinning as
+ * they reach back and blowing right to left on the board's wind. They stay in
+ * the sky, so no trail ever crosses the tarmac's text.
+ */
+export function runwayTrails(s: Surface, ink: number, x: number, y: number, g: RunwayLayout, reach: number, T: number, speed: number, seed: number, workKind: WorkKind = "spec"): void {
+  if (reach < 2) return;
+  const c = g.cell, sky = g.tarmac.y - 2;
+  for (const engine of runwayPlane(workKind).engines) {
+    const ex = Math.round(x + engine.col * c), ey = y + (engine.row + 0.5) * c;
+    fieldIn(s, ink, (px, py) => {
+      const behind = ex - px;
+      if (behind <= 0 || behind > reach || py >= sky) return 0;
+      const spread = (py - ey) / (c * 0.5 + behind * 0.025);
+      const flow = fbm((px + T * speed) / 11, seed + engine.row * 2.3 + py / 4);
+      return Math.exp(-spread * spread) * Math.pow(1 - behind / reach, 1.2) * (0.45 + 0.55 * flow);
+    }, [ex - reach, ey - c * 2.5, ex, Math.min(sky, ey + c * 2.5)]);
+  }
+}
+
+/** The holding ring: a dotted ellipse around the plane's air box. */
+function ring(s: Surface, ink: number, { cx, cy, r }: { cx: number; cy: number; r: number }): void {
+  for (let a = 0; a < 360; a += 9) {
+    const rad = a * Math.PI / 180;
+    rect(s, ink, cx + Math.cos(rad) * r - 1, cy + Math.sin(rad) * r * 0.7 - 1, 2, 2);
+  }
+}
+
+/** Beacon brackets: four amber corners just outside the plane. */
+function brackets(s: Surface, ink: number, x: number, y: number, w: number, h: number): void {
+  const m = 7, a = 9, x0 = x - m, y0 = y - m, x1 = x + w + m, y1 = y + h + m;
+  for (const [cx, cy, sx, sy] of [[x0, y0, 1, 1], [x1, y0, -1, 1], [x0, y1, 1, -1], [x1, y1, -1, -1]] as const) {
+    rect(s, ink, sx > 0 ? cx : cx - a, sy > 0 ? cy : cy - 2, a, 2);
+    rect(s, ink, sx > 0 ? cx : cx - 2, sy > 0 ? cy : cy - a, 2, a);
+  }
+}
+
+/** A plane from RUNWAY_PLANE (or a work item's RUNWAY_WORK_PLANE), one solid square per cell. */
+function sprite(s: Surface, ink: number, x: number, y: number, cell: number, shape: readonly string[] = RUNWAY_PLANE): void {
+  shape.forEach((row, ry) => {
+    for (let rx = 0; rx < row.length; rx++) if (row[rx] === "#") rect(s, ink, x + rx * cell, y + ry * cell, cell, cell);
+  });
+}
+
+/** An empty stand: the same plane as a dotted outline, one small dot per cell, so it never reads as a lit plane or a cloud. */
+function dotted(s: Surface, ink: number, x: number, y: number, cell: number): void {
+  const d = cell >= 3 ? 2 : 1, o = Math.floor((cell - d) / 2);
+  RUNWAY_PLANE.forEach((row, ry) => {
+    for (let rx = 0; rx < row.length; rx++) {
+      if (row[rx] !== "#" || (cell === 1 && (rx + ry) % 2)) continue;
+      rect(s, ink, x + rx * cell + o, y + ry * cell + o, d, d);
+    }
+  });
+}
+
+/**
+ * One pass of the whole formation in its long V, lit, from off the left edge
+ * to off the right, trails and all, at `age` seconds into the pass. The trails
+ * blow on the board's wind and stay in the sky.
+ */
+function formationPass(s: Surface, g: RunwayLayout, age: number, T: number, speed: number, inks: RunwayInks): void {
+  const f = runwayFormation(g);
+  const xs = f.planes.map((box) => box.x);
+  const from = -(Math.max(...xs) + f.planes[0]!.w) - 8, to = s.cssW - Math.min(...xs) + f.trail;
+  const dx = Math.round(from + (to - from) * easeInOut(clamp01(age / (FLYPAST_MS / 1000))));
+  const sized = { ...g, cell: f.cell };
+  f.planes.forEach((box, i) => runwayTrails(s, inks.trail, box.x + dx, box.y, sized, f.trail, T, speed, i * 5.3));
+  for (const box of f.planes) sprite(s, inks.plane, box.x + dx, box.y, f.cell);
+}
+
+/**
+ * The runway banner. Clouds drift right to left over the sky only, at the
+ * working-agent pace; the tarmac is flat under the stencil and the label so no
+ * text sits on moving dither. Empty stands are dotted; each lit stand draws its
+ * lane's moment, with two contrails from the engines blowing on the same wind.
+ * Moments keep their own clock: `seconds` counts from state.at.
+ */
+export function runway({ state, narrow, label, inks }: { state: RunwayState; narrow: boolean; label: string; inks: RunwayInks }): Painter {
+  // The clouds ride the same wind as the lanes: equal working counts, equal speed.
+  const speed = windSpeed(state.working);
+  return (s, seconds) => {
+    const g = runwayLayout(s.cssW, narrow, state.stands.length, label);
+    const W = s.cssW, sky = g.tarmac.y - 4;
+    const T = speed === 0 ? 0 : seconds;
+
+    // Weather: light clouds, thinning to nothing just above the tarmac.
+    fieldIn(s, inks.cloud, (x, y) => {
+      const u = (x + T * speed) / 120, v = y / 34;
+      const n = fbm(u, v) * 0.7 + fbm(u * 2.6 + 9, v * 2.2) * 0.3;
+      const c = Math.min(1, Math.max(0, (n - 0.54) / 0.2));
+      return c * 0.42 * Math.min(1, (sky - y) / 18);
+    }, [0, 0, W, sky], 2);
+
+    // The runway: a flat strip between two rules, threshold bars at its left end, a dashed centre line between the label and the stands.
+    rect(s, inks.tarmac, 0, g.tarmac.y, W, g.tarmac.h);
+    rect(s, inks.rule, 0, g.tarmac.y, W, 2);
+    rect(s, inks.rule, 0, g.tarmac.y + g.tarmac.h - 2, W, 2);
+    if (g.keys) {
+      for (let k = 0; k < g.keys.bars; k++) rect(s, inks.line, g.keys.x + k * g.keys.step, g.tarmac.y + 9, g.keys.bar, g.tarmac.h - 18);
+    }
+    const from = (g.label ? g.label.x + g.label.w : g.title ? g.title.x + g.title.w : 0) + 16;
+    const to = g.stands[g.stands.length - 1]!.park.x - 14;
+    const centre = g.tarmac.y + Math.round(g.tarmac.h / 2) - 1;
+    for (let x = from; x + 12 <= to; x += 22) rect(s, inks.line, x, centre, 12, 3);
+
+    // The fly-past: while its pass plays, the whole formation is in the air and the stands stand empty.
+    if (state.flyPast && !state.stands.some((stand) => stand.kind === "flying" || stand.kind === "takeoff" || stand.kind === "holding")) {
+      const age = seconds + ((state.at ?? state.flyPast.since) - state.flyPast.since) / 1000;
+      if (age >= 0 && age < FLYPAST_MS / 1000) { formationPass(s, g, age, T, speed, inks); return; }
+    }
+
+    // Stands and planes: empty stands dotted, then every lit plane's trails, then its marks and the plane on top.
+    const poses: Pose[] = [];
+    g.stands.forEach(({ park }, i) => {
+      const stand = state.stands[i];
+      if (!stand || stand.kind === "empty") { dotted(s, inks.stand, park.x, park.y, g.cell); return; }
+      if (stand.kind === "parked") { sprite(s, inks.stand, park.x, park.y, g.cell); return; }
+      const age = seconds + ("since" in stand && state.at !== undefined ? (state.at - stand.since) / 1000 : 0);
+      const p = pose(stand, g, i, seconds, age, inks);
+      if (p) poses.push(p);
+    });
+    poses.forEach((p, i) => runwayTrails(s, inks.trail, p.x, p.y, g, g.trail * p.trail, T, speed, i * 5.3, p.workKind));
+    for (const p of poses) {
+      const size = p.workKind === "work-item" ? g.small : g.plane;
+      if (p.ring) ring(s, inks.holding, p.ring);
+      if (p.brackets && blinkOn(seconds)) brackets(s, inks.beacon, p.x, p.y, size.w, size.h);
+      sprite(s, p.ink, p.x, p.y, g.cell, runwayPlane(p.workKind).shape);
+    }
+  };
+}

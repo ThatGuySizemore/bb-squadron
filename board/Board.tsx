@@ -1,4 +1,4 @@
-import { Autopilot, type AutopilotChange } from "./Autopilot.js";
+import { Autopilot, AutopilotNote, type AutopilotChange } from "./Autopilot.js";
 import { autopilotContract } from "../lib/autopilot-contract.js";
 import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isActiveTicket } from "../lib/ticket-activity.js";
@@ -8,7 +8,8 @@ import type { ReactNode, Ref } from "react";
 import { experimental_FileLink as FileLink, experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
-import { canMerge, dependencyColumns, formatMinutes, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
+import { canMerge, dependencyColumns, formatMinutes, LANDING_MS, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
+import { FLYPAST_MS, nextFlyPast, type FlyPast } from "../lib/fly-past.js";
 import type { boardContract, PickerProjects } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
@@ -16,9 +17,11 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { formationSize, FORMATION_SIZE } from "../lib/dither.js";
-import { layoutPixels } from "../lib/pixels.js";
+import { planeBox, runwayLayout, runwayState, type RunwayLayout, type RunwayMoments, type RunwayStand, type RunwayState } from "../lib/runway.js";
+import { PixelText } from "./PixelText.js";
+import { FlipCount } from "./FlipCount.js";
 import { DitherCanvas } from "./DitherCanvas.js";
+import { inWind, workingAgents } from "../lib/working-agents.js";
 import { DoctorPanel } from "./Doctor.js";
 import { Term } from "./Term.js";
 import { HowItWorks } from "./HowItWorks.js";
@@ -28,29 +31,6 @@ import type { ProjectCounts } from "../lib/board-contract.js";
 import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
 
 // ---------- pixel primitives ----------
-
-function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: number; gap?: number; className?: string }) {
-  gap ??= cell >= 3 ? 1 : 0;
-  const run = useMemo(() => layoutPixels(text), [text]);
-  const pitch = cell + gap;
-  return (
-    <span className={className}>
-      <svg
-        aria-hidden="true"
-        width={run.width * pitch - gap}
-        height={run.height * pitch - gap}
-        viewBox={`0 0 ${run.width * pitch - gap} ${run.height * pitch - gap}`}
-        shapeRendering="crispEdges"
-        className="sq-pixeltext"
-      >
-        {run.cells.map(([x, y]) => (
-          <rect key={`${x}.${y}`} x={x * pitch} y={y * pitch} width={cell} height={cell} />
-        ))}
-      </svg>
-      <span className="sq-sr">{text}</span>
-    </span>
-  );
-}
 
 /** A 6x10 pixel chevron on 2px cells, pointing along the path. */
 function Chevron({ className }: { className: string }) {
@@ -62,16 +42,102 @@ function Chevron({ className }: { className: string }) {
 }
 
 /**
- * The header's formation mark: one plane slot per lane in this project's lane
- * limit, lit as lanes fly. Before a project has a lane limit, the slots are
- * the lanes flying, with one slot shown when none are.
+ * The banner's lane count: lanes on the Flying line against the stands drawn,
+ * one per lane in the lane limit. Before a project has a lane limit, the stands
+ * are the lanes flying, with one shown when none are.
  */
-function FormationMark({ limit, flying }: { limit: number; flying: number }) {
+function flyingCount(flying: number, limit: number) {
   const slots = Math.max(1, limit, flying);
-  const label = `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying${limit > 0 && flying > limit ? ` (limit ${limit})` : ""}`;
-  const { height } = formationSize(slots, flying);
-  return <DitherCanvas fx={{ kind: "formation", slots, lit: flying }} className="sq-formation" label={label} title={label}
-    style={height > FORMATION_SIZE.height ? { height, margin: 0 } : undefined} />;
+  const over = limit > 0 && flying > limit ? ` (limit ${limit})` : "";
+  return { flying, slots, over, text: `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying${over}` };
+}
+
+function FlyingLabel({ count, box }: { count: ReturnType<typeof flyingCount>; box?: { x: number; y: number; w: number } }) {
+  return (
+    <p className="sq-runway-label" style={box ? { left: box.x, top: box.y, width: box.w } : undefined}>
+      <b className="sq-num">{count.flying}</b> of {count.slots} {count.slots === 1 ? "lane" : "lanes"} flying{count.over}
+    </p>
+  );
+}
+
+interface Runway {
+  ref: { current: HTMLDivElement | null };
+  narrow: boolean;
+  state: RunwayState;
+  /** Null until the live board's first read, so the banner never counts lanes it hasn't read. */
+  count: ReturnType<typeof flyingCount> | null;
+  layout: RunwayLayout;
+  overflow: boolean;
+}
+
+/**
+ * The banner's state and geometry, measured from the banner's own width so the
+ * DOM text and the painted art agree. `moments` is what the view read in this
+ * board update (its Needs you rows and its takeoffs and landings), so each
+ * plane matches its lane row.
+ */
+function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: number, moments: RunwayMoments): Runway {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const width = useWidth(ref);
+  const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
+  const state: RunwayState = lanesKnown ? runwayState(board.lanes, board.laneCapacity, working, moments) : { stands: [], working: 0 };
+  const count = lanesKnown ? flyingCount(flying, board.laneCapacity) : null;
+  const viewport = Math.max(1, Math.round(width ?? (narrow ? 560 : 1200)));
+  const layout = runwayLayout(viewport, narrow, state.stands.length, count?.text ?? "");
+  return { ref, narrow, state, count, layout, overflow: layout.width > viewport };
+}
+
+/**
+ * The runway banner: full width, light clouds drifting right to left over a
+ * tarmac strip with SQUADRON stencilled on it, one stand per lane in the lane
+ * limit. The stencil and the lane label are DOM text placed on plain tarmac by
+ * the same geometry the painter uses, so neither ever sits on moving dither.
+ */
+/** A lit plane the owner can click: flying, taking off or holding. A landing plane is on its way out. */
+type PlaneStand = Extract<RunwayStand, { beacon: string | null }>;
+const clickable = (stand: RunwayStand): stand is PlaneStand => "beacon" in stand;
+
+/** What a plane's button says: its lane (named a work item when it is one, as its smaller plane shows), its state, and where a click goes. */
+function planeName(stand: PlaneStand, title: string | undefined): string {
+  const lane = `${stand.workKind === "work-item" ? "Work item " : ""}${title ? `${stand.laneId}, ${title}` : stand.laneId}`;
+  if (stand.beacon) return `${lane} needs you${stand.kind === "holding" ? " (stopped)" : ""}. Go to its Needs you row.`;
+  return `${lane}: ${stand.kind === "holding" ? "stopped" : stand.kind === "takeoff" ? "taking off" : "flying"}. Go to its lane.`;
+}
+
+function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: ReadonlyMap<string, string>; onPlane: (stand: PlaneStand) => void }) {
+  const { layout: g, state, count, narrow, overflow } = runway;
+  const scene = (
+    <>
+      <DitherCanvas fx={{ kind: "runway", narrow, label: count?.text ?? "", state }} className="sq-runway-art" />
+      <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined}>
+        {g.title ? <PixelText text="Squadron" cell={g.title.cell} gap={g.title.gap} /> : <span className="sq-sr">Squadron</span>}
+      </h1>
+      {count && g.label ? <FlyingLabel count={count} box={g.label} /> : null}
+      {state.stands.map((stand, i) => {
+        if (!g.stands[i] || !clickable(stand)) return null;
+        // The click target is the plane as drawn: a work item's is the smaller one, centred on its stand.
+        const air = planeBox(g, i, "air", stand.workKind);
+        const pad = 10, name = planeName(stand, titles.get(stand.laneId));
+        return (
+          <button key={stand.laneId} type="button" className="sq-runway-plane" data-plane={stand.kind} data-work-kind={stand.workKind} data-beacon={stand.beacon ?? undefined}
+            aria-label={name} title={name} onClick={() => onPlane(stand)}
+            style={{ left: air.x - pad, top: air.y - pad, width: air.w + pad * 2, height: air.h + pad * 2 }} />
+        );
+      })}
+    </>
+  );
+  return (
+    <>
+      <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length}
+        data-fly-past={state.flyPast?.since} data-overflow={overflow ? "true" : undefined}
+        role={overflow ? "region" : undefined} tabIndex={overflow ? 0 : undefined}
+        aria-label={overflow ? `Runway, ${state.stands.length} stands. Scroll horizontally to see every plane.` : undefined}
+        style={overflow ? undefined : { height: g.height }}>
+        {overflow ? <div className="sq-runway-scene" style={{ width: g.width, height: g.height }}>{scene}</div> : scene}
+      </div>
+      {overflow ? <p className="sq-runway-scroll-hint">Scroll the runway to see all {state.stands.length} stands.</p> : null}
+    </>
+  );
 }
 
 // ---------- small parts ----------
@@ -150,6 +216,8 @@ const PlacementContext = createContext<Placement>("page");
 /** How the board lays out: wide, or narrow with one compact row per lane. */
 export type BoardLayout = "wide" | "narrow";
 const LayoutContext = createContext<BoardLayout>("wide");
+/** The board's wind: how many agents work across its lanes. The banner's clouds and every lane's wind read this one count. */
+const WindContext = createContext(0);
 
 /** The widest board, in CSS pixels, that still takes the narrow layout. */
 export const NARROW_MAX = 900;
@@ -445,10 +513,10 @@ function SpecTitle({ lane }: { lane: Lane }) {
  * The narrow layout's lane: one compact row in place of the tail card. The
  * tail number, title and time on top; the Lead and its step, the PR, the lane
  * state (never "Flying", which the section already says) and the actions
- * below; the airstream as a thin pace line along its bottom edge. The branch
+ * below; the contrail along its bottom edge. The branch
  * is the row's hover title and sits in the lane's ticket list.
  */
-function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting: LaneAction | null }) {
+function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: number | null; demo: boolean; acting: LaneAction | null }) {
   return (
     <div className="sq-lane-row" title={`Branch ${lane.branch}`}>
       <div className="sq-lane-row-top">
@@ -459,6 +527,7 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
       <div className="sq-lane-row-foot">
         <WorkKindTag kind={lane.kind} ticketCount={lane.totalTicketCount ?? lane.tickets.length} />
         <LeadButton lane={lane} compact />
+        {lane.tickets.length ? <span className="sq-lane-count sq-num">{inBranch(lane)}/{lane.tickets.length} in branch</span> : null}
         <div className="sq-lane-row-end">
           {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}><Term text={LANE_LABEL[lane.state]} /></span> : null}
           {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" compact /> : null}
@@ -468,29 +537,48 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
         </div>
       </div>
       {lane.outside ? <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} /> : null}
-      <PaceLine lane={lane} landing={landing} />
+      <Contrail lane={lane} landing={landing} />
     </div>
   );
 }
 
-/** The same thin pace line in a narrow lane row and a wide tail card. */
-function PaceLine({ lane, landing }: { lane: Lane; landing: boolean }) {
-  const working = lane.workingThreads ?? 0;
-  return <span className="sq-pace-line" data-pace={working} aria-hidden="true">
-    {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
+/** Tickets in the integration branch or done: the "N/M in branch" count. */
+function inBranch(lane: Lane): number {
+  return lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
+}
+
+/** A stopped or landed lane is out of the wind: its contrail draws still. */
+function laneWind(lane: Lane, wind: number): number {
+  return inWind(lane) ? wind : 0;
+}
+
+/**
+ * The lane's progress as a contrail along the bottom of the compact row and
+ * the wide tail card: filled to its tickets in the branch, a small plane at
+ * its head, blowing right to left in the board's wind. A landing plays its
+ * burst here instead.
+ */
+function Contrail({ lane, landing }: { lane: Lane; landing: number | null }) {
+  const done = inBranch(lane), total = lane.tickets.length;
+  const wind = laneWind(lane, useContext(WindContext));
+  return <span className="sq-contrail" data-done={done} data-total={total} data-wind={wind} aria-hidden="true">
+    {landing !== null ? <DitherCanvas fx={{ kind: "burst", since: landing }} className="sq-air" />
+      : <DitherCanvas fx={{ kind: "contrail", done, total, wind, tone: lane.state === "stopped" ? "red" : "sky" }} className="sq-air" />}
   </span>;
 }
 
-function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting?: LaneAction | null }) {
+/** `landing` is when the lane's landing started while its burst plays, else null. */
+function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: number | null; demo: boolean; acting?: LaneAction | null }) {
   const open = useOpen();
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
-  const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
-  // The airstream's pace: the lane's working threads. A lane with none working is still.
+  const done = inBranch(lane);
+  // The words say this lane's working threads; the airstream blows in the board's one wind.
   const working = lane.workingThreads ?? 0;
+  const wind = laneWind(lane, useContext(WindContext));
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
   // In a narrow layout the lane is one compact row, then slim active tickets, with every ticket behind a disclosure.
   const narrow = useContext(LayoutContext) === "narrow";
-  const air = landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />;
+  const air = landing !== null ? <DitherCanvas fx={{ kind: "burst", since: landing }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", wind }} className="sq-air" />;
   const others = lane.unmatchedThreads?.length ? (
     <div className="sq-threads">
       <span className="sq-threads-label">Other threads</span>
@@ -559,7 +647,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
         <span className="sq-branch">{lane.branch}</span>
         <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} />
-        <PaceLine lane={lane} landing={landing} />
+        <Contrail lane={lane} landing={landing} />
       </div>
       <div className="sq-track">
         {progress}
@@ -609,7 +697,7 @@ export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = n
   return (
     <ul className="sq-needs">
       {items.map((item) => (
-        <li key={item.key} className="sq-need" data-kind={item.kind}>
+        <li key={item.key} className="sq-need" data-kind={item.kind} data-need={item.key}>
           <DitherCanvas fx={{ kind: "needs-you" }} className="sq-fx" />
           <span className="sq-need-kind">{NEEDS_LABEL[item.kind]}</span>
           {item.ticketId ?? item.specId ? (
@@ -885,21 +973,46 @@ const LEAVE_MS = 420;
 const ARRIVE_MS = 900;
 
 interface LandingPhase {
+  /** The moments this view has seen, read in this board update: the banner reads the same record. */
+  landings: Landings;
+  /** The time this update's moments are judged at, in Date.now() milliseconds. */
+  now: number;
+  /** When this view's latest fly-past starts, or null: the banner reads it with the landings. */
+  flyPast: number | null;
   /** The burst is playing on the lane's sortie line. */
   landing(lane: Lane): boolean;
+  /** When the lane's landing started, while it plays: the burst and the banner's glide share it. */
+  since(lane: Lane): number | null;
   /** The burst's line is folding away. */
   leaving(lane: Lane): boolean;
   /** The lane has just arrived in Landed. */
   fresh(lane: Lane): boolean;
 }
 
-/** Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed. */
-function useLandings(lanes: Lane[]): LandingPhase {
+/**
+ * Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed.
+ * The fly-past is decided in the same read: `ready` is how many Ready rows show, or null while Ready is unread.
+ */
+function useLandings(lanes: Lane[], ready: number | null, lanesKnown: boolean): LandingPhase {
   const seen = useRef<Landings | null>(null);
+  const flown = useRef<FlyPast | null>(null);
   // Folded in as each board arrives, so a lane never flashes into Landed before its burst.
-  const landings = useMemo(() => (seen.current = nextLandings(seen.current, lanes, Date.now())), [lanes]);
-  const [now, setNow] = useState(() => Date.now());
-  const marks = Object.values(landings.until).flatMap((until) => [until - LEAVE_MS, until, until + ARRIVE_MS]).filter((at) => at > now);
+  const read = useMemo(() => {
+    const at = Date.now();
+    if (!lanesKnown) { seen.current = null; flown.current = null; }
+    const before = seen.current;
+    // An unread board is not an observed empty board. Seed only from real lanes,
+    // so the first RPC response and reloads cannot manufacture starts.
+    const landings = lanesKnown ? (seen.current = nextLandings(before, lanes, at)) : nextLandings(null, [], at);
+    const fly = lanesKnown ? (flown.current = nextFlyPast(flown.current, { before, landings, lanes, ready })) : flown.current;
+    return { landings, flyPast: fly?.since ?? null, at };
+  }, [lanes, ready, lanesKnown]);
+  const landings = read.landings;
+  const [tick, setNow] = useState(() => Date.now());
+  // Never older than the board update itself, so a moment that starts in this update is judged from it.
+  const now = Math.max(tick, read.at);
+  const pass = read.flyPast === null ? [] : [read.flyPast, read.flyPast + FLYPAST_MS];
+  const marks = [...Object.values(landings.until).flatMap((until) => [until - LEAVE_MS, until, until + ARRIVE_MS]), ...pass].filter((at) => at > now);
   useEffect(() => {
     if (marks.length === 0) return;
     const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, Math.min(...marks) - Date.now()) + 20);
@@ -907,7 +1020,9 @@ function useLandings(lanes: Lane[]): LandingPhase {
   });
   const until = (lane: Lane) => (lane.state === "landed" ? landings.until[lane.specId] ?? 0 : 0);
   return {
+    landings, now, flyPast: read.flyPast,
     landing: (lane) => until(lane) > now,
+    since: (lane) => (until(lane) > now ? until(lane) - LANDING_MS : null),
     leaving: (lane) => until(lane) > now && now >= until(lane) - LEAVE_MS,
     fresh: (lane) => until(lane) > 0 && until(lane) <= now && now < until(lane) + ARRIVE_MS,
   };
@@ -981,16 +1096,22 @@ const STATIONS: [Station, string][] = [["open", "Open issues"], ["shaping", "Sha
 
 /** The path in one strip: each station's count, in path order, jumping to its section. */
 function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>; onJump: (station: Station) => void }) {
+  const layout = useContext(LayoutContext);
   return (
     <nav className="sq-path" aria-label="The path">
       {STATIONS.map(([key, label]) => {
         const n = counts[key];
+        const cell = layout === "narrow" ? 2 : 3;
+        // The Landed count flips digit by digit as each lane arrives in Landed.
+        const count = n === null ? "–"
+          : key === "landed" ? <FlipCount value={n} digit={(d) => <PixelText text={d} cell={cell} gap={0} decorative />} />
+          : <PixelText text={String(n)} cell={cell} gap={0} />;
         return (
           <button key={key} type="button" className="sq-station" data-zero={!n} data-hot={key === "flying" && !!n} onClick={() => onJump(key)}>
             <span className="sq-station-label">
               {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : <Term text={label} nested />}
             </span>
-            <span className="sq-station-count sq-num">{n ?? "–"}</span>
+            <span className="sq-station-count sq-num">{count}</span>
             {key !== "landed" ? <Chevron className="sq-station-chev" /> : null}
           </button>
         );
@@ -999,13 +1120,16 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
   );
 }
 
-/** A section's label on its pixel rule, with its count. Needs you counts in amber. */
+/** A section's dotted separator, then its label and count. Needs you counts in amber. */
 function SectionHead({ id, title, count, amber = false }: { id: string; title: string; count: number; amber?: boolean }) {
   return (
-    <div className="sq-label">
-      <h2 id={id}><Term text={title} /></h2>
-      {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
-    </div>
+    <>
+      <DitherCanvas fx={{ kind: "section-rule" }} className="sq-section-rule" />
+      <div className="sq-label">
+        <h2 id={id}><Term text={title}><PixelText text={title} cell={2} className="sq-section-title" /></Term></h2>
+        {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
+      </div>
+    </>
   );
 }
 
@@ -1036,7 +1160,7 @@ interface BoardViewProps {
   projectId?: string | null;
   /** The shown project's tracker, for the tracker line; undefined while unknown. */
   tracker?: TrackerInfo;
-  /** False until the live board's first read, so the formation mark never counts lanes it hasn't read. */
+  /** False until the live board's first read, so the banner never counts lanes it hasn't read. */
   lanesKnown?: boolean;
   autopilotSaving?: boolean;
   onAutopilotChange?: (patch: AutopilotChange) => void;
@@ -1063,10 +1187,27 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
     else if (rootRef) rootRef.current = el;
   }, [rootRef]);
   const items = needsYou(board);
-  const phase = useLandings(board.lanes);
+  // The fly-past needs a read Ready: while it's unread (a notice, or before the first read), no landing counts as the last.
+  const phase = useLandings(board.lanes, notice || !lanesKnown ? null : board.ready.length, lanesKnown);
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || phase.landing(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !phase.landing(l));
+  // The board's one working-agent count paces the banner's clouds, as it paces each lane's wind.
+  const wind = workingAgents(board.lanes);
+  // The banner reads this update's Needs you rows and moments, the same ones the rows below read.
+  const runway = useRunway(board, lanesKnown, layout === "narrow", wind, { needs: items, landings: phase.landings, now: phase.now, flyPast: phase.flyPast });
+  const titles = useMemo(() => new Map(board.lanes.map((lane) => [lane.specId, lane.title])), [board.lanes]);
+  // A beacon goes to its Needs you row, ready to answer; any other plane goes to its lane.
+  const goToPlane = (stand: PlaneStand) => {
+    const root = ownRef.current;
+    if (!root) return;
+    const row = stand.beacon
+      ? Array.from(root.querySelectorAll<HTMLElement>("[data-need]")).find((el) => el.dataset.need === stand.beacon)
+      : Array.from(root.querySelectorAll<HTMLElement>("[data-lane-row]")).find((el) => el.dataset.laneRow === stand.laneId);
+    if (!row) return;
+    row.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
+    if (stand.beacon) row.querySelector<HTMLElement>(".sq-need-actions button")?.focus({ preventScroll: true });
+  };
   const startable = board.ready.find((spec) => (spec.startReason !== undefined ? spec.startReason : canStart(board, spec)) === null);
   const sections = useRef<Partial<Record<Station, HTMLElement | null>>>({});
   const jump = (station: Station) => sections.current[station]?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
@@ -1094,14 +1235,13 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   return (
     <PlacementContext.Provider value={placement}>
     <LayoutContext.Provider value={layout}>
+    <WindContext.Provider value={wind}>
     <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout}>
-      <div className="sq-page">
-        <header className="sq-head">
-          <div className="sq-brand">
-            {lanesKnown ? <FormationMark limit={board.laneCapacity} flying={flying.length} /> : null}
-            <h1>Squadron</h1>
-          </div>
+      <header className="sq-head">
+        <RunwayBanner runway={runway} titles={titles} onPlane={goToPlane} />
+        <div className="sq-controls">
           {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
+          {runway.count && !runway.layout.label ? <FlyingLabel count={runway.count} /> : null}
           {demo ? (
             <span className="sq-tag" data-tone="amber">
               Synthetic data
@@ -1123,8 +1263,6 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
               </button>
             ) : null}
             {modeSwitch}
-            {!demo ? <HelperControl projectId={projectId ?? null} openThread={(id) => openThread(navigate, placement, id)} /> : null}
-            {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
             <button type="button" ref={howButton} className="sq-btn sq-how-open" aria-expanded={howOpen} aria-controls={howOpen ? howId : undefined}
               title="See how an idea becomes a merged pull request, and where you step in" onClick={() => setHowOpen((open) => !open)}>How it works</button>
             <button type="button" className="sq-doctor" data-status={doctor?.tone ?? "unknown"} aria-expanded={doctorOpen} aria-controls={doctorId}
@@ -1132,12 +1270,17 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
               Doctor{doctor ? <span className="sq-sr">: </span> : null}
               {doctor ? <span className="sq-doctor-word">{doctor.text}</span> : null}
             </button>
+            {!demo ? <HelperControl projectId={projectId ?? null} openThread={(id) => openThread(navigate, placement, id)} /> : null}
+            {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
             {newSpec("primary")}
+            {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
           </div>
-        </header>
+          {!demo && board.autopilot ? <AutopilotNote /> : null}
+        </div>
+      </header>
+      <div className="sq-page">
         {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
         <TrackerLine board={board} tracker={tracker} now={Date.now()} />
-        {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
         <PathStrip counts={counts} onJump={jump} />
 
@@ -1150,15 +1293,19 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         <section className="sq-section" aria-labelledby="sq-flying-h" ref={(el) => { sections.current.flying = el; }}>
           <SectionHead id="sq-flying-h" title="Flying" count={flying.length} />
           {onLine.length === 0 ? (
-            <EmptySection text="Nothing is flying. Start a Ready spec or work item to launch its lane." action={startable ? (
-              <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
-                {starting === startable.id ? "Opening…" : `Start ${startable.id}`}
-              </Btn>
-            ) : newSpec()} />
+            // The quiet hangar: one plain line pointing to New spec, with Start beside it when a Ready spec can go.
+            <EmptySection text="Nothing is flying. Plan the next spec with New spec." action={<>
+              {newSpec()}
+              {startable ? (
+                <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
+                  {starting === startable.id ? "Opening…" : `Start ${startable.id}`}
+                </Btn>
+              ) : null}
+            </>} />
           ) : (
             onLine.map((lane) => (
-              <div key={lane.specId} data-live-lane={lane.state === "flying" ? lane.specId : undefined} className="sq-line-wrap" data-leaving={phase.leaving(lane)}>
-                <SortieLine lane={lane} dispatch={dispatch} landing={phase.landing(lane)} demo={demo} acting={acting} />
+              <div key={lane.specId} data-live-lane={lane.state === "flying" ? lane.specId : undefined} data-lane-row={lane.specId} className="sq-line-wrap" data-leaving={phase.leaving(lane)}>
+                <SortieLine lane={lane} dispatch={dispatch} landing={phase.since(lane)} demo={demo} acting={acting} />
               </div>
             ))
           )}
@@ -1220,6 +1367,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         {footer}
       </div>
     </div>
+    </WindContext.Provider>
     </LayoutContext.Provider>
     </PlacementContext.Provider>
   );

@@ -425,7 +425,10 @@ test("Shaping rows name what's missing and offer the one fixing button", async (
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, planning: "FIX-30",
   }));
-  assert.match(html, /<h2[^>]*><span[^>]*data-term="Shaping"[^>]*>Shaping</);
+  const heading = elements(parse(html)).find((element) => element.tag === "h2" && element.attrs.id === "sq-shaping-h");
+  assert.ok(heading);
+  assert.equal(visibleText(heading), "Shaping");
+  assert.ok(elements(heading).some((element) => element.attrs["data-term"] === "Shaping"), "the heading retains its glossary definition");
   for (const text of ["Being planned", "Planning is still open in its thread.", "Has 2 tickets but no ready-for-agent label.",
     "Starting a planning thread for its tickets"]) assert.ok(html.includes(text), `Shaping shows ${text}`);
   assert.equal((html.match(/>Resume planning<\/button>/g) ?? []).length, 1);
@@ -453,7 +456,7 @@ test("an empty board shows how to get started: every section says how work arriv
     board: emptyBoard, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   })).replace(/&#x27;/g, "'");
   for (const text of [
-    "Nothing is flying. Start a Ready spec or work item to launch its lane.",
+    "Nothing is flying. Plan the next spec with New spec.",
     "Nothing is Ready. Specs need the ready-for-agent label and a ticket that can start. Work items need the label and no hold.",
     "No spec is being shaped. Plan an open issue, or start a new spec from nothing.",
     "No open issues. Issues that need planning wait here for Plan.",

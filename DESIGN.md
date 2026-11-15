@@ -22,23 +22,18 @@ typography:
     fontFamily: "5x7 pixel cell font (lib/pixels.ts, SVG rects)"
     fontSize: "34px (7 cells of 4px on a 5px pitch)"
     lineHeight: 1
-  headline:
-    fontFamily: "inherit (BB UI font)"
-    fontSize: "22px"
-    fontWeight: 650
-    lineHeight: 1.15
-    letterSpacing: "-0.02em"
-  headline-narrow:
-    fontFamily: "inherit (BB UI font)"
-    fontSize: "18px"
-    fontWeight: 650
-    lineHeight: 1.15
   path-count:
-    fontFamily: "inherit (BB UI font)"
-    fontSize: "22px (18px in a narrow box)"
-    fontWeight: 650
-    lineHeight: 1.1
-    fontFeature: "tnum"
+    fontFamily: "5x7 pixel cell font (lib/pixels.ts, SVG rects)"
+    fontSize: "21px (14px in narrow layout)"
+    lineHeight: 1
+  section-label:
+    fontFamily: "5x7 pixel cell font (lib/pixels.ts, SVG rects)"
+    fontSize: "14px"
+    lineHeight: 1
+  banner-stencil:
+    fontFamily: "5x7 pixel cell font (lib/pixels.ts, SVG rects)"
+    fontSize: "34px wide, 21px narrow; shrinks to fit stands"
+    lineHeight: 1
   title:
     fontFamily: "inherit (BB UI font)"
     fontSize: "14px"
@@ -79,7 +74,7 @@ spacing:
   lg: "16px"
   xl: "20px"
   page-x: "28px"
-  section: "30px"
+  section: "26px"
 components:
   button:
     backgroundColor: "{colors.board-ground}"
@@ -131,11 +126,11 @@ components:
     backgroundColor: "{colors.band}"
     textColor: "{colors.board-ink}"
     rounded: "{rounded.none}"
-    padding: "11px 12px 18px"
+    padding: "11px 12px 26px"
   needs-you-row:
     backgroundColor: "{colors.board-ground}"
     rounded: "{rounded.none}"
-    padding: "10px 12px"
+    padding: "16px 22px"
   needs-you-kind:
     textColor: "{colors.amber-ink}"
     padding: "0"
@@ -163,23 +158,23 @@ components:
 
 # Design System: BB Squadron
 
-This describes the implemented board, built from the approved SIZE-948 comp (`comps/live-board/index.html`) and updated for SQD-213's formation, compact lanes and live steps. Where the comp differs, the implemented code and this file win.
+This describes the implemented board through SQD-221's delivered tickets, read from `board/Board.tsx`, `board/board.css`, `board/FlipCount.tsx`, `board/DitherCanvas.tsx`, `lib/runway.ts`, `lib/dither.ts`, `lib/board-model.ts`, `lib/working-agents.ts` and `lib/fly-past.ts`. The runway replaces the former small formation header. Where a comp differs, the implemented code wins. SQD-247's first-read loading state remains Held and is excluded here. This is source-derived documentation; live visual acceptance in BB is unproven.
 
 ## Overview
 
 **Creative North Star: "The Ready-Room Sortie Board, live"**
 
-The board is a squadron ready room's sortie board drawn inside BB, now covering the whole path a spec travels: Open issues, Shaping, Ready, Flying, Landed. Each Flying lane is one ruled line; its tickets sit on that line as pegs in dependency order, left to right, with small pixel chevrons between columns, and a sky airstream flows behind them at the pace of the lane's working threads. What waits on the owner sits pinned near the top in amber. The path reads as a route, never as kanban columns or count tiles.
+The board is a squadron ready room's sortie board drawn inside BB, now covering the whole path a spec or work item travels: Open issues, Shaping, Ready, Flying, Landed. Each Flying spec has one ruled line with tickets in dependency order, small pixel chevrons between columns and a sky airstream behind the pegs. Work items have compact lane rows. The banner and lanes share the board's working-agent wind. What waits on the owner sits pinned near the top in amber. The path reads as a route, never as kanban columns or count tiles.
 
-The material is BB's own theme. Ground, ink, muted ink and hairlines are BB's theme tokens, so the board works on any BB theme, light or dark. The only texture is ordered dither drawn on canvas: Bayer 8x8 thresholds, one cell per device pixel, so fills read as fine halftone grain. The only display type is a 5x7 pixel cell font for spec numbers, used like tail numbers on an airframe. Four state inks sit on top of the theme, and each state is also carried by form, never by colour alone.
+The material is BB's own theme. Ground, ink, muted ink and hairlines are BB's theme tokens, so the board works on any BB theme, light or dark. The only texture is ordered dither drawn on canvas: Bayer 8x8 thresholds, one cell per device pixel, so fills read as fine halftone grain. The only display type is a 5x7 pixel cell font for spec numbers, the banner stencil, section labels and path counts. Text sits on clean ground or flat tarmac. Four state inks sit on top of the theme, and each state is also carried by form, never by colour alone.
 
-Motion is continuous and only where something is happening: the Flying airstream, working pegs, the Needs-you edge, the header's formation mark and the one-time landing. It pauses while the page is hidden. Under reduced motion every canvas draws one still frame and CSS motion stops.
+Motion follows real work: the shared wind, working pegs, the Needs-you edge, each banner plane's lane state and observed takeoffs and landings. An observed queue-clearing landing earns one V fly-past. It pauses while the page is hidden. Under reduced motion every canvas draws one still frame and CSS motion stops.
 
 **Key characteristics:**
 - BB theme tokens for every neutral; four fixed state inks layered on top.
 - Canvas Bayer 8x8 ordered dither at device-pixel density is the only texture. CSS adds none.
-- A 5x7 pixel cell font for spec numbers only; BB's UI font for everything else; mono for ids and branches.
-- Square board marks, 1px hairlines, 2px pixel rules (2px on, 2px off), 2px controls, no shadows.
+- A 5x7 pixel cell font for spec numbers, SQUADRON, section labels and path counts; BB's UI font or mono for other text.
+- Square board marks, 1px hairlines, dotted section separators, 2px-on/2px-off path and rail rules, 2px control corners, no shadows.
 - Every state is ink plus form; every animation has a still fallback.
 - No visual is demo-only: the synthetic demo and the live board draw the same parts.
 
@@ -191,7 +186,7 @@ The theme supplies the neutrals; four state inks supply the meaning.
 - **Needs-You Amber** (needs-you-amber): the one colour that means "the owner". It fills the Needs-you count, the square before each Needs-you kind label and the Answer, Merge, Resume-in-Needs-you and Set up buttons, edges Needs-you rows and question pegs with a doubled line, tops the tail card of a lane whose merge waits on the owner, outlines Doctor's square when something needs fixing, dashes Doctor's Fix tags, and tints text selection at 38%. Text on solid amber is always **On-Amber** (on-amber), never white. Amber ink names what a Shaping spec is missing.
 
 ### Secondary
-- **Working Sky** (working-sky): an agent is on it. The airstream, the working peg's march and grain, the striped working and review progress segments, the formation mark's flying planes and contrails, the Flying station's rule and count while anything flies, the pace square, and the auto-start switch when on. Sky ink also marks "N can start" on Ready rows and is the focus outline.
+- **Working Sky** (working-sky): an agent is on it. The airstream, the working peg's march and grain, the striped working and review progress segments, the runway's flying planes and contrails, the Flying station's rule and count while anything flies, the pace square, and the auto-start switch when on. Sky ink also marks "N can start" on Ready rows and is the focus outline.
 
 ### Tertiary
 - **Stopped Red** (stopped-red): failed or stopped. Doubles the failed peg's border to 2px with a red grain, raises its progress segment to full height, tops a stopped lane's tail card, and colours the urgent-priority mark and failing-checks dot.
@@ -203,7 +198,7 @@ The theme supplies the neutrals; four state inks supply the meaning.
 - **Muted Ink** (muted-ink): BB's `--muted-foreground`. Station labels, zero counts, meta lines, branch names, waiting pegs, the tracker line.
 - **Hairline** (hairline): BB's `--border`. Every 1px row rule, peg border and control border.
 - **Band** (band): foreground at 4.5% over the ground. The one tonal step: the tail card behind each lane and the plate behind spec numbers in lists.
-- **Rule Ink** (rule-ink): foreground at 30%. The 2px-on, 2px-off pixel rule under section labels, under the path stations and along each sortie line; hollow progress segments; the outside-lane tag's dashes.
+- **Rule Ink** (rule-ink): foreground at 30%. The section separator dots, the 2px-on, 2px-off rule under path stations and along each lane; hollow progress segments; the outside-lane tag's dashes.
 
 ### Named Rules
 
@@ -219,43 +214,44 @@ The theme supplies the neutrals; four state inks supply the meaning.
 **Body Font:** BB's inherited UI font; the board sets no family of its own.
 **Label/Mono Font:** the system monospace stack, for ticket ids, branch names, Open issue ids and file paths.
 
-**Character:** a crisp, built-from-cells display set against BB's plain UI type, so the spec numbers look painted on and everything else reads like the rest of BB.
+**Character:** crisp cell lettering marks the board's structure and spec numbers. BB's plain UI type carries prose, actions and lane details.
 
 ### Hierarchy
-- **Display** (pixel cells: 4px cells on a 5px pitch, 34px tall, in lane tails; 2px cells with no gap, 14px tall, on list plates and in Needs-you rows): spec numbers only. Ink follows lane state: board ink, red ink when stopped, amber ink when the merge waits or in Needs you, green ink when landed.
-- **Headline** (650, 22px, 1.15, -0.02em): the page title "Squadron", once. 18px in a narrow box.
-- **Path count** (650, 22px, 1.1, tabular): each station's count; 500 and muted at zero, sky ink on Flying while anything flies. 18px in a narrow box.
+- **Spec number** (4px cells on a 5px pitch, 34px tall in wide lane tails; 2px cells with no gap, 14px tall on list plates, compact lanes and in Needs you): ink follows lane state, with red for stopped, amber when the merge waits or in Needs you, green when landed.
+- **Banner stencil:** SQUADRON on plain tarmac. The geometry starts with 4px cells and a 1px gap wide, 3px cells and no gap narrow. It shrinks cells and spacing as stands need room, then removes the visible stencil if it cannot fit; the accessible heading remains.
+- **Path count:** 3px cells with no gap, 21px tall wide; 2px cells, 14px tall narrow. Zero is muted; Flying uses sky ink while anything flies. The Landed count changes one digit at a time, with one accessible copy of the whole number.
+
 - **Title** (620, 14px, 1.3, balanced wrap): the spec title in each tail card and the project name on the picker. List-row titles are 600 at 13.5px; Open issue and Landed titles are 400 at 13px.
 - **Body** (400, 13px, 1.45): Needs-you text, empty-state lines (max 70ch), Doctor messages.
 - **Body small** (400, 12.5px, 1.3, clamped to two lines): peg titles; one line on waiting pegs.
-- **Label** (650, 12px, 0.08em, uppercase): section headings, each on a pixel rule with its count beside it. Station labels use the same voice at 11px. The Needs-you kind label is 700, 11px, 0.08em in amber ink after a 6px solid amber square, with no fill or box: it names the row and is never pressable, so only the row's buttons look like controls.
+- **Section label:** uppercase 2px pixel cells, 14px tall, on clean ground with a normal-type count beside it. A dotted separator sits above each section. Path station labels stay in normal UI type at 650, 11px and 0.08em spacing. The Needs-you kind label is 700, 11px, 0.08em in amber ink after a 6px solid amber square, with no fill or box: it names the row and is never pressable, so only the row's buttons look like controls.
 - **Meta** (600, 11–12px): buttons (12px), peg state, tags, AI chips, counts, the picker's tracker-and-counts line (11.5px).
 - **Mono** (650, 11px, tabular figures): ticket ids on pegs; branch names, Open issue ids, "after" lines (10.5px) and file paths at 400 in muted ink.
 
 ### Named Rules
 
-**The Tail-Number Rule.** The pixel font is for spec numbers and nothing else. Prose, buttons and ticket ids stay in BB's UI font or mono; a second display face is never added.
+**The Pixel-Type Rule.** The pixel font is for spec numbers, the banner's SQUADRON, section labels and the path strip's counts, and nothing else. It never sits on busy dither. Prose, buttons, ticket ids, lane times and every other count stay in BB's UI font or mono. A second display face is never added.
 
-**The Tabular Rule.** Every count, duration and id that can change while the owner watches uses tabular figures, so the line does not jitter as numbers tick.
+**The Tabular Rule.** Normal-type counts, durations and ids use tabular figures. Pixel path counts use the cell font, with separate digit windows for the Landed count.
 
 ## Layout
 
-One centred column (max 1480px) with 22px top and 28px side padding.
+A full-width runway banner sits above a centred controls row and content column, each capped at 1480px. Content has 28px side padding and no top padding; controls have 14px top padding.
 
-1. **Header** (a wrapping row): the formation mark and "Squadron", the project picker, then at the right Doctor status and New spec (primary). The demo adds its "Synthetic data" tag, auto-start switch and the demo switch before Doctor.
-2. **Tracker line**, 8px under the header.
-3. **Path strip**, 20px under that: five equal stations in path order.
-4. **Sections**, 30px apart, in attention order, not path order: Needs you (with Doctor's open region under its rows), Flying, Ready, Shaping, Open issues, Landed. Every section always shows; an empty one says in a sentence how work gets into it, with the button that does it where there is one. Each section opens with an uppercase label on a 2px pixel rule, its count beside the label (amber for Needs you, muted otherwise).
+1. **Runway banner**, 164px high wide, 140px in the narrow layout. Light clouds occupy the sky; the flat tarmac below carries the title, capacity label and plane stands.
+2. **Controls row:** project picker at the left; How it works, Doctor, Helper, New spec and Autopilot in the action group at the right. Controls wrap. The capacity label moves here when it cannot fit on the tarmac. The synthetic demo keeps its labelled simulation controls.
+3. **Tracker line**, 8px below the header, then the path strip with 20px top margin and five equal stations in path order.
+4. **Sections** in attention order: Needs you, Flying, Ready, Shaping, Open issues, Landed. Each starts with a full-width canvas separator of 2px square dots on an 8px pitch. The section has 26px top margin and 22px top padding; below 560px its margin is 24px. Its pixel label has a normal-type count beside it, amber for Needs you and muted otherwise. Empty sections explain how work gets in and offer the action where there is one.
 
-A wide sortie line is a two-column grid: a tail card (208–236px) and a track, 20px apart, 16px of vertical padding, closed by a 1px hairline. The tail holds the Lead's live step and a thin pace line along its bottom edge. The track keeps the progress strip above a horizontally scrolling rail. Inside the rail, the dependency columns sit on the pixel rule at their vertical centre, with the airstream canvas behind them across the full width of the pegs; columns are joined by 6x10 pixel chevrons with 7px side margins, and pegs in one column stack 8px apart. When the rail overflows, its right 56px fades out through a mask.
+A wide sortie line is a two-column grid: a tail card (208–236px) and a track, 20px apart, 16px of vertical padding, closed by a 1px hairline. The tail holds the Lead's live step and a 16px contrail progress bar along its bottom edge. The track keeps the progress strip above a horizontally scrolling rail. Inside the rail, the dependency columns sit on the pixel rule at their vertical centre, with the airstream canvas behind them across the full width of the pegs; columns are joined by 6x10 pixel chevrons with 7px side margins, and pegs in one column stack 8px apart. When the rail overflows, its right 56px fades out through a mask.
 
 List rows (Ready, Shaping, Open issues, Landed) are three-column grids on 1px hairlines: a band plate with the spec number (an 82px mono id column for Open issues), a main column of title over a meta line, and the row's one action at the right. Ready and Shaping rows pad 11px; Open issues and Landed 9px.
 
-The board is a container (`container-type: inline-size`) and responds to its own width, not the window. At 900px and below, and always in a thread's side panel (`experimental_tab`, `placement="panel"`, `data-layout="narrow"`), a sortie line is one column: the compact lane row with its pace line, then slim rows for tickets an agent is on or that wait on the owner (Working, In review, Needs you, Stopped). Every ticket sits behind an "All N tickets" disclosure ("1 ticket" for one): id, title and state word per row on hairlines, the state word in its ink. There is no dependency rail. Thread links in the side panel open in the main view; on the full page they open beside the board. At 560px and below the page padding drops to 14px, the picker takes its own full row, Doctor shows only its square and the word "Doctor", the path strip keeps five cells with "Open" for Open issues, Needs-you rows put text and actions on their own lines, row actions move under the row, and empty sections stack their button under the sentence.
+The board is a container (`container-type: inline-size`) and responds to its own width, not the window. At 900px and below, and always in a thread's side panel (`experimental_tab`, `placement="panel"`, `data-layout="narrow"`), a sortie line is one column: the compact lane row with its contrail bar, then slim rows for tickets an agent is on or that wait on the owner (Working, In review, Needs you, Stopped). Every ticket sits behind an "All N tickets" disclosure ("1 ticket" for one): id, title and state word per row on hairlines, the state word in its ink. There is no dependency rail. Thread links in the side panel open in the main view; on the full page they open beside the board. At 560px and below the page padding drops to 14px, the picker takes its own full row, Doctor shows only its square and the word "Doctor", the path strip keeps five cells with "Open" for Open issues, Needs-you rows put text and actions on their own lines, row actions move under the row, and empty sections stack their button under the sentence.
 
 ## Elevation & Depth
 
-The board is flat: there are no shadows anywhere. Depth comes from three things only: the band behind tail cards and number plates, doubled edges (a 1px border plus a 1px outline offset 2px) on anything amber, and dither drawn inside a mark's own box. The picker list drops over the page as a hairline box on the ground, with no shadow. The inset `box-shadow`s in the code are strokes (a hollow progress segment, Doctor's square, a hollow PR dot), not elevation.
+The board is flat: there are no shadows anywhere. Depth comes from three things only: the band behind tail cards and number plates, doubled edges (a border plus a 1px outline offset 2px) on amber rows and pegs, and dither drawn inside a mark's own box. The picker list drops over the page as a hairline box on the ground, with no shadow. The inset `box-shadow`s in the code are strokes (a hollow progress segment, Doctor's square, a hollow PR dot), not elevation.
 
 ### Named Rules
 
@@ -263,7 +259,7 @@ The board is flat: there are no shadows anywhere. Depth comes from three things 
 
 ## Shapes
 
-Board marks are square: pegs, tail cards, Needs-you rows, number plates, progress segments, state squares and the picker's current-project mark have no radius. Controls are almost square: buttons, tags, the picker button and Doctor round to 2px. Borders are 1px hairlines at rest and 2px for the failed peg and the tail card's top edge. Every pixel mark (chevrons, carets, formation mark, burst bits, pixel rules) is built on a 2px cell with crisp edges. Waiting pegs use a dashed hairline; the outside-lane tag a dashed rule-ink line; the synthetic-data footer sits behind a dashed hairline.
+Board marks are square: pegs, tail cards, Needs-you rows, number plates, progress segments, state squares and the picker's current-project mark have no radius. Controls are almost square: buttons, tags, the picker button and Doctor round to 2px. Borders are 1px hairlines at rest and 2px for Needs you rows, the failed peg and the tail card's top edge. Chevrons, carets, section dots and rule marks use crisp 2px cells. The runway fits its plane and stencil cells to the available width; banner planes use 1px to 4px cells. Waiting pegs use a dashed hairline; the outside-lane tag a dashed rule-ink line; the synthetic-data footer sits behind a dashed hairline.
 
 ## Components
 
@@ -277,22 +273,31 @@ Small, quiet, near-square; colour only when the owner is the one acting.
 - **Focus:** a 2px sky-ink outline, offset 2px, on every focusable element.
 - **Disabled:** 42% opacity, not-allowed cursor; the reason sits beside the button in 11.5px muted text ("Opening its Lead thread", Doctor's reason).
 
-### Header
-- **Formation mark** (184x80 canvas) beside the title, the lead plane's fuselage on the title's baseline: one plane slot per lane in this project's lane limit, a V flying right with the lead at its point. Before Autopilot gives the project a lane limit, the slots are the lanes flying, with one slot shown when none are. Each plane is drawn from above on the 3px cell, nose right, wings swept back, two tail fins. Slots light in sky as lanes fly, each bobbing under a pixel with a short dithered contrail streaming behind it to the left; empty slots stay still in hairline. Lanes started over the limit add lit slots. Through eleven slots the V and 184x80 canvas stay unchanged; larger formations use rows of six of the same sprite, adding canvas height when needed so no slot is clipped. Labelled, for screen readers and on hover, "M of N lanes flying" ("2 of 3 lanes flying", "0 of 1 lane flying"), counted from the lanes on this board's Flying line and matching the drawn slots. When starts exceed the limit, the label retains it separately, for example "3 of 3 lanes flying (limit 2)". Lanes in other projects stay in the picker's counts, not here. Still when nothing flies; absent only until the live board's first read.
-- **Project picker:** a 32px button naming the project (Title voice), then its tracker kind and its Ready and Flying counts in 11.5px muted meta ("Linear · 1 ready · 0 flying"), then a pixel caret that flips when open. It opens a list under the button (min 330px): each row has a 6px square that fills for the shown project, the name at 620, the tracker kind under it in muted 11.5px, and the counts (or why there are none) at the right. Escape or a click outside closes it. With no project to show it stays open, asking.
-- **Doctor status:** a 28px quiet button with an 8px square, "Doctor", and in muted ink what it means for Start: solid green "Start ready", amber-outlined "N to fix before Start", hollow muted "Needs Set up". Before Doctor has run it reads just "Doctor" with a hollow square. It expands Doctor's region.
-- **Tracker line:** 12px muted ink, starting with a hairline tracker-kind tag. Linear: the Scope's matched names ("Team · Project", or just the project) in board ink at 600 and when it was last read (a failed read in red ink). Local markdown: "**.scratch/** on main · Flying lanes read from their integration branch". GitHub: "**GitHub Issues** read through gh". No tracker: "**No tracker found**" and the short reason.
+### Runway banner and controls
+The banner uses theme-derived cloud, tarmac, marking and stand inks. Clouds mix foreground at 34% over background; tarmac at 7%, its edge at 30%, markings at 42% and unlit stands at 52%. The tarmac is 52px high wide and 42px narrow. It stays flat behind text; trails stay in the sky.
+
+One stand represents each lane in this project's lane limit, with extra stands for lanes over the limit and at least one stand when no limit is known. Stand zero is rightmost. Lit planes face right; free stands are dotted while any lane is on the Flying line. A spec plane is 16x9 cells, normally 64x36px wide or 48x27px narrow. A work item's plane is 11x7 cells at the same cell size, centred in a full-size stand. Lane kind determines its size, so a one-ticket spec still has a spec plane. Both sizes keep two contrails starting behind the main-wing engines, never one from the tail.
+
+One layout places the stencil, stands, label and plane click targets. As space tightens, cells shrink and threshold bars can disappear. For 1–10 stands, this fitting geometry stays unchanged. Above ten, all stands remain on a longer runway with 2px plane cells and 26px gaps, keeping the padded buttons separate. When that content exceeds the viewport, a named keyboard-focusable region exposes native horizontal scrolling and a visible "Scroll the runway to see all N stands" hint. The canvas and DOM share the expanded width; the 164px/140px scene retains its flat tarmac and unobstructed stencil, with room below for the native scrollbar. No lane is capped or dropped. The normal-type capacity label, such as "2 of 3 lanes flying", moves to the controls row if it cannot fit clear of the stands. Over-limit counts keep the limit separately, such as "3 of 3 lanes flying (limit 2)". The label counts lanes that have not Landed; a landing plane stays visible through its glide. The first read supplies the lane count; no held loading animation is documented as delivered.
+
+Lit takeoff, flying and holding planes have named keyboard buttons over their air positions, using the plane's size plus 10px padding. A beacon click scrolls to its Needs you row and focuses the first action; other plane clicks scroll to the lane. Reduced motion uses an immediate scroll. Every plane button has 2px corners and the same outward 2px sky-ink focus outline with a 2px offset, including beacon buttons. Landing, parked and empty stands have no plane button.
+
+- **Project picker:** a 32px button naming the project, then its tracker kind and Ready/Flying counts in 11.5px muted text, then a pixel caret that flips when open. Its list has a minimum width of 330px; a 6px square marks the current project. Escape or an outside click closes it. With no project to show it stays open, asking.
+- **Doctor status:** a 28px quiet button with an 8px square, "Doctor" and its verdict in muted ink. It expands Doctor's region. Before a verdict is available it says "Doctor" with a hollow square.
+- **Controls:** 10px vertical and 14px horizontal gaps; action buttons have 8px gaps. Autopilot closes the group after a hairline and its runtime note sits below. At 560px and below the picker takes a full row and Doctor hides its verdict text.
+- **Tracker line:** muted 12px type with a tracker-kind tag, source context and last-read or error text. It retains the existing tracker-specific messages.
 
 ### Path strip
-Five stations, each an 11px label over a path count on a 2px pixel rule, joined by 6x10 pixel chevrons in rule ink at their bottom right. Zero counts are muted; Flying turns its count sky ink and its rule sky while anything flies. While the board can't show Ready, Shaping and Open issues, those counts read "–". Each station scrolls to its section.
+Five stations, each an 11px UI-font label over a pixel path count on a 2px-on, 2px-off rule, joined by 6x10 pixel chevrons in rule ink at their bottom right. Zero counts are muted; Flying turns its count sky ink and its rule sky while anything flies. While the board can't show Ready, Shaping and Open issues, those counts read "–". Each station scrolls to its section.
 
 ### Chips and tags
 - **Tag:** 11px at 600, 1px 6px padding, hairline border, 2px corners; issue labels, `accept:owner`, Doctor's Pass, Warning and Fix (Fix and Warning dashed amber), Present and Missing. The amber tag (solid amber, on-amber) marks "Synthetic data".
 - **AI chip:** BB's own provider icon at 12px, then model and effort, 11px at 600 in muted ink. A Lead chip prefixes "Lead ·" and turns board ink on hover.
+- **Work kind:** "Work item" for a standalone lane, or "Spec · N tickets" for a spec, with "25+" above 25. These tags use normal UI type in Ready, Shaping and lane headers.
 - **Outside-lane tag:** "Started outside Squadron", 11px at 600, dashed rule-ink border.
 
 ### Needs-you row
-Ground fill, 1px amber border plus a 1px amber outline offset 2px, with an amber grain along the edges (7–10px deep) breathing on a 3.6s sine, so the text sits on a clean ground. Kind label (Setup, Failed, Blocked, Stopped, Question, Merge; amber ink, never a filled tag), the spec or ticket number in 2px pixel cells and amber ink, one line of text, then its actions. Rows stack 12px apart; with none, "Nothing needs you. Every lane is flying on its own."
+Ground fill, 2px amber border plus a 1px amber outline offset 2px, with a heavier amber grain along the edges (10–14px deep) breathing on a 3.6s sine, so the text sits on a clean ground. Kind label (Setup, Failed, Blocked, Stopped, Question, Merge; amber ink, never a filled tag), the spec or ticket number in 2px pixel cells and amber ink, one line of text, then its actions. Rows stack 14px apart; with none, "Nothing needs you. Every lane is flying on its own."
 
 ### Doctor region
 A flat region under the Needs-you rows: 12px padding, hairline border. A summary line, then one row per check (150px name, Pass/Warning/Fix tag, muted explanation) on hairlines, then "Configuration files" with a linked file name, Present or Missing tag and its mono path. Check again uses the plain button. In a narrow box explanations and paths move under their name and tag.
@@ -304,16 +309,18 @@ Every owner word the board shows as a label (section labels, path stations, lane
 A plain "How it works" button in the header, before Doctor, opens a flat region under the header (12–16px padding, hairline border, no shadow); the button stays tinted while it is open. Close, Escape or the button again closes it, and focus returns to the button. It opens on its own section label, "How Squadron works", with Close at the right. The diagram is the path in the strip's voice: Plan, Spec, Ready, Lane and Landed as 14px names at 650 over 2px pixel rules joined by pixel chevrons. The Lane rule is sky (agents work there) and the Landed rule solid green; the others stay rule ink. Under each rule a muted 12.5px line says who does that part, and the three places the owner steps in (You plan it, You answer questions, You merge `accept:owner` work) carry Needs you's mark: a 6px amber square before 650 amber ink. Under a hairline sit at most five short lines (70ch). Owner words carry their definitions as everywhere else on the board (see Owner words below). In a narrow box the path runs down the page on a vertical pixel rule, with no chevrons.
 
 ### Tail card
-The wide lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed), with 11px top, 12px side and 18px bottom padding to clear the pace line. Holds the pixel spec number, the title (opens the spec), the Lead chip and its live step (one button opens the Lead thread), the time, the PR link with its checks dot (green, red, pulsing amber while checks run, hollow when there are none or none are known), the outside-lane tag, the branch in mono, and the lane actions (Merge, Resume, Stop). Flying is said by the section, never repeated in the tail. Other lane states retain their word and 8px state square. An outside lane replaces the actions with a muted read-only line over a hairline: "Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge."
+The wide lane's plate. Band fill, 2px top edge in hairline that turns red (stopped), amber (merge waits) or green (landed), with 11px top, 12px side and 26px bottom padding to clear the contrail bar. Holds the pixel spec number, the title (opens the spec), the Lead chip and its live step (one button opens the Lead thread), the time, the PR link with its checks dot (green, red, pulsing amber while checks run, hollow when there are none or none are known), the outside-lane tag, the branch in mono, and the lane actions (Merge, Resume, Stop). Flying is said by the section, never repeated in the tail. Other lane states retain their word and 8px state square. An outside lane replaces the actions with a muted read-only line over a hairline: "Read-only: Squadron didn't start this lane, so it has no Stop, Resume or Merge."
 
 ### Compact lane row
-At 900px and below, and always in the side panel, the compact row replaces the tail card. It keeps the band fill and state top edge, with 8px top, 10px side and 16px bottom padding and a 5px row gap. The top line pairs the 2px-cell spec number with a 13.5px title, clamped to two lines, and the tabular lane time. Below it, the Lead chip and live step share one line; the step ellipsizes first. The PR, lane state and actions follow, wrapping as needed. Flying stays in the section header; Stopped, In review and Merge waits on you retain their words. The raw branch is the row's hover title and appears inside All N tickets, rather than taking a line in the header.
+At 900px and below, and always in the side panel, the compact row replaces the tail card. Work item lanes use it at every width, without a ticket rail or ticket disclosure. It keeps the band fill and state top edge, with 8px top, 10px side and 26px bottom padding and a 5px row gap. The top line pairs the 2px-cell spec number with a 13.5px title, clamped to two lines, and the tabular lane time. Below it, the Lead chip and live step share one line; the step ellipsizes first. The PR, lane state and actions follow, wrapping as needed. Flying stays in the section header; Stopped, In review and Merge waits on you retain their words. The raw branch is the row's hover title and appears inside All N tickets, rather than taking a line in the header.
 
-### Pace line
-An 8px canvas strip runs along the bottom edge of both the compact lane row and the wide tail card. Both use the same airstream painter and the lane's working-thread count: 12px/s plus 12px/s per working thread, up to four, with density rising too. No working threads means one still frame. It carries no separate accessible label because the tickets and progress count say who is working. The wide dependency rail retains its airstream behind the pegs. All of these canvases share the renderer's hidden-page and reduced-motion rules.
+### Contrail progress and shared wind
+A 16px canvas strip sits 4px above the bottom of the compact row or wide tail, inset 10px or 12px respectively. Progress is the fraction of the lane's tickets In branch or Done. A small 16x10px plane faces right at its head; a 2px solid core and dithered wake fill behind it. A dotted guide marks the distance ahead. The normal-type "N/M in branch" count remains beside the Lead in compact lanes. A stopped lane's bar is red and still; a landed lane's wind is still. During landing the green burst replaces the bar.
+
+Clouds, contrail bars and the wide dependency rail read the board's one working-agent count, summed across working agents in lanes that are neither stopped nor Landed. With no working agents the wind is still. Otherwise speed is 8px/s plus 6px/s per working agent, capped at six agents, all moving right to left. Wide rail text still reports that lane's own working threads. Every canvas follows hidden-page and reduced-motion handling.
 
 ### Live step
-Flying lanes show the Lead's activity below its chip and each active ticket's activity below its title, in both the full page and side panel. The line uses muted ink, 11px type at 400 and a 1.45 line height. It stays on one line with an ellipsis; the title keeps its two-line allowance. Runtime problems include a word as well as ink: Error uses red ink and Waiting for machine uses amber ink. Elapsed minutes follow the step. With no activity the line says "No recent activity". The board displays a short label from typed work metadata, never tool arguments, output or file bodies. Assistant messages show "Agent message" and their time; their prose is never forwarded. Reads are limited to on-screen Flying lanes while the page is visible, once per 15 seconds per lane plus board-changed updates.
+Flying lanes show the Lead's activity below its chip and each active ticket's activity below its title, in both the full page and side panel. The line uses muted ink, 11px type at 400 and a 1.45 line height. It stays on one line with an ellipsis; the title keeps its two-line allowance. Runtime problems include a word as well as ink: Error uses red ink and Waiting for machine uses amber ink. Elapsed minutes follow the step. With no activity the line says "No recent activity". When every remaining ticket in an idle lane waits on an open blocker outside the lane, the Lead line instead says "Waiting on" followed by those issue identifiers. This dependency wait does not itself create Needs you. The board displays a short label from typed work metadata, never tool arguments, output or file bodies. Assistant messages show "Agent message" and their time; their prose is never forwarded. Reads are limited to on-screen Flying lanes while the page is visible, once per 15 seconds per lane plus board-changed updates.
 
 ### Slim ticket rows
 Narrow lanes show one flat row per Working, In review, Needs you or Stopped ticket. The top line pairs the mono id and a single-line 12.5px title with the 11px state word at the right. Long titles ellipsize and keep their full text on hover. The second line holds the shared live step and the ticket's tabular time. Rows use 6px vertical and 10px horizontal padding, a 2px line gap, an 8px column gap and a bottom hairline, aligned with the compact lane row's inset. Working and In review use sky ink, Needs you uses amber ink and Stopped uses red ink; each keeps its word. Pending owner interactions and failures come from the matched BB thread's current Needs you entry, in both slim rows and wide pegs, without changing the tracker's ticket state. A row with a thread is a native button with the board's focus outline and quiet hover tint. A ticket without a thread stays a plain row. The wide board keeps its sortie pegs.
@@ -337,21 +344,23 @@ Pegs with a thread are buttons that open it beside the board.
 - **Ready:** plate, title, then "**N** tickets", "N can start" in sky ink when some wait or are held, the routes' AI chips and `accept:owner`; a disclosure "N wait on blockers" lists each waiting ticket and what it waits on, and "N held" lists the held tickets the Lead skips. Start (primary) at the right, with its disabled reason beside it.
 - **Shaping:** plate, title, what's missing in amber ink at 600 and the ticket count; Plan tickets or Resume planning (primary).
 - **Open issues:** mono id, title, then a meta line of the priority mark, labels and parent context; Plan (plain).
-- **Landed:** plate with a still green grain and green-ink number, title, then "PR #n merged" for a confirmed merged PR, otherwise "Lane landed", when it landed and how long it flew.
+- **Landed:** plate with a still green edge stamp, clean centre and green-ink number, title, then "PR #n merged" for a confirmed merged PR, otherwise "Lane landed", when it landed and how long it flew.
 
 ### Linear connection settings
 The settings page uses the same ground, ink, type and quiet controls. Workspace names use Title; connection state sits in an announced status region. BB owns the API key's secret input. Which Linear issues a board reads is the repo's Scope in `docs/agents/squadron.md`, not a control on the board.
 
-## Motion
+### Lane moments and quiet hangar
+The banner and lane rows read the same observed-state record on each board update. Lifecycle history stays unset until real lane data is known and resets when a different project awaits its first read. Existing lanes on the first read or reload do not replay a takeoff or landing; later real starts still take off. The canvas renderer shares one animation loop, paints visible targets at device-pixel density and stops the loop while the page is hidden. Reduced motion paints each target once at its still moment and disables CSS animation and transitions. These stills retain state; they do not imply live visual acceptance.
 
-The board's art and motion come from the canvas dither renderer (`lib/dither.ts`, `lib/dither-renderer.ts`, `board/DitherCanvas.tsx`). One `requestAnimationFrame` loop paints every animated canvas that's on screen, at device-pixel density. It stops while the document is hidden. Under `prefers-reduced-motion` each canvas is painted once, at its still moment, and the loop doesn't run.
+- **Takeoff:** a newly observed lane rolls off its stand, then lifts over 1.5s. The roll occupies the first 35% of the moment. Under reduced motion it shows the plane already in the air.
+- **Beacon:** a plane with a matching Needs you row is amber with blinking corner brackets on a 2.4s cycle. Its named button goes to that row. Under reduced motion the amber plane and brackets stay lit. A stopped lane keeps its red plane and holding ring, adds the same amber brackets, and keeps its Needs you destination.
+- **Holding:** a stopped lane circles in red inside a dotted ellipse, on a 4.5s circuit, while the lane offers Resume. Reduced motion freezes the red plane and ring at the still frame, with steady amber brackets while its Needs you row exists.
+- **Landing:** an observed transition to Landed starts the banner's 1.6s glide and roll-back at the same time as the lane's green burst. The glide takes 70% of the moment, then the plane rolls onto its stand. About 110 green pixels sweep the lane; the wide tail number stamps from 1.18x over 520ms. The lane folds over the final 420ms, then arrives in Landed with a 700ms fade and 6px drop. Reduced motion shows the plane at its stand and the lane in green without the burst, scale, fold or arrival animation; the row still moves to Landed after its phase.
+- **Landed digit flip:** when the path count changes, only changed digit faces drop in from above over 460ms using `cubic-bezier(0.16, 1, 0.3, 1)`. Digit windows have a 3px gap wide and 2px narrow. Each changed window supplies a 90ms delay per digit place, starting at the units; its animated child face explicitly inherits that delay. Source tests verify the delay on the animation target; live sequential timing remains unproven. The first display and reduced motion show the new number without a flip. The whole count has one screen-reader text copy.
+- **Quiet hangar:** once no lane remains on the Flying line, including landing lanes, every stand holds a solid unlit parked plane. The Flying section says "Nothing is flying. Plan the next spec with New spec." and offers New spec; a startable Ready row also supplies a Start button. With no work there is no wind or bobbing. Reduced motion shows the same parked planes and sentence.
+- **Fly-past:** after this view has observed Ready or Flying work, a newly observed landing with zero Ready rows and no lane left flying schedules one 3.4s pass as the landing ends. The whole formation crosses left to right in a long V, with twin main-wing contrails reaching 280px wide or 150px narrow, then parks. Unknown Ready data never counts as an empty queue. First reads, reloads and repeated empty reads never trigger a pass. New Ready or Flying work cancels a due or playing pass in the same update and rearms it for the next queue-clearing landing. A stale pass never takes precedence over a live plane or beacon. Reduced motion shows the completed pass with the formation parked, with no fly-past movement.
 
-- **Airstream (signature):** sky streaks flow left to right in the pace line inside each lane header and behind the wide sortie line's pegs. Their speed (12px/s plus 12px/s per working thread, up to four) and density rise with the number of working threads; a lane with none working draws one still frame.
-- **Working peg:** the dashed march and grain above.
-- **Needs you:** the breathing amber edge grain above.
-- **Formation mark:** lit planes bob and stream contrails behind them while anything flies; empty slots stay still.
-- **Landing:** once, when the board first sees a lane Landed: about 110 green pixels sweep the rail behind the pegs and leave a thinning green wake (the burst runs 1.6s); the tail number stamps green from 1.18x over 520ms (`cubic-bezier(0.16, 1, 0.3, 1)`); for the burst's last 420ms the line folds away (grid rows to 0 and opacity to 0, same curve); then the row arrives in Landed (700ms, 6px drop and fade in, same curve). A lane already Landed when the board opens goes straight to Landed. Under reduced motion there is no burst, stamp, fold or arrival: the lane shows Landed still, then moves.
-- **CSS motion that remains:** the stamp, the fold and the arrival, the PR-checks-running pulse (1.6s ease-in-out), the switch knob (140ms ease-out), and hover transitions of 130–140ms. No `steps()` animation remains, and CSS draws no dither.
+Working pegs retain their sky march and grain; Needs you retains its 3.6s breathing edge; Landed plates retain a still green stamp. PR checks pulse over 1.6s, switch knobs move over 140ms and hover transitions run 130–140ms. CSS draws no dither and uses no stepped animation.
 
 ## Do's and Don'ts
 
@@ -360,8 +369,8 @@ The board's art and motion come from the canvas dither renderer (`lib/dither.ts`
 - **Do** use the `-ink` variant of a state colour for any text or small mark, and the fixed state colour for fills, edges and dither.
 - **Do** carry every state twice: ink plus form (march, doubled edge, tall segment, hollow outline, dashed border, size).
 - **Do** draw every texture and every moving art through the dither renderer, only where something is happening, with a still frame under reduced motion.
-- **Do** set spec numbers in the 5x7 pixel cell font (cell 4 in lane tails, cell 2 on plates and in Needs you), always with a screen-reader copy.
-- **Do** use 2px-on, 2px-off pixel rules for section labels, path stations and sortie lines, and 1px hairlines for rows and cards.
+- **Do** use pixel type for spec numbers, SQUADRON, section labels and path counts, with an accessible text copy. Keep other counts, times, actions and prose in UI type or mono.
+- **Do** use 2px dots on an 8px pitch between sections, 2px-on/2px-off rules on the path and rails, and 1px hairlines for rows and cards.
 - **Do** keep amber for what waits on the owner and the actions only they can take.
 - **Do** give every empty section a sentence saying how work gets in, with its button where there is one.
 - **Do** draw the live board and the demo from the same parts: no visual is demo-only.

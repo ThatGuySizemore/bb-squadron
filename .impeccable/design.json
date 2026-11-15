@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-13T19:25:19.995Z",
+  "generatedAt": "2026-11-15T04:25:01.437515Z",
   "title": "Design System: BB Squadron",
   "extensions": {
     "colorMeta": {
@@ -123,11 +123,7 @@
     "typographyMeta": {
       "display": {
         "displayName": "Tail number",
-        "purpose": "5x7 pixel cell font for spec numbers only: cell 4 in lane tails, cell 2 in lists, with a screen-reader copy."
-      },
-      "headline": {
-        "displayName": "Page title",
-        "purpose": "\"Squadron\", once."
+        "purpose": "5x7 pixel spec numbers: 4px cells in wide tails, 2px in compact lanes and lists, with accessible text."
       },
       "title": {
         "displayName": "Spec title",
@@ -143,7 +139,7 @@
       },
       "label": {
         "displayName": "Section label",
-        "purpose": "Uppercase section headings on a pixel rule."
+        "purpose": "Normal UI labels, including the 11px path station labels; section headings use section-label."
       },
       "meta": {
         "displayName": "Meta",
@@ -152,79 +148,148 @@
       "mono": {
         "displayName": "Mono id",
         "purpose": "Ticket ids, branch names, issue ids; tabular figures."
+      },
+      "path-count": {
+        "displayName": "Path count",
+        "purpose": "Pixel counts, 3px cells wide or 2px narrow; Landed has separate digit windows and one accessible number."
+      },
+      "section-label": {
+        "displayName": "Section label",
+        "purpose": "Uppercase 2px cell lettering for Needs you, Flying, Ready, Shaping, Open issues and Landed."
+      },
+      "banner-stencil": {
+        "displayName": "Runway stencil",
+        "purpose": "SQUADRON on plain tarmac; cells and spacing shrink to fit stands."
       }
     },
     "textures": [
       {
-        "name": "--sq-d0 … --sq-d16",
-        "value": "Bayer 4x4 ordered-dither masks: 8px SVG tiles of 2px cells, level n of 16 inked",
-        "purpose": "The only texture. Used as mask-image under a state ink."
+        "name": "canvas-dither",
+        "value": "Bayer 8x8 thresholds, one cell per device pixel",
+        "purpose": "Canvas state grain, clouds and contrails; no CSS dither masks."
+      },
+      {
+        "name": "section-separator",
+        "value": "2px square dots on an 8px pitch",
+        "purpose": "Still canvas rule above each section."
       },
       {
         "name": "pixel-rule",
-        "value": "repeating-linear-gradient(90deg, rule-ink 0 2px, transparent 2px 4px), 2px tall",
-        "purpose": "Section rules and the sortie line through each rail."
+        "value": "2px on, 2px off, 2px tall",
+        "purpose": "Path stations and wide dependency rails."
       }
     ],
     "shadows": [],
     "motion": [
       {
-        "name": "march",
-        "value": "600ms steps(3, end) infinite",
-        "purpose": "Working peg's 2px sky dashed border steps around its edge."
+        "name": "shared-wind",
+        "value": "0, or 8 + 6 * min(agents, 6) CSS px/s, right to left",
+        "purpose": "One board working-agent count drives clouds, lane contrails and wide rails."
       },
       {
-        "name": "dither-cycle",
-        "value": "2.4s steps(1, end) infinite",
-        "purpose": "Stacked dither layers in working, needs-you and review pegs take turns."
+        "name": "takeoff",
+        "value": "1500ms; roll for 35%, then lift",
+        "purpose": "New real starts only; unknown first reads, reloads and project changes seed history without replay."
       },
       {
-        "name": "needs-you-pulse",
-        "value": "3.6s steps(1, end) infinite",
-        "purpose": "Slow amber dither pulse in Needs-you rows."
+        "name": "beacon",
+        "value": "2.4s bracket blink",
+        "purpose": "Amber plane and brackets for a flying lane with Needs you; holding keeps its red plane and adds amber brackets. Reduced motion keeps brackets lit."
       },
       {
-        "name": "checks-blink",
-        "value": "1s steps(1, end) infinite",
-        "purpose": "PR checks-pending dot."
+        "name": "holding",
+        "value": "4.5s circuit",
+        "purpose": "Red plane and dotted red ring, with amber brackets while its Needs you row exists; reduced motion retains both forms."
       },
       {
-        "name": "glitch",
-        "value": "460ms steps(1, end) once",
-        "purpose": "A peg that fails shifts and slices once."
+        "name": "landing",
+        "value": "1600ms; 70% glide, then roll-back",
+        "purpose": "Banner and lane green burst share a start time."
       },
       {
         "name": "stamp",
-        "value": "420ms steps(3, end) once, scale 1.3 to 1",
-        "purpose": "A landed lane's tail number stamps green."
+        "value": "520ms cubic-bezier(0.16, 1, 0.3, 1), scale 1.18 to 1",
+        "purpose": "Wide lane number acknowledges landing."
       },
       {
-        "name": "burst",
-        "value": "950ms cubic-bezier(0.16, 1, 0.3, 1), 35ms stagger",
-        "purpose": "28 green pixels sweep along the sortie line when a spec lands."
+        "name": "fold",
+        "value": "420ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Final part of landing folds the Flying row away."
+      },
+      {
+        "name": "arrival",
+        "value": "700ms cubic-bezier(0.16, 1, 0.3, 1), -6px to 0",
+        "purpose": "New Landed row fades into place."
+      },
+      {
+        "name": "digit-flip",
+        "value": "460ms cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Changed Landed faces drop from -105%; the animated child explicitly inherits the window delay of 90ms/place, units upward. Declared association tested; live timing unproven."
+      },
+      {
+        "name": "fly-past",
+        "value": "3400ms, once per observed queue clearing",
+        "purpose": "Long V begins as the final landing ends, then parks. Reloads never replay; new Ready or Flying work cancels the pass in the same update and rearms the next earned pass."
+      },
+      {
+        "name": "needs-you-edge",
+        "value": "3.6s sine, depth 10\u201314px",
+        "purpose": "Amber edge grain keeps text on clean ground."
+      },
+      {
+        "name": "checks-pulse",
+        "value": "1.6s ease-in-out infinite",
+        "purpose": "Pending PR checks."
       },
       {
         "name": "switch",
-        "value": "160ms steps(3, end)",
-        "purpose": "Auto-start switch knob."
+        "value": "140ms ease-out",
+        "purpose": "Switch knob."
       },
       {
         "name": "hover",
-        "value": "120-140ms ease-out",
-        "purpose": "Button fill and peg border on hover."
+        "value": "130\u2013140ms ease-out",
+        "purpose": "Button fill and peg border."
       },
       {
         "name": "reduced-motion",
         "value": "prefers-reduced-motion: reduce",
-        "purpose": "All animation and transition removed; first dither layer only at 40%; burst and row hover dither hidden."
+        "purpose": "Canvas draws still moments; CSS animations and transitions stop. Fly-past shows parked formation; digit count is immediate."
+      },
+      {
+        "name": "hidden-page",
+        "value": "document.hidden",
+        "purpose": "Shared canvas animation loop stops while hidden."
       }
     ],
     "breakpoints": [
       {
-        "name": "narrow (container)",
+        "name": "narrow container or side panel",
         "value": "900px"
+      },
+      {
+        "name": "small container",
+        "value": "560px"
       }
-    ]
+    ],
+    "provenance": {
+      "workflow": "Installed impeccable 4.7.0 reference/document.md, scan mode and Step 4b",
+      "designSha256": "3e66fe731c053396942d477acb5879ba96dca2aea3ec0b02d927dae00a40367e",
+      "sourceBasis": "SQD-221 final-review repair source based on integration 1d41d7cbb509122747bcfab5685a0fe971f6f331",
+      "visualEvidence": "Source-derived static component specimens only. No live BB visual acceptance. Held SQD-247 loading excluded.",
+      "sourceSha256": {
+        "board/Board.tsx": "d67c0dbbd4006efb55e4f382232145daefe65bc30c07a08acb83448bbc53779c",
+        "board/board.css": "80c8ba4598bacab87799bf774fb7fff1385a19f317b4be60e5306d5a224e2942",
+        "board/FlipCount.tsx": "5c0511fa97ca2fd792c4960765de687f5ac146ab402db70a786a6f321bce90fb",
+        "board/DitherCanvas.tsx": "d37b2a779b291b7d9c7d480d613ff7f131a4ddad741ded84cc9ec366f50263c0",
+        "lib/runway.ts": "bfa4fe7fd01c7aa628b7aaa308ea704510113b2668e6e02e89cd205ba6d36bc5",
+        "lib/dither.ts": "3516e1f7fdb261ea1e5814cb7cf0a3e7811008d9af9ba41ee8a8618abaa3b3a8",
+        "lib/pixels.ts": "9b2484145ac9910f935f431d5d11c806af2873f940a9669b3a26afd723d158c8",
+        "lib/working-agents.ts": "26d6a90a46202e7abc8d2a68068581014615ed1fc907b195078829421d085eac",
+        "lib/board-model.ts": "555bd1416fad8457b78243ff66dd72ff973b221c4c2edb87ada9e86355153aa4",
+        "lib/fly-past.ts": "5ea63b4d1e0d5e952c69dc1ece2587831d1094daa53caf19620a6e7402504254"
+      }
+    }
   },
   "components": [
     {
@@ -239,8 +304,8 @@
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "Plan a spec, Start, Resume in a tail card.",
-      "html": "<button class=\"ds-btn-primary\">Plan a spec</button>",
+      "description": "New spec, Start, Plan tickets and Resume in a lane.",
+      "html": "<button class=\"ds-btn-primary\">New spec</button>",
       "css": ".ds-btn-primary{display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid var(--foreground, #1c1c1c);border-radius:2px;background:var(--foreground, #1c1c1c);color:var(--background, #f7f7f4);font:600 12px/1 inherit;cursor:pointer;transition:background-color 120ms ease-out}.ds-btn-primary:hover{background:color-mix(in oklab,var(--foreground, #1c1c1c) 86%,var(--background, #f7f7f4))}.ds-btn-primary:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}"
     },
     {
@@ -249,7 +314,7 @@
       "refersTo": "button-amber",
       "description": "Actions only the owner can take: Merge, Answer in thread, Resume in Needs you.",
       "html": "<button class=\"ds-btn-amber\">Merge</button>",
-      "css": ".ds-btn-amber{display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid #f2a900;border-radius:2px;background:#f2a900;color:#1d1600;font:600 12px/1 inherit;cursor:pointer;transition:background-color 120ms ease-out}.ds-btn-amber:hover{background:color-mix(in oklab,#f2a900 86%,white)}.ds-btn-amber:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}"
+      "css": ".ds-btn-amber{display:inline-flex;align-items:center;height:28px;padding:0 11px;border:1px solid #f2a900;border-radius:2px;background:#f2a900;color:#1d1600;font:600 12px/1 inherit;cursor:pointer;transition:background-color 120ms ease-out}.ds-btn-amber:hover{background:color-mix(in oklab,#f2a900 88%,var(--foreground, #1c1c1c))}.ds-btn-amber:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}"
     },
     {
       "name": "Danger Button",
@@ -263,70 +328,67 @@
       "name": "Tag",
       "kind": "chip",
       "refersTo": "tag",
-      "description": "Issue labels and accept:owner; the amber variant marks synthetic data.",
-      "html": "<span class=\"ds-tag\">accept:owner</span> <span class=\"ds-tag ds-tag-amber\">Synthetic data</span>",
+      "description": "Normal UI-font work-kind tags; counts stay out of pixel type.",
+      "html": "<span class=\"ds-tag\">Work item</span> <span class=\"ds-tag\">Spec \u00b7 3 tickets</span>",
       "css": ".ds-tag{display:inline-block;padding:1px 6px;border:1px solid var(--border, #dcdcd6);border-radius:2px;font:600 11px/1.4 inherit;color:var(--foreground, #1c1c1c);white-space:nowrap}.ds-tag-amber{color:#1d1600;background:#f2a900;border-color:#f2a900}"
     },
     {
-      "name": "Working Peg",
+      "name": "Runway planes",
       "kind": "custom",
-      "refersTo": "peg",
-      "description": "A ticket an agent is building: marching sky border, sky dither fill.",
-      "html": "<button class=\"ds-peg ds-peg-working\"><span class=\"ds-peg-fill\"></span><span class=\"ds-peg-top\"><span class=\"ds-peg-id\">SQD-14</span><span class=\"ds-peg-state\">Working</span></span><span class=\"ds-peg-title\">Sortie line with dependency columns</span><span class=\"ds-peg-foot\"><span>Opus 5.5 high</span><span>26m</span></span></button>",
-      "css": ".ds-peg{position:relative;isolation:isolate;display:flex;flex-direction:column;gap:5px;width:190px;min-height:80px;padding:8px 9px 7px;border:1px solid var(--border, #dcdcd6);border-radius:0;background:var(--background, #f7f7f4);color:var(--foreground, #1c1c1c);text-align:left;font:inherit;cursor:pointer;transition:border-color 140ms ease-out}.ds-peg>*{position:relative;z-index:1}.ds-peg:hover{border-color:color-mix(in oklab,var(--foreground, #1c1c1c) 45%,transparent)}.ds-peg:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}.ds-peg-top{display:flex;justify-content:space-between;gap:8px;font-size:11px}.ds-peg-id{font:650 11px ui-monospace,\"SF Mono\",Menlo,monospace;font-variant-numeric:tabular-nums}.ds-peg-state{font-weight:600;color:color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c))}.ds-peg-title{font-size:12.5px;line-height:1.3}.ds-peg-foot{display:flex;justify-content:space-between;margin-top:auto;font-size:11px;color:var(--muted-foreground, #6b6b66)}.ds-peg-working{border-color:transparent}.ds-peg-fill{position:absolute!important;inset:0;z-index:0!important;background:#3fa7d6;opacity:.5;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px}.ds-peg-working::before{content:\"\";position:absolute;inset:-1px;z-index:2;pointer-events:none;background:linear-gradient(90deg,#3fa7d6 50%,transparent 0) 0 0/6px 2px repeat-x,linear-gradient(90deg,#3fa7d6 50%,transparent 0) 0 100%/6px 2px repeat-x,linear-gradient(0deg,#3fa7d6 50%,transparent 0) 0 0/2px 6px repeat-y,linear-gradient(0deg,#3fa7d6 50%,transparent 0) 100% 0/2px 6px repeat-y;animation:ds-march 600ms steps(3,end) infinite}@keyframes ds-march{to{background-position:6px 0,-6px 100%,0 -6px,100% 6px}}@media (prefers-reduced-motion:reduce){.ds-peg-working::before{animation:none}}"
+      "description": "Static specimen of shipped spec and smaller work-item sprites. Runtime canvas supplies moments. Above ten stands, a longer runway keeps 2px plane cells, 26px gaps and all lanes; a named focusable horizontal scroll region and visible hint expose overflow. Plane controls have 2px corners and outward sky focus at 2px offset. This is not a screenshot.",
+      "html": "<div class=\"ds-runway\"><div class=\"ds-planes\"><svg aria-hidden=\"true\" width=\"48\" height=\"27\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"15\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"33\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"33\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"39\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"42\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"45\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"33\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"21\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"21\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"21\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"24\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"24\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"24\" width=\"3\" height=\"3\"/></svg><svg aria-hidden=\"true\" width=\"33\" height=\"21\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"9\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"18\" width=\"3\" height=\"3\"/></svg></div><div class=\"ds-tarmac\"><svg aria-label=\"SQUADRON\" role=\"img\" width=\"141\" height=\"21\" viewBox=\"0 0 141 21\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"3\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"39\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"42\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"45\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"57\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"60\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"63\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"57\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"60\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"63\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"75\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"78\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"81\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"75\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"78\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"81\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"93\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"96\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"99\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"102\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"102\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"93\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"96\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"99\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"96\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"99\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"102\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"111\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"114\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"117\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"111\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"114\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"117\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"129\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"132\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"135\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"18\" width=\"3\" height=\"3\"/></svg></div></div>",
+      "css": ".ds-runway{background:var(--background);color:var(--foreground);padding-top:14px}.ds-planes{display:flex;justify-content:flex-end;align-items:center;gap:30px;padding:10px 30px;color:#3fa7d6}.ds-tarmac{padding:10px 20px;background:color-mix(in oklab,var(--foreground) 7%,var(--background));border-block:2px solid color-mix(in oklab,var(--foreground) 30%,var(--background))}"
     },
     {
-      "name": "Needs-You Row",
+      "name": "Section label",
       "kind": "custom",
+      "description": "Shipped 2px pixel lettering; 2px square separator dots on an 8px pitch; count stays normal UI type.",
+      "html": "<div class=\"ds-section\"><svg width=\"280\" height=\"2\" aria-hidden=\"true\" fill=\"currentColor\"><rect x=\"0\" width=\"2\" height=\"2\"/><rect x=\"8\" width=\"2\" height=\"2\"/><rect x=\"16\" width=\"2\" height=\"2\"/><rect x=\"24\" width=\"2\" height=\"2\"/><rect x=\"32\" width=\"2\" height=\"2\"/><rect x=\"40\" width=\"2\" height=\"2\"/><rect x=\"48\" width=\"2\" height=\"2\"/><rect x=\"56\" width=\"2\" height=\"2\"/><rect x=\"64\" width=\"2\" height=\"2\"/><rect x=\"72\" width=\"2\" height=\"2\"/><rect x=\"80\" width=\"2\" height=\"2\"/><rect x=\"88\" width=\"2\" height=\"2\"/><rect x=\"96\" width=\"2\" height=\"2\"/><rect x=\"104\" width=\"2\" height=\"2\"/><rect x=\"112\" width=\"2\" height=\"2\"/><rect x=\"120\" width=\"2\" height=\"2\"/><rect x=\"128\" width=\"2\" height=\"2\"/><rect x=\"136\" width=\"2\" height=\"2\"/><rect x=\"144\" width=\"2\" height=\"2\"/><rect x=\"152\" width=\"2\" height=\"2\"/><rect x=\"160\" width=\"2\" height=\"2\"/><rect x=\"168\" width=\"2\" height=\"2\"/><rect x=\"176\" width=\"2\" height=\"2\"/><rect x=\"184\" width=\"2\" height=\"2\"/><rect x=\"192\" width=\"2\" height=\"2\"/><rect x=\"200\" width=\"2\" height=\"2\"/><rect x=\"208\" width=\"2\" height=\"2\"/><rect x=\"216\" width=\"2\" height=\"2\"/><rect x=\"224\" width=\"2\" height=\"2\"/><rect x=\"232\" width=\"2\" height=\"2\"/><rect x=\"240\" width=\"2\" height=\"2\"/><rect x=\"248\" width=\"2\" height=\"2\"/><rect x=\"256\" width=\"2\" height=\"2\"/><rect x=\"264\" width=\"2\" height=\"2\"/><rect x=\"272\" width=\"2\" height=\"2\"/></svg><div class=\"ds-section-line\"><svg aria-label=\"FLYING\" role=\"img\" width=\"66\" height=\"14\" viewBox=\"0 0 66 14\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"0\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"2\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"4\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"6\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"8\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"2\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"4\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"6\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"14\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"16\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"18\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"20\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"24\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"32\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"24\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"32\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"26\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"30\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"28\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"28\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"28\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"28\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"36\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"38\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"40\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"38\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"38\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"38\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"38\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"38\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"36\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"38\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"40\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"44\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"52\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"44\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"52\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"44\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"46\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"52\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"44\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"48\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"52\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"44\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"50\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"52\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"44\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"52\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"44\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"52\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"58\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"60\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"62\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"56\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"64\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"56\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"56\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"60\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"62\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"64\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"56\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"64\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"56\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"64\" y=\"10\" width=\"2\" height=\"2\"/><rect x=\"58\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"60\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"62\" y=\"12\" width=\"2\" height=\"2\"/><rect x=\"64\" y=\"12\" width=\"2\" height=\"2\"/></svg><span>2</span></div></div>",
+      "css": ".ds-section{color:var(--foreground)}.ds-section>svg{color:color-mix(in oklab,var(--foreground) 30%,transparent)}.ds-section-line{display:flex;align-items:center;gap:8px;margin-top:22px}.ds-section-line span{font-size:12px;font-weight:600;color:var(--muted-foreground)}"
+    },
+    {
+      "name": "Needs you row",
+      "kind": "card",
       "refersTo": "needs-you-row",
-      "description": "What waits on the owner: doubled amber edge, amber dither, kind tag, pixel spec number, one action.",
-      "html": "<div class=\"ds-need\"><span class=\"ds-need-fill\"></span><span class=\"ds-need-kind\">Merge</span><span class=\"ds-need-text\">PR #47 passed checks and both reviews. accept:owner holds it for your merge.</span><button class=\"ds-need-btn\">Merge</button></div>",
-      "css": ".ds-need{position:relative;isolation:isolate;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:10px 12px;margin:3px;border:1px solid #f2a900;outline:1px solid #f2a900;outline-offset:2px;background:var(--background, #f7f7f4);color:var(--foreground, #1c1c1c)}.ds-need>*{position:relative;z-index:1}.ds-need-fill{position:absolute!important;inset:0;z-index:0!important;background:#f2a900;opacity:.2;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;animation:ds-pulse 3.6s steps(1,end) infinite}@keyframes ds-pulse{33.33%,100%{opacity:0}}.ds-need-kind{padding:2px 7px;font:700 11px inherit;letter-spacing:.04em;text-transform:uppercase;color:#1d1600;background:#f2a900}.ds-need-text{font-size:13px;line-height:1.45}.ds-need-btn{height:28px;padding:0 11px;border:1px solid #f2a900;border-radius:2px;background:#f2a900;color:#1d1600;font:600 12px inherit;cursor:pointer}.ds-need-btn:hover{background:color-mix(in oklab,#f2a900 86%,white)}.ds-need-btn:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground, #1c1c1c));outline-offset:2px}@media (prefers-reduced-motion:reduce){.ds-need-fill{animation:none;opacity:.4}}"
+      "description": "Delivered 2px amber border and offset 1px outline; rows stack 14px apart. Static structure; canvas edge grain is described in DESIGN.md.",
+      "html": "<div class=\"ds-need\"><span class=\"ds-need-kind\">Question</span><span>Which option should this lane use?</span><button class=\"ds-answer\">Answer in thread</button></div>",
+      "css": ".ds-need{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 22px;border:2px solid #f2a900;outline:1px solid #f2a900;outline-offset:2px;background:var(--background);color:var(--foreground);font-size:13px}.ds-need-kind{font-size:11px;font-weight:700;color:color-mix(in oklab,#f2a900 46%,var(--foreground))}.ds-need-kind:before{content:\"\";display:inline-block;width:6px;height:6px;margin-right:6px;background:#f2a900}.ds-answer{height:28px;padding:0 11px;border:1px solid #f2a900;border-radius:2px;background:#f2a900;color:#1d1600;font-size:12px;font-weight:600;cursor:pointer}.ds-answer:hover{background:color-mix(in oklab,#f2a900 88%,var(--foreground))}.ds-answer:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground));outline-offset:2px}"
     },
     {
-      "name": "Progress Strip",
+      "name": "Contrail progress",
       "kind": "custom",
-      "refersTo": "progress",
-      "description": "One segment per ticket: hollow waiting, dithered sky working, solid green in branch, tall amber or red when stuck.",
-      "html": "<div class=\"ds-progress\"><span data-s=\"done\"></span><span data-s=\"done\"></span><span data-s=\"working\"></span><span data-s=\"question\"></span><span data-s=\"ready\"></span><span data-s=\"ready\"></span><span class=\"ds-progress-count\">2/6 in branch</span></div>",
-      "css": ".ds-progress{display:flex;align-items:center;gap:2px;height:14px;width:320px}.ds-progress>span[data-s]{flex:1;max-width:40px;height:6px;box-shadow:inset 0 0 0 1px color-mix(in oklab,var(--foreground, #1c1c1c) 30%,transparent)}.ds-progress>span[data-s=\"working\"]{box-shadow:none;background:#3fa7d6;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'0'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'2'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'0'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'2'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'6'%20y%3D'6'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px}.ds-progress>span[data-s=\"done\"]{box-shadow:none;background:#2fa36b}.ds-progress>span[data-s=\"question\"]{height:12px;box-shadow:none;background:#f2a900}.ds-progress-count{margin-left:8px;font-size:11px;color:var(--muted-foreground, #6b6b66);font-variant-numeric:tabular-nums}"
+      "description": "Static structural specimen: completed core, plane head and dotted guide. Runtime canvas adds the dithered wake and shared wind.",
+      "html": "<div class=\"ds-progress\"><span>2/3 in branch</span><div class=\"ds-trail\"><span class=\"ds-core\"></span><svg aria-hidden=\"true\" width=\"16\" height=\"10\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"4\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"6\" y=\"0\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"6\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"8\" y=\"2\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"2\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"4\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"6\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"8\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"10\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"12\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"14\" y=\"4\" width=\"2\" height=\"2\"/><rect x=\"0\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"6\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"8\" y=\"6\" width=\"2\" height=\"2\"/><rect x=\"4\" y=\"8\" width=\"2\" height=\"2\"/><rect x=\"6\" y=\"8\" width=\"2\" height=\"2\"/></svg><span class=\"ds-guide\"></span></div></div>",
+      "css": ".ds-progress{padding:8px 10px 4px;background:color-mix(in oklab,var(--foreground) 4.5%,var(--background));font-size:11px;color:var(--muted-foreground)}.ds-trail{display:flex;align-items:center;height:16px;color:#3fa7d6}.ds-core{height:2px;flex-basis:62%;background:currentColor}.ds-guide{flex:1;margin-left:4px;border-top:2px dotted color-mix(in oklab,var(--foreground) 30%,transparent)}"
     },
     {
-      "name": "Section Label",
+      "name": "Landed count",
       "kind": "custom",
-      "refersTo": "label",
-      "description": "Uppercase section heading on a 2px-on, 2px-off pixel rule, with the amber count when something needs the owner.",
-      "html": "<h2 class=\"ds-section\">Needs you <span class=\"ds-count\">1</span></h2>",
-      "css": ".ds-section{position:relative;display:flex;align-items:center;gap:8px;margin:0;padding-bottom:9px;font:650 12px inherit;letter-spacing:.08em;text-transform:uppercase;color:var(--muted-foreground, #6b6b66)}.ds-section::after{content:\"\";position:absolute;left:0;right:0;bottom:0;height:2px;background:repeating-linear-gradient(90deg,color-mix(in oklab,var(--foreground, #1c1c1c) 30%,transparent) 0 2px,transparent 2px 4px)}.ds-count{padding:0 6px;font-size:11px;line-height:18px;letter-spacing:0;color:#1d1600;background:#f2a900;font-variant-numeric:tabular-nums}"
-    },
-    {
-      "name": "Ready Row Hover",
-      "kind": "custom",
-      "refersTo": "ready-row",
-      "description": "List row on a hairline; hover lays a sparse foreground dither (level 2) instead of a tint.",
-      "html": "<div class=\"ds-row\"><span class=\"ds-row-title\">Linear sync with blocking links</span><span class=\"ds-row-meta\">6 tickets</span></div>",
-      "css": ".ds-row{position:relative;display:flex;gap:16px;align-items:center;padding:11px 4px;border-bottom:1px solid var(--border, #dcdcd6);color:var(--foreground, #1c1c1c)}.ds-row::before{content:\"\";position:absolute;inset:0;pointer-events:none;background:var(--foreground, #1c1c1c);opacity:0;-webkit-mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;mask:url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'8'%20height%3D'8'%20shape-rendering%3D'crispEdges'%3E%3Crect%20x%3D'0'%20y%3D'0'%20width%3D'2'%20height%3D'2'%2F%3E%3Crect%20x%3D'4'%20y%3D'4'%20width%3D'2'%20height%3D'2'%2F%3E%3C%2Fsvg%3E\") 0 0/8px 8px;transition:opacity 140ms steps(2,end)}.ds-row:hover::before{opacity:.14}.ds-row-title{font-size:13.5px;font-weight:600}.ds-row-meta{font-size:12px;color:var(--muted-foreground, #6b6b66)}"
+      "description": "Changed digit faces animate for 460ms and explicitly inherit 90ms/place delays from stable keyed windows; unchanged identities remain. Static specimen, live timing unproven.",
+      "html": "<div class=\"ds-landed-count\"><svg aria-label=\"12\" role=\"img\" width=\"27\" height=\"21\" viewBox=\"0 0 27 21\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"3\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"18\" width=\"3\" height=\"3\"/></svg></div>",
+      "css": ".ds-landed-count{color:var(--foreground);line-height:1}"
     }
   ],
   "narrative": {
-    "northStar": "The Ready-Room Sortie Board",
-    "overview": "The board is a squadron ready room's sortie board drawn inside BB. Each lane is one ruled line; its tickets sit on that line as pegs in dependency order, left to right, with small pixel chevrons between columns. Status has to read from across the room: what waits on the owner sits pinned at the top in amber, and what is flying shows how far along it is by how many pegs have gone green.\n\nThe material is BB's own theme. The ground, ink, muted ink and hairlines are BB's theme tokens, so the board works on any BB theme, light or dark. The only texture is ordered dither: Bayer 4x4 halftone masks cut from 2px cells. The only display type is a 5x7 pixel cell font for spec numbers, used like tail numbers on an airframe. Four state inks sit on top of the theme, and each state is also carried by form (a marching border, a doubled edge, a tall segment, a hollow outline), never by colour alone.\n\nMotion is stepped, never eased, except for one moment: the landing burst. Working pegs march their border and cycle their dither, the Needs-you strip pulses slowly, a stopped peg glitches once, and a landed tail number stamps green while pixels sweep down its line. Under reduced motion all of it becomes one still dither layer.",
+    "northStar": "The Ready-Room Sortie Board, live",
+    "overview": "The board is a squadron ready room's sortie board drawn inside BB, now covering the whole path a spec or work item travels: Open issues, Shaping, Ready, Flying, Landed. Each Flying spec has one ruled line with tickets in dependency order, small pixel chevrons between columns and a sky airstream behind the pegs. Work items have compact lane rows. The banner and lanes share the board's working-agent wind. What waits on the owner sits pinned near the top in amber. The path reads as a route, never as kanban columns or count tiles.\n\nThe material is BB's own theme. Ground, ink, muted ink and hairlines are BB's theme tokens, so the board works on any BB theme, light or dark. The only texture is ordered dither drawn on canvas: Bayer 8x8 thresholds, one cell per device pixel, so fills read as fine halftone grain. The only display type is a 5x7 pixel cell font for spec numbers, the banner stencil, section labels and path counts. Text sits on clean ground or flat tarmac. Four state inks sit on top of the theme, and each state is also carried by form, never by colour alone.\n\nMotion follows real work: the shared wind, working pegs, the Needs-you edge, each banner plane's lane state and observed takeoffs and landings. An observed queue-clearing landing earns one V fly-past. It pauses while the page is hidden. Under reduced motion every canvas draws one still frame and CSS motion stops.",
     "keyCharacteristics": [
       "BB theme tokens for every neutral; four fixed state inks layered on top.",
-      "Bayer 4x4 ordered dither (`--sq-d0` … `--sq-d16`, 8px tiles of 2px cells) is the only texture.",
-      "A 5x7 pixel cell font for spec numbers only; BB's UI font for everything else.",
-      "Square board marks, 1px hairlines, 2px pixel rules (2px on, 2px off); no shadows.",
-      "Every state is ink plus form; every animation has a still pixel fallback."
+      "Canvas Bayer 8x8 ordered dither at device-pixel density is the only texture. CSS adds none.",
+      "A 5x7 pixel cell font for spec numbers, SQUADRON, section labels and path counts; BB's UI font or mono for other text.",
+      "Square board marks, 1px hairlines, dotted section separators, 2px-on/2px-off path and rail rules, 2px control corners, no shadows.",
+      "Every state is ink plus form; every animation has a still fallback.",
+      "No visual is demo-only: the synthetic demo and the live board draw the same parts."
     ],
     "rules": [
       {
         "name": "The Theme-Owns-Neutrals Rule",
-        "body": "No neutral is ever a literal value. Ground, ink, muted ink and hairline are BB's tokens; the band and rule ink are mixes of them. The board must look right on any BB theme without a single override.",
+        "body": "No neutral is ever a literal value. Ground, ink, muted ink and hairline are BB's tokens; the band, hover tint and rule ink are mixes of them. The board must look right on any BB theme without a single override.",
         "section": "colors"
       },
       {
         "name": "The Ink-Toward-Foreground Rule",
-        "body": "State colours as fills stay fixed; state colours as text or marks use their `-ink` variant, mixed in OKLab toward the theme foreground (amber 46%, sky 50%, red 62%, green 52%), so labels stay legible on light and dark grounds.",
+        "body": "State colours as fills stay fixed; state colours as text or marks use their `-ink` variant, mixed in OKLab toward the theme foreground (amber 46%, sky 50%, red 62%, green 52%), so labels stay legible on light and dark grounds. The dither renderer reads the fixed inks from the board's CSS, so a theme change redraws the art.",
         "section": "colors"
       },
       {
@@ -335,13 +397,13 @@
         "section": "colors"
       },
       {
-        "name": "The Tail-Number Rule",
-        "body": "The pixel font is for spec numbers and nothing else. Prose, buttons and ticket ids stay in BB's UI font or mono; a second display face is never added.",
+        "name": "The Pixel-Type Rule",
+        "body": "The pixel font is for spec numbers, the banner's SQUADRON, section labels and the path strip's counts, and nothing else. It never sits on busy dither. Prose, buttons, ticket ids, lane times and every other count stay in BB's UI font or mono. A second display face is never added.",
         "section": "typography"
       },
       {
         "name": "The Tabular Rule",
-        "body": "Every count, duration and id that can change while the owner watches uses tabular figures, so the line does not jitter as numbers tick.",
+        "body": "Normal-type counts, durations and ids use tabular figures. Pixel path counts use the cell font, with separate digit windows for the Landed count.",
         "section": "typography"
       },
       {
@@ -351,20 +413,22 @@
       }
     ],
     "dos": [
-      "**Do** take every neutral from BB's theme tokens (`--background`, `--foreground`, `--muted-foreground`, `--border`) and derive the band (4.5%) and rule ink (30%) by mixing them.",
+      "**Do** take every neutral from BB's theme tokens (`--background`, `--foreground`, `--muted-foreground`, `--border`) and derive the band (4.5%), hover (6%) and rule ink (30%) by mixing them.",
       "**Do** use the `-ink` variant of a state colour for any text or small mark, and the fixed state colour for fills, edges and dither.",
       "**Do** carry every state twice: ink plus form (march, doubled edge, tall segment, hollow outline, dashed border, size).",
-      "**Do** cut every texture from the Bayer 4x4 masks `--sq-d0` … `--sq-d16` on an 8px tile of 2px cells.",
-      "**Do** set spec numbers in the 5x7 pixel cell font (cell 4 in lane tails, cell 2 in lists), always with a screen-reader copy.",
-      "**Do** use 2px-on, 2px-off pixel rules for section rules and sortie lines, and 1px hairlines for rows and cards.",
-      "**Do** step animations (`steps()`), and give each one a still dither fallback under reduced motion.",
-      "**Do** keep amber for what waits on the owner and the actions only he can take."
+      "**Do** draw every texture and every moving art through the dither renderer, only where something is happening, with a still frame under reduced motion.",
+      "**Do** use pixel type for spec numbers, SQUADRON, section labels and path counts, with an accessible text copy. Keep other counts, times, actions and prose in UI type or mono.",
+      "**Do** use 2px dots on an 8px pitch between sections, 2px-on/2px-off rules on the path and rails, and 1px hairlines for rows and cards.",
+      "**Do** keep amber for what waits on the owner and the actions only they can take.",
+      "**Do** give every empty section a sentence saying how work gets in, with its button where there is one.",
+      "**Do** draw the live board and the demo from the same parts: no visual is demo-only."
     ],
     "donts": [
-      "**Don't** add a shadow or lift to any surface; the board is flat.",
+      "**Don't** add a shadow or lift to any surface, including the picker list.",
       "**Don't** round board marks; pegs, cards, rows and segments stay at 0px, controls at 2px.",
       "**Don't** show a state by colour alone, or by motion alone.",
       "**Don't** introduce a neutral as a literal hex or a fifth state hue.",
+      "**Don't** cut a CSS dither mask or a `steps()` animation; the renderer owns texture and motion.",
       "**Don't** use the pixel font for prose, buttons or ticket ids, and don't load a web font.",
       "**Don't** put white text on amber; use on-amber."
     ]

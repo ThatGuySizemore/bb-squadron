@@ -21,6 +21,11 @@ export interface DitherTarget {
   stillAt: number;
   /** A one-time animation ends here, in seconds, and draws its last frame. */
   until?: number;
+  /**
+   * When second 0 was, on the frame clock (env.now()). Defaults to when the
+   * target is added; two targets given the same start play in step.
+   */
+  born?: number;
   /** Whether the surface is on screen; off-screen surfaces aren't redrawn every frame. */
   visible: boolean;
   draw(seconds: number): void;
@@ -93,7 +98,7 @@ export function createDitherRenderer(env: RendererEnv): DitherRenderer {
 
   return {
     add(target) {
-      targets.set(target, { born: env.now(), finished: false });
+      targets.set(target, { born: target.born ?? env.now(), finished: false });
       drawNow(target);
       schedule();
     },

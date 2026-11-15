@@ -1,12 +1,11 @@
 // SQD-216: in narrow layouts (the side panel, and boards 900px wide and under)
-// each Flying lane is one compact row, with a thin pace line along its bottom
+// each Flying lane is one compact row, with its contrail along its bottom
 // edge, instead of the tall tail card and its separate airstream band.
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Board, Lane, Route, Ticket } from "../lib/board-model.js";
 import { elements, parse, visibleText, type Element } from "./fixtures/owner-text.js";
-import { airstream, createSurface } from "../lib/dither.js";
 
 const route: Route = { family: "claude", model: "claude-opus-5-5", effort: "high" };
 const ticket = (id: string, state: Ticket["state"], extra: Partial<Ticket> = {}): Ticket =>
@@ -123,28 +122,26 @@ test("the branch isn't shown as text in the row; it is the row's hover title and
   assert.equal(visibleText(one(details, "sq-all-branch")), "Branch bb/lead-fix-1-thr_x");
 });
 
-test("the pace line runs along the row's bottom edge at the lane's working-thread pace, still when none work", async () => {
-  const root = await view([lane("FIX-1", { workingThreads: 3 }), lane("FIX-2", { workingThreads: 0 }), lane("FIX-3", { workingThreads: undefined })]);
+test("SQD-224: the contrail runs along the row's bottom edge, filled to tickets in branch, in the board's one wind", async () => {
+  const root = await view([
+    lane("FIX-1", { workingThreads: 3 }),
+    lane("FIX-2", { workingThreads: 0, tickets: [ticket("FIX-2-A", "branch"), ticket("FIX-2-B", "done"), ticket("FIX-2-C", "working")] }),
+    lane("FIX-3", { state: "stopped", stopped: true, workingThreads: 2 }),
+  ]);
   const rows = byClass(root, "sq-lane-row");
-  const paces = rows.map((row) => one(row, "sq-pace-line"));
-  assert.deepEqual(paces.map((pace) => pace.attrs["data-pace"]), ["3", "0", "0"]);
-  for (const pace of paces) {
-    assert.equal(pace.attrs["aria-hidden"], "true", "motion carries no meaning on its own; the ticket rows say who works");
-    assert.equal(rows.includes(pace.parent!), true, "the pace line sits inside the lane row");
-    assert.equal(elements(pace).filter((element) => element.tag === "canvas").length, 1);
+  const trails = rows.map((row) => one(row, "sq-contrail"));
+  assert.deepEqual(trails.map((trail) => [trail.attrs["data-done"], trail.attrs["data-total"]]), [["1", "3"], ["2", "3"], ["1", "3"]]);
+  // Three agents work across the board; a stopped lane adds none and its own wind is still.
+  assert.deepEqual(trails.map((trail) => trail.attrs["data-wind"]), ["3", "3", "0"]);
+  for (const trail of trails) {
+    assert.equal(trail.attrs["aria-hidden"], "true", "the count beside it says the same in words");
+    assert.equal(rows.includes(trail.parent!), true, "the contrail sits inside the lane row");
+    assert.equal(elements(trail).filter((element) => element.tag === "canvas").length, 1);
   }
-
-  // The airstream painter fills an 8px strip at 2x density, and stays still with no work.
-  const ink = 0xffd6a73f;
-  const strip = createSurface(320, 8, 2);
-  airstream({ pace: 3, ink })(strip, 1);
-  assert.ok(strip.buf.some((pixel) => pixel === ink), "a working lane's strip carries sky pixels");
-  const still = createSurface(320, 8, 2);
-  const paintStill = airstream({ pace: 0, ink });
-  paintStill(still, 0);
-  const first = [...still.buf];
-  paintStill(still, 5);
-  assert.deepEqual([...still.buf], first, "no working threads: the same frame at any time");
+  assert.equal(byClass(root, "sq-pace-line").length, 0, "the contrail replaces the old pace line");
+  // The same count in words, in the UI font, never pixel lettering.
+  assert.deepEqual(rows.map((row) => visibleText(one(row, "sq-lane-count"))), ["1/3 in branch", "2/3 in branch", "1/3 in branch"]);
+  for (const row of rows) assert.equal(elements(one(row, "sq-lane-count")).some((element) => element.tag === "svg"), false);
 });
 
 test("the full page takes the narrow layout at 900px wide and under; a side panel always does", async () => {

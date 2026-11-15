@@ -736,7 +736,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
 const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
   "autopilot-check": "Autopilot check",
   setup: "Setup", waiting: "Question", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
-  "autopilot-paused": "Autopilot paused",
+  "autopilot-paused": "Autopilot paused", cleanup: "Unsaved work",
 };
 
 export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = null, onAutopilotResume, autopilotSaving = false }: {
@@ -783,7 +783,7 @@ export function NeedsYouStrip({ items, dispatch, setUp, demo = false, acting = n
                 Answer in thread
               </Btn>
             ) : null}
-            {(item.kind === "failed" || item.kind === "blocked") && item.threadId ? (
+            {(item.kind === "failed" || item.kind === "blocked" || item.kind === "cleanup") && item.threadId ? (
               <Btn onClick={() => open.thread(item.threadId!, `the ${item.kind} thread in ${item.specId}`)}>Open thread</Btn>
             ) : null}
             {item.kind === "stopped" ? (

@@ -75,6 +75,8 @@ const lane = z.object({
 const blocker = z.object({ id: z.string(), title: z.string(), url: z.string(), outside: z.boolean() });
 const boardSchema = z.object({
   autopilot: autopilotStateSchema.optional(),
+  /** Worker threads of a landed lane that Clean up after landing kept because their work isn't saved. */
+  cleanup: z.array(z.object({ specId: z.string(), threadId: z.string(), text: z.string() })).optional(),
   doctor: doctorReportSchema.optional(),
   tick: z.number(), laneCapacity: z.number(), workersPerLane: z.number(), autoStart: z.boolean(),
   lanes: z.array(lane),
@@ -132,7 +134,7 @@ export type ReadySpec = Board["ready"][number];
 export type OpenIssue = Board["openIssues"][number];
 export type ShapingSpec = Board["shaping"][number];
 export type TrackerStatus = NonNullable<Board["tracker"]>;
-export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge" | "autopilot-paused" | "autopilot-check";
+export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge" | "autopilot-paused" | "autopilot-check" | "cleanup";
 
 export interface NeedsYouItem {
   key: string;
@@ -170,6 +172,9 @@ export function needsYou(board: Board): NeedsYouItem[] {
     if (check.status === "fix") {
       items.push({ key: `setup:${check.id}`, kind: "setup", specId: "", text: check.message, threadId: null });
     }
+  }
+  for (const kept of board.cleanup ?? []) {
+    items.push({ key: `cleanup:${kept.threadId}`, kind: "cleanup", specId: kept.specId, text: kept.text, threadId: kept.threadId });
   }
   for (const lane of board.lanes) {
     if (lane.state === "merge-waits" && !lane.outside) {
@@ -209,7 +214,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { "autopilot-paused": -1, "autopilot-check": -1, setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5 };
+  const order: Record<NeedsYouKind, number> = { "autopilot-paused": -1, "autopilot-check": -1, setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5, cleanup: 6 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 

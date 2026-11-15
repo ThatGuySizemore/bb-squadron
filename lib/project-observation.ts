@@ -6,7 +6,7 @@ export const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
 const kindNames: Record<NeedsYouKind, string> = {
   "autopilot-check": "Autopilot check",
-  "autopilot-paused": "Autopilot paused", setup: "Setup", waiting: "Question", failed: "Stopped", blocked: "Stopped", stopped: "Stopped", merge: "Merge waiting",
+  "autopilot-paused": "Autopilot paused", setup: "Setup", waiting: "Question", failed: "Stopped", blocked: "Stopped", stopped: "Stopped", merge: "Merge waiting", cleanup: "Unsaved work",
 };
 
 export const unreadableProject = "Couldn't read this project. Make sure its machine is online.";

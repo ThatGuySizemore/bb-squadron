@@ -80,7 +80,7 @@ export function doctor(input: DoctorInput): DoctorReport {
     },
     {
       id: "settings", name: "Project settings", status: parsed?.ok && !scopeProblem && !routeProblems.length ? (sharedWarning ? "warning" : "pass") : "fix",
-      message: scopeProblem ?? (routeProblems.length ? routeProblems.map((issue) => issue.message).join(" ") : sharedWarning ? "House rules has Model routes, but this repo keeps its own routes. Add Defaults: House rules to opt in." : parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? ", scope and Linear statuses" : ""} are ready.`
+      message: scopeProblem ?? (routeProblems.length ? routeProblems.map((issue) => issue.message).join(" ") : sharedWarning ? "House rules has Model routes, but this repo keeps its own routes. Add Defaults: House rules to opt in." : parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? ", scope and Linear statuses" : ""} are ready.${parsed.settings.cleanUp === "after landing" ? " Clean up after landing is on: saved worker threads are archived when a lane lands." : ""}`
         : parsed ? parsed.issues.map((issue) => issue.message).join(" ")
         : `Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes and Final review sections${tracker.kind === "linear" ? ", plus Scope and the Linear status each state uses" : ""}.`),
     },

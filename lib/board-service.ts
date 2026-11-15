@@ -21,6 +21,7 @@ import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 import { mainCheckHostContract } from "./main-check-contract.js";
 import { readingProblem } from "./linear-reading.js";
+import type { CleanupResult } from "./lane-cleanup.js";
 
 export interface BoardSources {
   autopilot?: AutopilotControls;
@@ -36,6 +37,8 @@ export interface BoardSources {
   tracker: TrackerReader;
   /** Lanes started outside Squadron, shown read-only. */
   outside?: OutsideLaneReader;
+  /** Clean up after landing: archives a landed lane's saved workers. Called only for a project whose settings turn it on. */
+  cleanUp?(projectId: string, board: Board, leads: LeadThread[]): Promise<CleanupResult>;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -65,6 +68,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     /** The refresh in progress, and whether another signal arrived during it. */
     refreshing?: Promise<void>;
     again?: boolean;
+    /** The last pass's lanes, when the project turned Clean up on, for the watcher's clean-up step. */
+    cleanup?: { leads: LeadThread[] };
+    /** Worker threads the last clean-up kept because their work isn't saved. */
+    kept?: CleanupResult["kept"];
   }>();
   const project = (id: string) => {
     let entry = projects.get(id);
@@ -126,6 +133,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       ...progress,
       pullRequests,
     });
+    const cleanUpOn = entry.settings.value?.ok === true && entry.settings.value.settings.cleanUp === "after landing";
+    entry.cleanup = cleanUpOn ? { leads } : undefined;
+    if (!cleanUpOn) entry.kept = undefined;
+    else if (entry.kept?.length) board.cleanup = entry.kept;
     if (sources.autopilot) {
       const problem = readingProblem(snapshot, now());
       const savedLinear = snapshot.kind === "linear" && snapshot.syncedAt !== null;
@@ -214,6 +225,18 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
         try {
           board = await compute(projectId, false);
           publishIfChanged(projectId, board);
+          if (sources.cleanUp && entry.cleanup) {
+            // Archiving is the watcher's job: a page read or CLI read never changes a thread.
+            const before = JSON.stringify(entry.kept ?? []);
+            const result = await sources.cleanUp(projectId, board, entry.cleanup.leads).catch(() => {
+              bb.log.warn("clean-up unavailable");
+              return null;
+            });
+            if (result) {
+              entry.kept = result.kept;
+              if (JSON.stringify(result.kept) !== before) { board = await compute(projectId, false); publishIfChanged(projectId, board); }
+            }
+          }
           if (!attempted && sources.autopilot?.isOn(projectId) && sources.startLane) {
             const state = await sources.autopilot.get(projectId);
             const flying = autopilotLaneCount(board);

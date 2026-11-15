@@ -76,10 +76,11 @@ export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath
           try {
             const content = await readFile(join(home(), ".bb-squadron", name), "utf8");
             const body = markdownSection(content, "Model routes");
-            return { markdown: body === undefined ? null : `## Model routes\n${body}` };
+            const policy = markdownSection(content, "Squadron policy");
+            return { markdown: body === undefined ? null : `## Model routes\n${body}`, policy: policy === undefined ? null : `## Squadron policy\n${policy}` };
           } catch (error) { if (!absent(error)) throw error; }
         }
-        return { markdown: null };
+        return { markdown: null, policy: null };
       },
       runMainQuickCheck: (input, { signal }) => runMainQuickCheck(input, signal, commands),
       readRepositoryState: (input, { signal }) => readRepositoryState(input, signal),

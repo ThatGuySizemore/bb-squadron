@@ -15,8 +15,10 @@ export const doctorReportSchema = z.object({
   /** Doctor's route view: what each role and label exception launches on. */
   routes: z.array(z.object({
     role: z.enum(MODEL_ROLES), category: z.string().nullable(),
-    route: launchRouteSchema.nullable(), problem: z.string().optional(),
+    route: launchRouteSchema.nullable(), problem: z.string().optional(), note: z.string().optional(),
   })).optional(),
+  /** The resolved Squadron policy: each setting, its value and where it came from. */
+  policy: z.array(z.object({ setting: z.string(), value: z.string(), source: z.enum(["House rules", "default"]) })).optional(),
 });
 
 export const doctorContract = {
@@ -29,7 +31,8 @@ export const doctorContract = {
 export const doctorHostContract = {
   readModelRoutes: {
     input: z.object({}),
-    output: z.object({ markdown: z.string().nullable() }),
+    /** markdown is the Model routes section; policy is the Squadron policy section. Models and effort prose never leaves the host. */
+    output: z.object({ markdown: z.string().nullable(), policy: z.string().nullable().optional() }),
     experimental_retryable: true,
   },
   inspectFiles: {

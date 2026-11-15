@@ -4,7 +4,8 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { z } from "zod";
 import { launchRouteSchema, otherFamily, type LaunchRoute, type LaunchView, type ReportedRoute, type Route } from "./board-model.js";
-import { MODEL_ROLES, matchRoute, providerFor, type ModelRole, type SquadronSettings } from "./squadron-settings.js";
+import { DEFAULT_EFFORT_UNPROVED, effectiveEffort, type ProviderModels } from "./model-capabilities.js";
+import { MODEL_ROLES, matchRoute, policyRows, providerFor, type ModelRole, type SquadronSettings } from "./squadron-settings.js";
 
 export type { LaunchRoute, LaunchView, ReportedRoute };
 export const LAUNCH_METADATA_KEY = "launch";
@@ -59,12 +60,14 @@ const ROLE_ROW_MISSING = (role: ModelRole, shared: boolean) => shared
   : `Add a ${role} row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.`;
 
 /** The one resolver Doctor's route view, Start, the board and squadron launch all use. Never substitutes. */
-export function resolveLaunch(settings: SquadronSettings, request: { role: ModelRole; labels?: readonly string[] }): ResolvedLaunch {
+export function resolveLaunch(settings: SquadronSettings, request: { role: ModelRole; labels?: readonly string[] }, catalog?: readonly ProviderModels[]): ResolvedLaunch {
   const shared = settings.routeDefaults === "house-rules";
   const labels = request.labels ?? [];
-  const resolved = (route: Route | null, category: string | null): ResolvedLaunch => ({
-    role: request.role, category, policyResolved: shared, overrideNote: route?.overrideNote ?? null, route,
-  });
+  const resolved = (route: Route | null, category: string | null): ResolvedLaunch => {
+    const problem = route && lowEffortProblem(settings, request.role, route, catalog);
+    if (problem) throw new Error(problem);
+    return { role: request.role, category, policyResolved: shared, overrideNote: route?.overrideNote ?? null, route };
+  };
   const roleRow = settings.modelRoutes?.[request.role] ?? settings.routes.find((row) => row.role === request.role);
   if (request.role === "Lead") {
     const lead = settings.routes.find((row) => row.label?.toLowerCase() === "lead");
@@ -89,6 +92,17 @@ export function resolveLaunch(settings: SquadronSettings, request: { role: Model
   throw new Error(ROLE_ROW_MISSING(request.role, false));
 }
 
+/**
+ * Squadron policy's Low effort setting: off refuses every low route; mechanical only allows low for Mechanical alone.
+ * A `default` effort counts as low when BB advertises low as the model's native default. An unknown default isn't refused.
+ */
+function lowEffortProblem(settings: SquadronSettings, role: ModelRole, route: Route, catalog?: readonly ProviderModels[]): string | null {
+  if (effectiveEffort({ providerId: route.providerId, model: route.model, effort: route.effort }, catalog) !== "low") return null;
+  const what = route.effort === "default" ? `${providerFor(route)} ${route.model}'s default effort (low, as BB advertises it)` : "low effort";
+  if (settings.policy.lowEffort === "off") return `Low effort is off in House rules Squadron policy, so the ${role} route (${what}) is refused. Set Low effort to mechanical only to allow it for Mechanical, or name a higher effort.`;
+  return role === "Mechanical" ? null : `Low effort is mechanical only, so the ${role} route (${what}) is refused. Name a higher effort.`;
+}
+
 function withoutLabel(row: Route & { label?: string | null }): Route {
   const { label: _label, ...route } = row;
   return route;
@@ -111,12 +125,13 @@ export function spawnRoute(requested: LaunchRoute): { providerId?: string; model
 }
 
 /** One line per role, then each ticket label exception, shared by Doctor's route view and the Lead's brief. */
-export interface RouteViewRow { role: ModelRole; category: string | null; route: LaunchRoute | null; problem?: string }
-export function launchRoutes(settings: SquadronSettings): RouteViewRow[] {
+export interface RouteViewRow { role: ModelRole; category: string | null; route: LaunchRoute | null; problem?: string; note?: string }
+export function launchRoutes(settings: SquadronSettings, catalog?: readonly ProviderModels[]): RouteViewRow[] {
   const row = (role: ModelRole, labels: string[] = []): RouteViewRow => {
     try {
-      const launch = resolveLaunch(settings, { role, labels });
-      return { role, category: launch.category, route: requestedRoute(launch.route) };
+      const launch = resolveLaunch(settings, { role, labels }, catalog);
+      const unproved = launch.route?.effort === "default" && launch.route.providerId && effectiveEffort(launch.route, catalog) === null;
+      return { role, category: launch.category, route: requestedRoute(launch.route), ...(unproved ? { note: DEFAULT_EFFORT_UNPROVED } : {}) };
     } catch (error) { return { role, category: labels[0] ?? null, route: null, problem: error instanceof Error ? error.message : String(error) }; }
   };
   const exceptions = settings.routes.filter((route) => route.label !== null && route.role === undefined && route.label.toLowerCase() !== "lead");
@@ -131,7 +146,7 @@ export function routeText(route: LaunchRoute): string {
 
 export function routeViewLine(row: RouteViewRow): string {
   const name = row.category ? `${row.role} for ${row.category} tickets` : row.role;
-  return `- ${name}: ${row.route ? routeText(row.route) : `not set. ${row.problem ?? ""}`.trim()}`;
+  return `- ${name}: ${row.route ? routeText(row.route) : `not set. ${row.problem ?? ""}`.trim()}${row.note ? ` (${row.note})` : ""}`;
 }
 
 /** Efforts whose relative order is settled. BB advertises other IDs (ultra, ultracode) without a rank. */
@@ -267,4 +282,10 @@ export async function readLaunchRecords(bb: BbPluginApi, projectId: string, filt
     }
   }
   return { attempts: selected, firstVerifiedPolicyWorker, unrecorded: unrecorded.sort(byCreation) };
+}
+
+/** The resolved Squadron policy for a Lead's brief. The Lead reads these values, not House rules prose. */
+export function policyBriefLines(settings: SquadronSettings): string[] {
+  return ["Squadron policy resolved at Start (follow these values, and the squadron-lead skill's text for each mode):",
+    ...policyRows(settings).map((row) => `- ${row.setting}: ${row.value}`)];
 }

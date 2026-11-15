@@ -4,7 +4,7 @@
 import { cliCommand, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
 import { readProjectCheckout } from "./project-checkout.js";
 import { isOpenIssue } from "./linear-issues.js";
-import { routeProblem } from "./model-capabilities.js";
+import { DEFAULT_EFFORT_UNPROVED, effectiveEffort, routeProblem } from "./model-capabilities.js";
 import type { ModelRole } from "./squadron-settings.js";
 import type { TrackerReader } from "./tracker-contract.js";
 import { compareEffort, LAUNCH_METADATA_KEY, readLaunchMetadata, reportedRoute, requestedRoute, resolveLaunch, routeMismatch,
@@ -52,7 +52,7 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
       if (!ticket) return fail(`${input.ticket} isn't an open ticket of ${specName}. Read the tickets again.`);
     } else if (NEEDS_TICKET.includes(role)) return fail(`Name the ticket a ${role} builds with --ticket.`);
     const resolved = (() => {
-      try { return resolveLaunch(checkout.settings.settings, { role, labels: ticket?.labels.map((label) => label.name) ?? [] }); }
+      try { return resolveLaunch(checkout.settings.settings, { role, labels: ticket?.labels.map((label) => label.name) ?? [] }, checkout.providerCatalog); }
       catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
     })();
     const routed = requestedRoute(resolved.route);
@@ -119,7 +119,8 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
       prompt: input.prompt,
     });
     const reported = await reportedRoute(bb, { id: thread.id, providerId: thread.providerId ?? requested.providerId });
-    return { thread, record, reported, mismatch: routeMismatch(requested, reported) };
+    const unproved = requested.effort === "default" && !!requested.providerId && effectiveEffort({ providerId: requested.providerId, model: requested.model, effort: requested.effort }, checkout.providerCatalog) === null;
+    return { thread, record, reported, mismatch: routeMismatch(requested, reported), unproved };
   }
 
   const command = cliCommand({
@@ -145,6 +146,7 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
         });
         const lines = [`Launched ${result.thread.title ?? result.record.role} on ${routeText(result.record.requested)} @thread:${result.thread.id}`];
         if (result.mismatch.length && result.reported) lines.push(`BB reports a different ${result.mismatch.join(", ")} than requested: ${result.mismatch.map((field) => `${field} ${result.reported![field] ?? "unknown"}`).join(", ")}. The launch record keeps the request.`);
+        if (result.unproved) lines.push(DEFAULT_EFFORT_UNPROVED);
         if (!result.reported) lines.push("BB's report of the route couldn't be read yet; the launch record keeps the request.");
         return { exitCode: 0, stdout: `${lines.join("\n")}\n` };
       } catch (error) {

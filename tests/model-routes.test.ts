@@ -84,7 +84,15 @@ test("an explicit role exception keeps its scope and approval source with the re
 });
 
 test("legacy repo routes ignore House rules defaults and Doctor warns about opting in", () => {
-  assert.deepEqual(parseSquadronSettings(repo, "linear", house), parseSquadronSettings(repo));
+  // Routes ignore House rules; Squadron policy is the owner's and applies to every repo.
+  const withHouse = parseSquadronSettings(repo, "linear", house);
+  const alone = parseSquadronSettings(repo);
+  assert.ok(withHouse.ok && alone.ok);
+  const { policy, policySource, ...routesOnly } = withHouse.settings;
+  const { policy: defaults, policySource: defaultSources, ...aloneRoutes } = alone.settings;
+  assert.deepEqual(routesOnly, aloneRoutes);
+  assert.equal(policy.lowEffort, "mechanical only");
+  assert.deepEqual([defaults.lowEffort, defaultSources.lowEffort], ["off", "default"]);
   const report = doctor({ ...ready, settingsMarkdown: repo, houseRulesMarkdown: house, providerCatalog: catalog });
   assert.equal(report.ready, true);
   const check = report.checks.find((check) => check.id === "settings")!;

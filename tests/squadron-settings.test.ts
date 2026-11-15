@@ -10,6 +10,8 @@ test("repo settings supply the quick check, stop list, limits and ordered routes
   assert.deepEqual(parseSquadronSettings(fixture), {
     ok: true,
     settings: {
+      policy: { escalation: "retry", lowEffort: "off", checkpoint: null },
+      policySource: { escalation: "default", lowEffort: "default", checkpoint: "default" },
       quickCheck: "npm run check",
       stopList: ["The plugin fails to build or load.", "A test assertion is weakened."],
       limits: { laneTimeLimitMs: 28_800_000, workerTimeLimitMs: 5_400_000 },

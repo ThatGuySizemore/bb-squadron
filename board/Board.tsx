@@ -89,7 +89,7 @@ function RunwayBanner({ runway }: { runway: Runway }) {
   return (
     <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length} style={{ height: g.height }}>
       <DitherCanvas fx={{ kind: "runway", narrow, label: count?.text ?? "", state }} className="sq-runway-art" />
-      <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined} data-stencil={g.title ? undefined : "none"}>
+      <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined}>
         {g.title ? <PixelText text="Squadron" cell={g.title.cell} gap={g.title.gap} /> : <span className="sq-sr">Squadron</span>}
       </h1>
       {count && g.label ? <FlyingLabel count={count} box={g.label} /> : null}

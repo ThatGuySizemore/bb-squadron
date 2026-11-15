@@ -82,7 +82,7 @@ function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: 
   const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
   const state: RunwayState = lanesKnown ? runwayState(board.lanes, board.laneCapacity, working, moments) : { stands: [], working: 0 };
   const count = lanesKnown ? flyingCount(flying, board.laneCapacity) : null;
-  const viewport = width ?? (narrow ? 560 : 1200);
+  const viewport = Math.max(1, Math.round(width ?? (narrow ? 560 : 1200)));
   const layout = runwayLayout(viewport, narrow, state.stands.length, count?.text ?? "");
   return { ref, narrow, state, count, layout, overflow: layout.width > viewport };
 }

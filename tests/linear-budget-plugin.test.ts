@@ -6,23 +6,23 @@ import { needsYou } from "../lib/board-model.js";
 
 const epoch = Date.parse("2026-11-14T12:00:00Z");
 
-test("open boards read every 30 seconds while unattended projects read only every five minutes", async (t) => {
+test("open boards back off while unattended projects read only every five minutes", async (t) => {
   const f = await helperFixture(t, epoch);
   await f.startWatcher();
   await f.board("one");
-  const count = () => f.linear.operations.filter((name) => name === "SquadronIssues").length;
+  const count = () => f.linear.operations.filter((name) => name === "SquadronIssues" || name === "SquadronDelta").length;
   f.harness.behavior.runService("linear-reader"); await settle();
   const initial = count();
   for (let step = 1; step <= 9; step++) {
     await f.advance(30_000);
-    assert.equal(count(), initial + step, "only the open board reads during the first five minutes");
+    assert.equal(count(), initial + [1, 1, 2, 2, 2, 2, 3, 3, 3][step - 1], "only the open board reads, with quiet backoff");
     await f.board("one"); // The page's heartbeat keeps this board open.
   }
   await f.advance(30_000);
-  assert.equal(count(), initial + 11, "both projects read at five minutes");
+  assert.equal(count(), initial + 4, "the background project reads at five minutes");
   await f.board("one");
   await f.advance(30_000);
-  assert.equal(count(), initial + 12, "the unattended project does not read again after 30 seconds");
+  assert.equal(count(), initial + 4, "neither quiet project is due again after 30 seconds");
 });
 
 test("a shared rate limit keeps the Doctor passing, creates no Setup wake-ups, and reads resume at reset", async (t) => {
@@ -87,13 +87,14 @@ test("background reads stop using Linear when a project's tracker changes", asyn
   });
   await f.startWatcher();
   f.harness.behavior.runService("linear-reader"); await settle();
-  const initial = f.linear.operations.filter((name) => name === "SquadronIssues").length;
+  const reads = () => f.linear.operations.filter((name) => name === "SquadronIssues" || name === "SquadronDelta").length;
+  const initial = reads();
   local = true;
   await f.advance(300_000);
-  assert.equal(f.linear.operations.filter((name) => name === "SquadronIssues").length, initial + 1,
+  assert.equal(reads(), initial + 1,
     "only the project still using Linear is re-read");
   local = false;
   await f.advance(300_000);
-  assert.equal(f.linear.operations.filter((name) => name === "SquadronIssues").length, initial + 3,
+  assert.equal(reads(), initial + 3,
     "switching back to Linear resumes background reads");
 });

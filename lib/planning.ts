@@ -13,6 +13,7 @@ import { trackerName } from "./tracker-detection.js";
 
 export interface PlanningSources {
   tracker: Pick<TrackerReader, "getSnapshot">;
+  onAction?(projectId: string): void;
   /** Says which setup steps a project lacks. Without it, Set up asks the thread to check. */
   doctor?(projectId: string): Promise<DoctorReport>;
 }
@@ -166,6 +167,7 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
 
   /** Concurrent Plans on one issue share a single start. */
   function startOnce(projectId: string, issueId?: string, step?: "tickets"): Promise<PlanningStarted> {
+    sources.onAction?.(projectId);
     if (!issueId) return start(projectId);
     const key = JSON.stringify([projectId, issueId]);
     let running = starting.get(key);

@@ -964,13 +964,16 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
   );
 }
 
-/** A section's label on its pixel rule, with its count. Needs you counts in amber. */
+/** A section's dotted separator, then its label and count. Needs you counts in amber. */
 function SectionHead({ id, title, count, amber = false }: { id: string; title: string; count: number; amber?: boolean }) {
   return (
-    <div className="sq-label">
-      <h2 id={id}><Term text={title}><PixelText text={title} cell={2} className="sq-section-title" /></Term></h2>
-      {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
-    </div>
+    <>
+      <DitherCanvas fx={{ kind: "section-rule" }} className="sq-section-rule" />
+      <div className="sq-label">
+        <h2 id={id}><Term text={title}><PixelText text={title} cell={2} className="sq-section-title" /></Term></h2>
+        {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
+      </div>
+    </>
   );
 }
 

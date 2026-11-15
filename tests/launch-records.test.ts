@@ -197,10 +197,10 @@ test("effort-only escalation keeps the Worker role and model, raises supported e
   const reason = "First attempt skipped the parser's edge cases; investigation was too thin.";
   for (const [extra, problem] of [
     [["--effort", "xhigh"], /reason/],
-    [["--effort", "medium", "--reason", reason], /medium isn't higher than the route's medium/],
-    [["--effort", "low", "--reason", reason], /low isn't higher than the route's medium/],
+    [["--effort", "medium", "--reason", reason], /medium isn't higher than thr_2's medium/],
+    [["--effort", "low", "--reason", reason], /low isn't higher than thr_2's medium/],
     [["--effort", "max", "--reason", reason], /claude-sonnet-5-5: doesn't support max effort/],
-    [["--effort", "ultracode", "--reason", reason], /BB doesn't rank ultracode against the route's medium effort/],
+    [["--effort", "ultracode", "--reason", reason], /BB doesn't rank ultracode against thr_2's medium effort/],
     [["--reason", reason], /only when a replacement runs at a higher effort or on a hard route/],
   ] as const) {
     const refused = await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p", "--replaces", "thr_2", ...extra]);
@@ -355,4 +355,51 @@ test("the lane's chips say provider, model, effort and tier, a reported substitu
   assert.match(workerChip.textContent!, /claude-sonnet-5-5 xhigh · priority/, "a non-default tier is visible, not only on hover");
   assert.match(workerChip.getAttribute("title")!, new RegExp(`Effort raised: ${reason}`));
   assert.equal(workerChip.querySelector(".sq-ai-swap")?.textContent, "substituted");
+});
+
+test("effort-only escalation compares with the replaced attempt's own record: medium to high, then high to xhigh", async (t) => {
+  const { harness, native, spawnArgs, launch } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const worker = (...extra: string[]) => launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p", ...extra]);
+  assert.equal((await worker()).exitCode, 0);
+  const first = await worker("--replaces", "thr_2", "--effort", "high", "--reason", "too thin");
+  assert.equal(first.exitCode, 0, first.stderr);
+  assert.deepEqual([spawnArgs(2).pluginMetadata.launch.requested.effort, spawnArgs(2).pluginMetadata.launch.escalation?.kind], ["high", "effort"]);
+  // A same-effort retry of the escalated attempt is not an escalation, even though today's route is medium.
+  const same = await worker("--replaces", "thr_3", "--effort", "high", "--reason", "again");
+  assert.equal(same.exitCode, 1);
+  assert.match(same.stderr, /high isn't higher than thr_3's high effort/);
+  const second = await worker("--replaces", "thr_3", "--effort", "xhigh", "--reason", "still too thin");
+  assert.equal(second.exitCode, 0, second.stderr);
+  const record = spawnArgs(3).pluginMetadata.launch;
+  assert.deepEqual([record.role, record.requested.model, record.requested.effort, record.replacesThreadId, record.escalation],
+    ["Worker", "claude-sonnet-5-5", "xhigh", "thr_3", { kind: "effort", reason: "still too thin" }]);
+  assert.deepEqual((native.metadata.get("thr_3") as { launch: LaunchRecord }).launch, spawnArgs(2).pluginMetadata.launch,
+    "a replacement never rewrites the attempt it replaces");
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 4, "the refused retry launched nothing");
+});
+
+test("effort-only escalation refuses a changed role, provider or model and an unranked earlier effort", async (t) => {
+  const { harness, native, launch } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const run = (role: string, ...extra: string[]) => launch([role, "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p", ...extra]);
+  assert.equal((await run("worker-hard")).exitCode, 0);
+  const demoted = await run("worker", "--replaces", "thr_2", "--effort", "high", "--reason", "cheaper");
+  assert.equal(demoted.exitCode, 1, "a Worker (hard) Opus attempt can't be replaced by Worker Sonnet as an effort-only escalation");
+  assert.match(demoted.stderr, /thr_2 ran as Worker \(hard\); an effort-only escalation keeps that role/);
+  assert.equal((await run("worker")).exitCode, 0);
+  const recorded = (native.metadata.get("thr_3") as { launch: LaunchRecord }).launch;
+  for (const [changed, named] of [
+    [{ ...recorded.requested, model: "claude-opus-5-5" }, /thr_3 ran on claude-code claude-opus-5-5, but today's Worker route is claude-code claude-sonnet-5-5/],
+    [{ ...recorded.requested, providerId: "codex", model: "gpt-6.1-sol" }, /thr_3 ran on codex gpt-6.1-sol, but today's Worker route is claude-code claude-sonnet-5-5/],
+    [{ ...recorded.requested, effort: "default" }, /BB doesn't rank default against thr_3's/],
+    [{ ...recorded.requested, providerId: null, model: null }, /thr_3 ran on BB's default model, so a raised effort can't be compared/],
+  ] as const) {
+    // The earlier launch was made under different settings; its own record is what the escalation must match.
+    native.metadata.set("thr_3", { launch: { ...recorded, requested: changed } });
+    const refused = await run("worker", "--replaces", "thr_3", "--effort", "high", "--reason", "too thin");
+    assert.equal(refused.exitCode, 1, JSON.stringify(changed));
+    assert.match(refused.stderr, named);
+  }
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 3, "no refused escalation launched a thread");
 });

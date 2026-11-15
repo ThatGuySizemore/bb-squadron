@@ -74,12 +74,23 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
     if (input.effort !== undefined) {
       if (!replaced) return fail("Raise effort only for a replacement: name the earlier attempt with --replaces.");
       if (!reason) return fail("Give the escalation reason with --reason.");
-      if (!routed.model || !routed.providerId) return fail("Raise effort only on a route with an explicit provider and model.");
-      const provider = checkout.providerCatalog.find((entry) => entry.providerId === routed.providerId);
-      const model = provider?.models.find((entry) => entry.id === routed.model);
-      // BB's advertised efforts decide what is runnable; an unranked level is refused, never substituted.
-      const compared = compareEffort(input.effort, routed.effort, model?.efforts ?? []);
-      if (!compared.higher) return fail(`${routed.providerId}/${routed.model}: ${compared.problem}.`);
+      // An effort-only escalation keeps the replaced attempt's role, provider and model, read from its own record.
+      // Today's route must still name that model; neither side is rewritten to fit the other.
+      const before = replaced.requested;
+      const ran = `${before.providerId ?? "BB's default provider"} ${before.model ?? "default model"}`;
+      if (replaced.role !== role) return fail(`${input.replaces} ran as ${replaced.role}; an effort-only escalation keeps that role. Launch ${role} as a plain replacement, or use a hard route with --reason.`);
+      if (!before.providerId || !before.model) return fail(`${input.replaces} ran on BB's default model, so a raised effort can't be compared. Launch a plain replacement.`);
+      if (routed.providerId !== before.providerId || routed.model !== before.model) {
+        return fail(`${input.replaces} ran on ${ran}, but today's ${role} route is ${routed.providerId ?? "BB's default provider"} ${routed.model ?? "default model"}. An effort-only escalation keeps the model; launch a plain replacement instead.`);
+      }
+      const provider = checkout.providerCatalog.find((entry) => entry.providerId === before.providerId);
+      const model = provider?.models.find((entry) => entry.id === before.model);
+      // BB's advertised efforts decide what is runnable; an unranked or unknown comparison is refused, never substituted.
+      const advertised = model?.efforts ?? [];
+      const overReplaced = compareEffort(input.effort, before.effort, advertised);
+      if (!overReplaced.higher) return fail(`${ran}: ${overReplaced.problem.replace("the route's", `${input.replaces}'s`)}.`);
+      const overRoute = compareEffort(input.effort, routed.effort, advertised);
+      if (!overRoute.higher) return fail(`${ran}: ${overRoute.problem}.`);
       requested = { ...routed, effort: input.effort };
       escalation = { kind: "effort", reason };
     } else if (replaced && HARD[role] === replaced.role) {

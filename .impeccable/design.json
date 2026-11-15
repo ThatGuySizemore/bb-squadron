@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-15T04:17:15.799153Z",
+  "generatedAt": "2026-11-15T04:25:01.437515Z",
   "title": "Design System: BB Squadron",
   "extensions": {
     "colorMeta": {
@@ -274,11 +274,11 @@
     ],
     "provenance": {
       "workflow": "Installed impeccable 4.7.0 reference/document.md, scan mode and Step 4b",
-      "designSha256": "1e57a77e7c14cab58cf4462e0b6d4700377f33f847c0991268e0a896ced3a550",
+      "designSha256": "3e66fe731c053396942d477acb5879ba96dca2aea3ec0b02d927dae00a40367e",
       "sourceBasis": "SQD-221 final-review repair source based on integration 1d41d7cbb509122747bcfab5685a0fe971f6f331",
       "visualEvidence": "Source-derived static component specimens only. No live BB visual acceptance. Held SQD-247 loading excluded.",
       "sourceSha256": {
-        "board/Board.tsx": "c0f2264948be809196a0a5dd66236b226029963cf2d6650b093ac2089035c957",
+        "board/Board.tsx": "d67c0dbbd4006efb55e4f382232145daefe65bc30c07a08acb83448bbc53779c",
         "board/board.css": "80c8ba4598bacab87799bf774fb7fff1385a19f317b4be60e5306d5a224e2942",
         "board/FlipCount.tsx": "5c0511fa97ca2fd792c4960765de687f5ac146ab402db70a786a6f321bce90fb",
         "board/DitherCanvas.tsx": "d37b2a779b291b7d9c7d480d613ff7f131a4ddad741ded84cc9ec366f50263c0",
@@ -286,7 +286,7 @@
         "lib/dither.ts": "3516e1f7fdb261ea1e5814cb7cf0a3e7811008d9af9ba41ee8a8618abaa3b3a8",
         "lib/pixels.ts": "9b2484145ac9910f935f431d5d11c806af2873f940a9669b3a26afd723d158c8",
         "lib/working-agents.ts": "26d6a90a46202e7abc8d2a68068581014615ed1fc907b195078829421d085eac",
-        "lib/board-model.ts": "1643c617153a982800bc0949979b9d930def762e8114da1d38733971b804f239",
+        "lib/board-model.ts": "555bd1416fad8457b78243ff66dd72ff973b221c4c2edb87ada9e86355153aa4",
         "lib/fly-past.ts": "5ea63b4d1e0d5e952c69dc1ece2587831d1094daa53caf19620a6e7402504254"
       }
     }

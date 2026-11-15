@@ -7,6 +7,23 @@ import { readFileSync } from "node:fs";
 import { blocks, input, issue, snapshot } from "./fixtures/board-snapshots.js";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 
+test("an idle Lead waiting on outside blockers names them in its lane without Needs you", () => {
+  const snap = snapshot([
+    issue("FIX-1", { labels: ["ready-for-agent", "accept:owner"] }),
+    issue("FIX-2", { parent: "FIX-1", done: true }),
+    issue("FIX-3", { parent: "FIX-1" }),
+    issue("OUT-9", { outside: true }),
+  ], [blocks("OUT-9", "FIX-3")]);
+  const { board } = deriveBoard(input(snap, { now: 400_000, leads: [{
+    specId: "fix-1", idleSince: 100_000, branch: "spec/fix-1",
+    route: { family: "gpt", model: "gpt-6.1-sol", effort: "medium" },
+    thread: makeThreadResponse({ id: "lead", projectId: "proj-one", status: "idle", runtime: { displayStatus: "idle" } }),
+  }] }));
+  assert.deepEqual(needsYou(board), []);
+  assert.equal(board.lanes[0].state, "flying");
+  assert.deepEqual(board.lanes[0].waitingOn, ["OUT-9"]);
+});
+
 test("a live Lead makes its spec Flying and links the Lead instead of offering Start", () => {
   const snap = snapshot([
     issue("FIX-1", { labels: ["ready-for-agent", "ui"] }),

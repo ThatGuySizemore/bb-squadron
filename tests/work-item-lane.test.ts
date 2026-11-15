@@ -54,7 +54,7 @@ test("work-item stops, questions and failures retain the normal Needs you dedupl
     assert.deepEqual(needsYou(board).map(({ kind, threadId }) => [kind, threadId]), [[expected, "work-thread"]]);
   }
   const normal = deriveBoard(input(snapshot([issue("FIX-9")]), { now: 400_000, leads: [{ ...lead,
-    idleSince: 100_000, thread: { ...lead.thread, status: "idle", runtime: { displayStatus: "idle" } },
+    idleSince: 100_000, asksOwner: true, thread: { ...lead.thread, status: "idle", runtime: { displayStatus: "idle" } },
   }] })).board;
   assert.equal(normal.lanes[0].stopped, false, "a normal idle turn keeps the existing quiet-question rule");
   assert.deepEqual(needsYou(normal).map(({ kind }) => kind), ["waiting"]);
@@ -62,7 +62,7 @@ test("work-item stops, questions and failures retain the normal Needs you dedupl
 
 test("a work item's accept:owner PR waits for passing checks and suppresses the quiet question", () => {
   const source = input(snapshot([issue("FIX-9", { labels: ["accept:owner"] })]), {
-    now: 400_000, leads: [{ ...lead, idleSince: 100_000, thread: { ...lead.thread, status: "idle", runtime: { displayStatus: "idle" } } }],
+    now: 400_000, leads: [{ ...lead, idleSince: 100_000, asksOwner: true, thread: { ...lead.thread, status: "idle", runtime: { displayStatus: "idle" } } }],
   });
   for (const [checks, state, needs] of [["passing", "merge-waits", ["merge"]], ["failing", "pr-open", ["waiting"]]] as const) {
     const board = deriveBoard({ ...source, pullRequests: { "work-env": { outcome: "available", pullRequest: {

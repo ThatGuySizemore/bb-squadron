@@ -48,6 +48,8 @@ export interface SquadronSettings {
   scope: LinearScope | null;
   /** Lowercase labels that hold a ticket: the defaults, then the repo's additions. A trailing `*` matches a prefix. */
   holdLabels: string[];
+  /** `after landing` archives a landed lane's saved worker threads; the default `off` archives nothing. An owner choice per project. */
+  cleanUp: "off" | "after landing";
 }
 
 /** Matt's triage roles that mean "not for an agent", plus hold. A repo's Hold labels section adds to these. */
@@ -83,7 +85,7 @@ export const SETTINGS_UNREADABLE = "docs/agents/squadron.md is missing or unread
 export const HOUSE_RULES_UNREADABLE = "Couldn't read House rules (~/.bb-squadron/house-rules.md). Squadron won't use default routes or policy in its place. Make sure this repo's machine is online and the file is readable, then check again.";
 export const SCOPE_MISSING = "Add the Scope section to docs/agents/squadron.md, naming at least one of Team, Project, Initiative, Label or View.";
 
-export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels" | "Squadron policy";
+export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels" | "Squadron policy" | "Clean up";
 export interface SettingsIssue { section: SettingsSection; message: string }
 export type SettingsResult =
   | { ok: true; settings: SquadronSettings }
@@ -204,6 +206,7 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
       },
       scope: null,
       holdLabels: [...DEFAULT_HOLD_LABELS],
+      cleanUp: "off",
   };
   if (!quickCheck) issues.push({ section: "Quick check", message: "Put the quick check command in a fenced code block under Quick check." });
   if (parts.has("Check setup") && !checkSetup) issues.push({ section: "Check setup", message: "Put the check setup command in a fenced code block under Check setup, or omit the section." });
@@ -238,7 +241,19 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   const holdLabels = parseHoldLabels(parts.get("Hold labels"));
   if (holdLabels) settings.holdLabels = holdLabels;
   else issues.push({ section: "Hold labels", message: HOLD_LABELS_MALFORMED });
+  const cleanUp = parseCleanUp(parts.get("Clean up"));
+  if (cleanUp.ok) settings.cleanUp = cleanUp.value;
+  else issues.push({ section: "Clean up", message: cleanUp.message });
   return issues.length ? { ok: false, issues } : { ok: true, settings };
+}
+
+/** The optional Clean up section: its last nonblank line is `After landing` or `Off`. Absent means off. */
+function parseCleanUp(body: string | undefined): { ok: true; value: SquadronSettings["cleanUp"] } | { ok: false; message: string } {
+  const line = (body ?? "").split("\n").map((text) => text.trim()).filter(Boolean).pop();
+  if (!line) return { ok: true, value: "off" };
+  const value = line.replace(/^`(.*)`$/, "$1").replace(/\.$/, "").trim().toLowerCase();
+  if (value === "after landing" || value === "off") return { ok: true, value };
+  return { ok: false, message: `Clean up "${line.replace(/^`(.*)`$/, "$1").replace(/\.$/, "").trim()}" isn't a setting. Use After landing to archive saved worker threads when a lane lands, or Off (or remove the section) to keep them.` };
 }
 
 /** Matching labels keep file order and ignore case; the default is used only when none match. */

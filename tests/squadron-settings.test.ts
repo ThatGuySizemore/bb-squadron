@@ -27,6 +27,7 @@ test("repo settings supply the quick check, stop list, limits and ordered routes
       },
       scope: { team: "FIX", project: "Fixture project" },
       holdLabels: ["hold", "needs-triage", "needs-info", "ready-for-human", "wontfix"],
+      cleanUp: "off",
     },
   });
 });
@@ -179,4 +180,23 @@ test("a malformed Hold labels section is a settings issue; a missing or prose-on
   for (const body of ["wayfinder:*", "- hold, needs-info", "- *", "- way*finder", "- ``"]) {
     assert.deepEqual(parseSquadronSettings(withHold(body)), { ok: false, issues: [{ section: "Hold labels", message }] }, body);
   }
+});
+
+const withCleanUp = (body: string) => `${fixture}\n## Clean up\n\n${body}\n`;
+
+test("Clean up is off unless the project turns it on with After landing", () => {
+  const bare = parseSquadronSettings(fixture);
+  assert.equal(bare.ok && bare.settings.cleanUp, "off");
+  for (const body of ["After landing", "`After landing`", "after landing.", "Archive each worker once saved.\n\nAfter landing"]) {
+    const result = parseSquadronSettings(withCleanUp(body));
+    assert.equal(result.ok && result.settings.cleanUp, "after landing", body);
+  }
+  const off = parseSquadronSettings(withCleanUp("Off"));
+  assert.equal(off.ok && off.settings.cleanUp, "off");
+});
+
+test("an unknown Clean up value is a settings issue that names it", () => {
+  const result = parseSquadronSettings(withCleanUp("Always"));
+  assert.deepEqual(result, { ok: false, issues: [{ section: "Clean up",
+    message: "Clean up \"Always\" isn't a setting. Use After landing to archive saved worker threads when a lane lands, or Off (or remove the section) to keep them." }] });
 });

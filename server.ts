@@ -18,6 +18,7 @@ import { registerHelperSummary } from "./lib/helper-summary.js";
 import { registerHelper } from "./lib/helper.js";
 import { createTicketHistoryReader } from "./lib/ticket-history.js";
 import { registerCheckpoint } from "./lib/checkpoint.js";
+import { liveCleanUp } from "./lib/lane-cleanup.js";
 import { readProjectCheckout } from "./lib/project-checkout.js";
 
 export default async function plugin(bb: BbPluginApi) {
@@ -45,7 +46,8 @@ export default async function plugin(bb: BbPluginApi) {
     observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); checkpoint.observe(args[0], args[1]); },
     tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
-    pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
+    pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside,
+    cleanUp: liveCleanUp(bb) });
   summary.register(board.read);
   const planning = registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
   registerSquadronCli(bb, board, lanes, helper, autopilot, planning, registerLaunch(bb, tracker), { history, checkpoint: checkpointSetting });

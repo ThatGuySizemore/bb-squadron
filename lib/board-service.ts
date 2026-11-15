@@ -21,6 +21,7 @@ import { readLaneProgress } from "./lane-progress.js";
 import { outsideLaneSpecs, type OutsideLaneReader } from "./outside-lanes.js";
 import { mainCheckHostContract } from "./main-check-contract.js";
 import { readingProblem } from "./linear-reading.js";
+import type { CleanupLanes, CleanupResult } from "./lane-cleanup.js";
 
 export interface BoardSources {
   autopilot?: AutopilotControls;
@@ -36,6 +37,8 @@ export interface BoardSources {
   tracker: TrackerReader;
   /** Lanes started outside Squadron, shown read-only. */
   outside?: OutsideLaneReader;
+  /** Clean up after landing: archives a landed lane's saved workers. Called only for a project whose settings turn it on. */
+  cleanUp?(projectId: string, lanes: CleanupLanes): Promise<CleanupResult>;
 }
 
 /** How long a watcher pass may reuse a connection check or settings read. */
@@ -65,6 +68,12 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     /** The refresh in progress, and whether another signal arrived during it. */
     refreshing?: Promise<void>;
     again?: boolean;
+    /** The last pass's lanes, when the project turned Clean up on, for the watcher's clean-up step. */
+    cleanup?: CleanupLanes;
+    /** The background watcher asked for clean-up on the next pass; no read does. */
+    cleanupRequested?: boolean;
+    /** Worker threads the last clean-up kept because their work isn't saved. */
+    kept?: CleanupResult["kept"];
   }>();
   const project = (id: string) => {
     let entry = projects.get(id);
@@ -126,6 +135,15 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       ...progress,
       pullRequests,
     });
+    const cleanUpOn = entry.settings.value?.ok === true && entry.settings.value.settings.cleanUp === "after landing";
+    // Every Lead counts, including older ones a returning lane hides: a merged PR on its own environment is its landing.
+    entry.cleanup = cleanUpOn ? { leads, identify: (specId) => snapshot.issues.find((issue) => issue.id === specId)?.identifier ?? specId,
+      merged: new Set(leads.flatMap(({ thread, outside }) => {
+        const row = thread.environmentId ? pullRequests?.[thread.environmentId] : undefined;
+        return !outside && row?.outcome === "available" && row.pullRequest.state === "merged" ? [thread.id] : [];
+      })) } : undefined;
+    if (!cleanUpOn) entry.kept = undefined;
+    else if (entry.kept?.length) board.cleanup = entry.kept;
     if (sources.autopilot) {
       const problem = readingProblem(snapshot, now());
       const savedLinear = snapshot.kind === "linear" && snapshot.syncedAt !== null;
@@ -201,19 +219,35 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
   }
 
   /** Signals that arrive during a refresh coalesce into one more pass. */
-  function refresh(projectId: string): Promise<void> {
+  function refresh(projectId: string, options: { cleanUp?: boolean } = {}): Promise<void> {
     const entry = project(projectId);
+    // Only the watcher asks. A tracker change or signal started by a read must never change a thread.
+    if (options.cleanUp) entry.cleanupRequested = true;
     if (entry.refreshing) { entry.again = true; return entry.refreshing; }
     const run = async () => {
       // A start emits board-changed. Observe it before the next cycle, without filling every slot at once.
       let attempted = false;
       do {
         entry.again = false;
+        const cleaning = entry.cleanupRequested === true;
+        entry.cleanupRequested = false;
         if (lifetime.signal.aborted) return;
         let board: Board | null = null;
         try {
           board = await compute(projectId, false);
           publishIfChanged(projectId, board);
+          if (cleaning && sources.cleanUp && entry.cleanup) {
+            // Archiving is the watcher's job: a page read or CLI read never changes a thread.
+            const before = JSON.stringify(entry.kept ?? []);
+            const result = await sources.cleanUp(projectId, entry.cleanup).catch(() => {
+              bb.log.warn("clean-up unavailable");
+              return null;
+            });
+            if (result) {
+              entry.kept = result.kept;
+              if (JSON.stringify(result.kept) !== before) { board = await compute(projectId, false); publishIfChanged(projectId, board); }
+            }
+          }
           if (!attempted && sources.autopilot?.isOn(projectId) && sources.startLane) {
             const state = await sources.autopilot.get(projectId);
             const flying = autopilotLaneCount(board);
@@ -260,7 +294,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const ids = new Set([...listed.map(({ id }) => id), ...sources.autopilot?.enabledProjectIds() ?? []]);
       // A project's refresh retains its own check/start barrier. A long host check
       // must not hold discovery or observation of any other project.
-      for (const id of ids) void refresh(id).catch(() => { bb.log.warn("Project observation unavailable."); });
+      for (const id of ids) void refresh(id, { cleanUp: true }).catch(() => { bb.log.warn("Project observation unavailable."); });
       try { await wait(WATCH_MS, stop); } catch { return; }
     }
   } });

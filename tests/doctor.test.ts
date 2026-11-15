@@ -110,3 +110,14 @@ test("Doctor flags a malformed Hold labels section and passes without one", () =
   assert.equal(settings?.status, "fix");
   assert.match(settings?.message ?? "", /Hold labels/);
 });
+
+test("Doctor shows Clean up after landing only when the project turns it on, and flags an unknown value", () => {
+  const message = (markdown: string) => doctor({ ...readyInput, settingsMarkdown: markdown }).checks.find((check) => check.id === "settings");
+  assert.doesNotMatch(message(settingsMarkdown)?.message ?? "", /Clean up/);
+  const on = message(`${settingsMarkdown}\n## Clean up\n\nAfter landing\n`);
+  assert.equal(on?.status, "pass");
+  assert.match(on?.message ?? "", /Clean up after landing is on/);
+  const bad = message(`${settingsMarkdown}\n## Clean up\n\nSometimes\n`);
+  assert.equal(bad?.status, "fix");
+  assert.match(bad?.message ?? "", /Clean up "Sometimes"/);
+});

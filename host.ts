@@ -11,6 +11,8 @@ import { githubHostContract } from "./lib/github-contract.js";
 import { githubLogin, readGithub, runGithubCommand, type GithubCommand } from "./lib/github-host.js";
 import { repositoryHostContract } from "./lib/repository-contract.js";
 import { readRepositoryState } from "./lib/repository-host.js";
+import { worktreeHostContract } from "./lib/worktree-contract.js";
+import { readWorktreeState } from "./lib/worktree-host.js";
 import { mainCheckHostContract } from "./lib/main-check-contract.js";
 import { runMainQuickCheck } from "./lib/main-check-host.js";
 import { codexPluginEnabled, MATT_CODEX_PLUGIN, newestVersion } from "./lib/codex-skills.js";
@@ -69,7 +71,7 @@ export async function findCodexMattSkills(codexHome: string, names: readonly str
 export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<{ authenticated: boolean | null; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand,
   codexHome: () => string = () => process.env.CODEX_HOME || join(home(), ".codex")) {
   return experimental_defineHostEntry({
-    contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract, ...repositoryHostContract, ...mainCheckHostContract },
+    contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract, ...repositoryHostContract, ...mainCheckHostContract, ...worktreeHostContract },
     handlers: {
       readModelRoutes: async () => {
         for (const name of ["house-rules.md", "playbook.md"]) {
@@ -83,6 +85,7 @@ export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath
         return { markdown: null, policy: null };
       },
       runMainQuickCheck: (input, { signal }) => runMainQuickCheck(input, signal, commands),
+      readWorktreeState: (input, { signal }) => readWorktreeState(input, signal),
       readRepositoryState: (input, { signal }) => readRepositoryState(input, signal),
       readLocalMarkdown: (input, { signal }) => readLocalMarkdown(input, signal),
       inspectFiles: async ({ checkoutPath, skillPaths }) => {

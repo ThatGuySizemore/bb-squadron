@@ -107,6 +107,18 @@ The default hold labels are `hold` plus Matt's triage roles that mean "not for a
 
 List one label per bullet; other lines are prose. Labels match regardless of case, and a trailing `*` matches a prefix. The section only adds to the defaults; it never removes them. Trackers without labels, such as Local markdown, hold a ticket whose `Status:` line names a hold label, as they mark a spec ready with `Status: ready-for-agent`. Doctor flags a one-word line that isn't a bullet, an empty bullet, a lone `*`, a `*` before the end, or several labels on one bullet. A missing or prose-only section is fine.
 
+## Clean up
+
+By default a landed lane leaves its worker threads, and BB keeps each worker's worktree and build output on disk. A project can opt in to clean-up:
+
+```md
+## Clean up
+
+After landing
+```
+
+With `After landing`, Squadron archives each worker thread of a landed lane (its PR merged) once the work is saved: the worker is idle, its worktree has no uncommitted changes, and every commit is on a remote branch. BB then removes the worktree after its usual grace period and keeps the branch. Squadron never removes a worktree itself and never calls `bb environment cleanup`. A worker that isn't saved stays, and appears under Needs you as "Unsaved work in <ticket>'s worker". The Lead, reviewers and planning threads are never archived. The section is optional: `Off`, an empty section or no section archives nothing. Any other value is a Doctor fix, and Doctor says when clean-up is on. Only the owner turns it on, per project. Archiving a worker leads to deleting its worktree, so a project that hasn't opted in never gets it.
+
 ## Scope applies only to Linear
 
 A Linear project's board reads the issues its `## Scope` section names. Without a valid Scope the board shows no issues and Doctor reports a fix. Set at least one key, one per line:

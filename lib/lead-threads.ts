@@ -11,7 +11,7 @@ type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork" | "updatedAt" | "activity">>;
 
 /** A child thread of a Lead: one of its workers, or its reviewer. */
-export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status" | "runtime"> & Partial<Pick<BbThread, "providerId">> & Attention & {
+export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status" | "runtime"> & Partial<Pick<BbThread, "providerId" | "environmentId">> & Attention & {
   /** The launch record of a child started with squadron launch, beside BB's report. */
   launch?: LaunchView;
   /** The record itself, which names the tickets the child builds. */

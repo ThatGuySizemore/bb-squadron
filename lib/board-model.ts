@@ -121,7 +121,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
   for (const [id, text] of Object.entries(board.autopilot?.skippedMainChecks ?? {})) {
     items.push({ key: `autopilot-check:${id}`, kind: "autopilot-check", specId: "", threadId: null, text });
   }
-  if (board.autopilot?.status === "paused") {
+  if (board.autopilot?.status === "paused" && !board.autopilot.waitingForLinear) {
     items.push({ key: "autopilot-paused", kind: "autopilot-paused", specId: "", threadId: null,
       text: board.autopilot.pauseReason ?? "Autopilot is paused.",
       ...(board.autopilot.pauseLog ? { log: board.autopilot.pauseLog } : {}) });

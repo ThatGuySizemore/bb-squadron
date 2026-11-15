@@ -1038,6 +1038,9 @@ test("a landed spec stays Landed while every remaining ticket is held, then retu
   const next = await harness.lifecycle.reload(plugin);
   t.after(() => next.harness.lifecycle.dispose());
   next.harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  // Reload can show the saved reading immediately. Wait for the live refresh
+  // before checking that Linear's newly cleared hold has reached the board.
+  await next.harness.behavior.callRpc("board.projectCounts", null);
   const unheld = await next.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.ok(unheld.ready.some((spec) => spec.id === "FIX-5"));
   await watcherCycle(next.harness);

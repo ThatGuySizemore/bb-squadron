@@ -914,7 +914,7 @@ function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerI
   if (kind === "linear") {
     if (!status || status.state === "disconnected" || status.state === "unscoped") return null;
     const age = status.syncedAt === null ? null : Math.max(0, Math.round((now - status.syncedAt) / 60_000));
-    const read = age === null ? "" : age === 0 ? "Read from Linear just now." : `Read from Linear ${formatMinutes(age)} ago.`;
+    const read = age === null ? "" : age === 0 ? "Last read from Linear just now." : `Last read from Linear ${formatMinutes(age)} ago.`;
     return (
       <p className="sq-trackerline sq-linear" data-state={status.state} role="status" aria-live="polite">
         <span className="sq-kind">Linear</span>

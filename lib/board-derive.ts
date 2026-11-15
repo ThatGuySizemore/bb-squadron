@@ -1,6 +1,7 @@
 // Derives the board from a tracker snapshot and project settings.
 import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type TrackerStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
+import { readingProblem } from "./linear-reading.js";
 import { DEFAULT_HOLD_LABELS, isHoldLabel, resolveRoute, type SettingsResult } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
@@ -288,8 +289,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       startReason = input.connection.message;
     } else if (usesLinear && !project) {
       startReason = snapshot.error ?? "Wait for Linear to read this project's Scope.";
-    } else if (snapshot.error || snapshot.syncedAt === null) {
-      startReason = snapshot.error ?? `Wait for ${tracker} to finish reading this project's issues.`;
+    } else if (readingProblem(snapshot, input.now)) {
+      startReason = readingProblem(snapshot, input.now);
     } else if (doctorFix) {
       startReason = doctorFix.message;
     } else if (specBlockers.length) {

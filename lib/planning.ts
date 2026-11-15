@@ -10,6 +10,7 @@ import { isActiveProjectThread } from "./project-thread.js";
 import type { TrackerIssue, TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import type { PlanningThread } from "./board-derive.js";
 import { trackerName } from "./tracker-detection.js";
+import { readingProblem } from "./linear-reading.js";
 
 export interface PlanningSources {
   tracker: Pick<TrackerReader, "getSnapshot">;
@@ -137,6 +138,8 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     const snapshot = await sources.tracker.getSnapshot(projectId);
     let issue: TrackerIssue | null = null;
     if (issueId) {
+      const problem = snapshot.kind === "linear" ? readingProblem(snapshot, Date.now()) : null;
+      if (problem) throw new Error(problem);
       issue = snapshot.issues.find((item) => item.identifier === issueId && item.inProject && isOpenIssue(item)) ?? null;
       const where = snapshot.kind === "linear" ? "Linear project" : "tracker";
       if (!issue) throw new Error(`${issueId} isn't an open issue in this project's ${where}. The board may be out of date.`);

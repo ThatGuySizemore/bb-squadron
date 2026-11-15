@@ -311,7 +311,10 @@ test("Shaping rows name what's missing and offer the one fixing button", async (
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, planning: "FIX-30",
   }));
-  assert.match(html, /<h2[^>]*><span[^>]*data-term="Shaping"[^>]*>Shaping</);
+  const heading = elements(parse(html)).find((element) => element.tag === "h2" && element.attrs.id === "sq-shaping-h");
+  assert.ok(heading);
+  assert.equal(visibleText(heading), "Shaping");
+  assert.ok(elements(heading).some((element) => element.attrs["data-term"] === "Shaping"), "the heading retains its glossary definition");
   for (const text of ["Being planned", "Planning is still open in its thread.", "Has 2 tickets but no ready-for-agent label.",
     "Starting a planning thread for its tickets"]) assert.ok(html.includes(text), `Shaping shows ${text}`);
   assert.equal((html.match(/>Resume planning<\/button>/g) ?? []).length, 1);

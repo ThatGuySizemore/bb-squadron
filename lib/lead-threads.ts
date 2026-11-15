@@ -98,7 +98,17 @@ async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boo
       event.type === "item/completed" && event.data.item.type === "agentMessage" && !event.data.item.parentToolCallId);
     if (reply?.type !== "item/completed" || reply.data.item.type !== "agentMessage") return false;
     // Ignore quoted/code questions. Explicit Needs you copy also supports requests without a question mark.
-    const prose = reply.data.item.text.replace(/```[\s\S]*?```/g, "").split("\n").filter((line) => !/^\s*>/.test(line)).join("\n");
+    let fence: string | undefined;
+    const prose = reply.data.item.text.split("\n").filter((line) => {
+      if (/^\s*>/.test(line) || /^(?: {4}|\t)/.test(line)) return false;
+      const mark = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (fence) {
+        if (mark && mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = undefined;
+        return false;
+      }
+      if (mark) { fence = mark[1]; return false; }
+      return true;
+    }).join("\n");
     return /^\s*(?:\*\*)?Needs you(?:\*\*)?:\s*\S/im.test(prose) ||
       /^\s*(?:Josh[,.:]?\s+)?(?:can|could|would|will|do|are) you\b[^\n]*\?\s*$/im.test(prose);
   } catch { return false; }

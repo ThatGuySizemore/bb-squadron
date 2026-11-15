@@ -114,6 +114,29 @@ test("idle status messages and unreadable question evidence never wake the Helpe
   assert.equal(f.sends().length, 0);
 });
 
+test("questions inside Markdown fences never become Needs you, including unfinished fences", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead");
+  f.threads.set(lead.id, { ...lead, status: "idle", runtime: { displayStatus: "idle" } });
+  for (const text of [
+    "Example only:\n~~~text\nCan you choose which wording we should ship?\n~~~",
+    "Example only:\n```text\nCan you choose which wording we should ship?",
+    "Example only:\n~~~~text\n~~~\nNeeds you: Choose the wording.\n~~~~",
+    "Example only:\n    Can you choose which wording we should ship?",
+  ]) {
+    f.events.set(lead.id, [
+      { id: "completed", threadId: lead.id, seq: 4, createdAt: epoch, scope: { kind: "thread" },
+        type: "turn/completed", data: { status: "completed", providerThreadId: null } },
+      { id: "message", threadId: lead.id, seq: 3, createdAt: epoch, scope: { kind: "thread" },
+        type: "item/completed", data: { providerThreadId: "provider",
+          item: { id: "answer", type: "agentMessage", text } } },
+    ]);
+    await f.startWatcher(); await f.advance(480_000);
+    assert.deepEqual(needsYou(await f.board()), [], text);
+    assert.equal(f.sends().length, 0, text);
+  }
+});
+
 test("an idle lane blocked outside itself stays quiet, but an explicit owner question still wakes its Helper", async (t) => {
   const f = await fixture(t, { issues: () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
     nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-6" ? { ...node,

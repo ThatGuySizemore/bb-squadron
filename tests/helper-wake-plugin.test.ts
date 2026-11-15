@@ -6,19 +6,28 @@ import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { STOP_MESSAGE } from "../lib/lane-contract.js";
 
 const epoch = Date.parse("2026-11-14T12:00:00Z");
+async function secondHelper(f: Awaited<ReturnType<typeof fixture>>) {
+  f.threads.set("helper-two", makeThreadResponse({ id: "helper-two", projectId: "two", status: "active" }));
+  await f.harness.behavior.callRpc("helper.use", { projectId: "two", threadId: "helper-two" });
+}
 function fixture(t: TestContext, options: Parameters<typeof workspace>[0] = {}, storedNotifications?: unknown) {
   return helperFixture(t, epoch, options, storedNotifications);
 }
 
-test("unattended projects batch new questions into one queued Helper message after two quiet minutes", async (t) => {
+test("unattended projects send questions only to their own Helper after two quiet minutes", async (t) => {
   const f = await fixture(t);
+  await secondHelper(f);
   f.lead("one"); f.lead("two");
   await f.startWatcher();
   await f.advance(119_999);
   assert.equal(f.sends().length, 0);
   await f.advance(1);
-  assert.deepEqual(f.sends(), [{ threadId: "helper", mode: "queue-if-active", input: [{ type: "text", mentions: [], text:
-    "Fixture | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-one\nSecond | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two" }] }]);
+  assert.deepEqual(f.sends(), [
+    { threadId: "helper", mode: "queue-if-active", input: [{ type: "text", mentions: [], text:
+      "Fixture | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-one" }] },
+    { threadId: "helper-two", mode: "queue-if-active", input: [{ type: "text", mentions: [], text:
+      "Second | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two" }] },
+  ]);
 });
 
 test("reported questions survive reload, clear when work resumes, and notify again when they return", async (t) => {
@@ -58,8 +67,9 @@ test("a normally completed quiet Lead becomes a Question at five minutes in the 
   assert.equal(f.sends().length, 1);
 });
 
-test("a fresh PR landing shares the Needs you batch, survives reload and never replays old landings", async (t) => {
+test("a fresh PR landing and another project question reach only their Helpers and never replay", async (t) => {
   const f = await fixture(t);
+  await secondHelper(f);
   f.lead("one", "Lead");
   let merged = false;
   f.harness.sdk.stub("plugins.callRpc", async () => ({ "env-one": { outcome: "available", pullRequest: {
@@ -70,9 +80,12 @@ test("a fresh PR landing shares the Needs you batch, survives reload and never r
   assert.equal(f.sends().length, 0, "an open ready PR doesn't wake the Helper");
   merged = true; f.lead("two");
   await f.advance(30_000); await f.advance(120_000);
-  assert.equal(f.sends().length, 1);
+  assert.equal(f.sends().length, 2);
   assert.equal(f.sends()[0].input[0].text,
-    "Fixture | Landed | FIX-5 | The lane landed. | https://github.example/fixture/pull/12\nSecond | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two");
+    "Fixture | Landed | FIX-5 | The lane landed. | https://github.example/fixture/pull/12");
+  assert.equal(f.sends()[0].threadId, "helper");
+  assert.equal(f.sends()[1].threadId, "helper-two");
+  assert.equal(f.sends()[1].input[0].text, "Second | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two");
   await f.reload(); await f.startWatcher(); await f.advance(120_000);
   assert.equal(f.sends().length, 0, "neither the landing nor the question repeats after reload");
 });
@@ -105,8 +118,8 @@ test("new items extend the quiet window but a continuous batch flushes at ten mi
   for (let minute = 1; minute <= 6; minute++) {
     await f.advance(60_000);
     const id = `extra-${minute}`;
-    f.projects.push({ ...f.projects[0], id, name: `Project ${minute}` });
-    f.lead(id);
+    const lead = f.lead("one");
+    f.threads.set(id, { ...lead, id, parentThreadId: lead.id, environmentId: `env-${id}` });
     // New thread activity is discovered by the next code watcher pass.
     await f.advance(30_000);
     assert.equal(f.sends().length, 0);
@@ -122,6 +135,7 @@ test("new items extend the quiet window but a continuous batch flushes at ten mi
 
 test("a project read failure wakes the Helper as Setup without hiding another project's question", async (t) => {
   const f = await fixture(t);
+  await secondHelper(f);
   f.lead("two");
   const original = f.threads;
   f.harness.sdk.stub("threads.list", async (args: { projectId?: string; parentThreadId?: string }) => {
@@ -131,7 +145,11 @@ test("a project read failure wakes the Helper as Setup without hiding another pr
   });
   await f.startWatcher(); await f.advance(120_000);
   assert.equal(f.sends()[0]?.input[0].text,
-    "Fixture | Setup | Project | Couldn't read this project. Make sure its machine is online. | /plugins/squadron/board\nSecond | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two");
+    "Fixture | Setup | Project | Couldn't read this project. Make sure its machine is online. | /plugins/squadron/board");
+  assert.equal(f.sends().length, 2);
+  assert.equal(f.sends()[0].threadId, "helper");
+  assert.equal(f.sends()[1].threadId, "helper-two");
+  assert.equal(f.sends()[1].input[0].text, "Second | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two");
 });
 
 test("no Helper sends nothing, a vanished pending item is dropped, and later selection receives current items", async (t) => {
@@ -344,4 +362,81 @@ test("a failed merged-main check reaches the Helper once with its reason, log on
   assert.equal((await f.board()).autopilot?.status, "paused");
   const resumed = await f.harness.behavior.callRpc("autopilot.resume", { projectId: "one" });
   assert.deepEqual(resumed, { status: "on", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+});
+
+test("another project's new arrival cannot extend the first project's deadline, including after reload", async (t) => {
+  const f = await fixture(t);
+  await secondHelper(f);
+  f.lead("one");
+  await f.startWatcher();
+  await f.advance(60_000);
+  f.lead("two");
+  await f.advance(30_000);
+  await f.reload(); await f.startWatcher();
+  await f.advance(29_999);
+  assert.equal(f.sends().length, 0);
+  await f.advance(1);
+  assert.deepEqual(f.sends().map((send) => send.threadId), ["helper"]);
+  await f.advance(89_999);
+  assert.equal(f.sends().length, 1);
+  await f.advance(1);
+  assert.deepEqual(f.sends().map((send) => send.threadId), ["helper", "helper-two"]);
+});
+
+test("a project without a Helper stays silent while another project's Helper receives only its own question", async (t) => {
+  const f = await fixture(t);
+  f.lead("one"); f.lead("two");
+  await f.startWatcher(); await f.advance(120_000);
+  assert.equal(f.sends().length, 1);
+  assert.deepEqual((await f.board("two")).lanes[0].needs, [{ threadId: "lead-two", kind: "waiting", text: "The Lead for FIX-5 is waiting on you." }]);
+  assert.equal(f.sends()[0].threadId, "helper");
+  assert.equal(f.sends()[0].input[0].text, "Fixture | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-one");
+  await f.reload(); await f.startWatcher(); await f.advance(120_000);
+  assert.equal(f.sends().length, 0);
+  await secondHelper(f); await f.advance(30_000);
+  assert.equal(f.sends().length, 1);
+  assert.equal(f.sends()[0].threadId, "helper-two");
+  assert.equal(f.sends()[0].input[0].text, "Second | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two");
+});
+
+test("a failed project delivery retries without blocking another Helper or replaying its reported question", async (t) => {
+  const f = await fixture(t);
+  await secondHelper(f);
+  const first = f.lead("one"); f.lead("two");
+  let failing = true;
+  f.harness.sdk.stub("threads.send", async ({ threadId }: { threadId: string }) => {
+    if (threadId === "helper" && failing) throw new Error("delivery failed");
+    return { ok: true, delivery: "queued" };
+  });
+  await f.startWatcher(); await f.advance(120_000);
+  assert.deepEqual(f.sends().map((send) => send.threadId), ["helper", "helper-two"]);
+  failing = false;
+  await f.advance(30_000);
+  assert.deepEqual(f.sends().map((send) => send.threadId), ["helper", "helper-two", "helper"]);
+  await f.reload(); await f.startWatcher(); await f.advance(120_000);
+  assert.equal(f.sends().length, 0);
+  f.threads.set(first.id, { ...first, title: "Working" });
+  await f.advance(30_000);
+  f.threads.set(first.id, first);
+  await f.advance(30_000); await f.advance(120_000);
+  assert.deepEqual(f.sends().map((send) => send.threadId), ["helper"], "clearing A never clears B's reported question");
+});
+
+test("upgrading a pending shared batch retains its deadline and routes its lines by project", async (t) => {
+  const pending = {
+    '["one","waiting:lead-one"]': { projectId: "one", key: "waiting:lead-one", line: "old first line" },
+    '["two","waiting:lead-two"]': { projectId: "two", key: "waiting:lead-two", line: "old second line" },
+  };
+  const f = await fixture(t, {}, { lanes: {}, reported: {}, pending, firstAt: epoch - 60_000, lastAt: epoch - 60_000 });
+  await secondHelper(f);
+  f.lead("one"); f.lead("two");
+  await f.startWatcher(); await f.advance(59_999);
+  assert.equal(f.sends().length, 0);
+  await f.advance(1);
+  assert.deepEqual(f.sends().map((send) => [send.threadId, send.input[0].text]), [
+    ["helper", "Fixture | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-one"],
+    ["helper-two", "Second | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:lead-two"],
+  ]);
+  await f.reload(); await f.startWatcher(); await f.advance(120_000);
+  assert.equal(f.sends().length, 0);
 });

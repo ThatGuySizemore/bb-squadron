@@ -14,43 +14,68 @@ const deliverySchema = z.object({
   lastAt: z.number().nullable(),
 }).refine((value) => !Object.keys(value.pending).length || value.firstAt !== null && value.lastAt !== null);
 type DeliveryState = z.infer<typeof deliverySchema>;
-const storageKey = "helper.notifications.v1";
+const storageKey = "helper.notifications.projects.v1";
+const emptyState = (): DeliveryState => ({ lanes: {}, reported: {}, pending: {}, firstAt: null, lastAt: null });
 const QUIET_MS = 120_000;
 const CAP_MS = 600_000;
 const RETRY_MS = 30_000;
 
-export function registerHelperNotifier(bb: BbPluginApi, helper: { read(): Promise<Helper | null> }) {
-  let state: DeliveryState = { lanes: {}, reported: {}, pending: {}, firstAt: null, lastAt: null };
-  let timer: ReturnType<typeof setTimeout> | undefined;
+export function registerHelperNotifier(bb: BbPluginApi, helper: { read(projectId: string): Promise<Helper | null> }) {
+  let projects: Record<string, DeliveryState> = {};
+  const timers = new Map<string, ReturnType<typeof setTimeout>>();
   let disposed = false;
   // Pending Needs you items are rechecked after reload before they may be sent.
   const confirmed = new Map<string, Set<string>>();
-  const save = () => bb.storage.kv.set(storageKey, state);
-  let work: Promise<unknown> = bb.storage.kv.get<unknown>(storageKey).then((saved) => {
+  const save = () => bb.storage.kv.set(storageKey, projects);
+  let work: Promise<unknown> = (async () => {
+    const saved = await bb.storage.kv.get<unknown>(storageKey);
     if (saved !== null && saved !== undefined) {
-      const parsed = deliverySchema.safeParse(saved);
-      if (parsed.success) state = parsed.data;
+      const parsed = z.record(z.string(), deliverySchema).safeParse(saved);
+      if (parsed.success) projects = parsed.data;
       else bb.log.warn("Saved Helper notification data is invalid; starting a new observation baseline.");
+    } else {
+      const legacy = await bb.storage.kv.get<unknown>("helper.notifications.v1");
+      const parsed = deliverySchema.safeParse(legacy);
+      if (parsed.success) {
+        const state = parsed.data;
+        for (const [id, reported] of Object.entries(state.reported)) (projects[id] ??= emptyState()).reported[id] = reported;
+        for (const [id, landed] of Object.entries(state.lanes)) {
+          const [projectId] = JSON.parse(id) as [string, string];
+          (projects[projectId] ??= emptyState()).lanes[id] = landed;
+        }
+        for (const [id, event] of Object.entries(state.pending)) {
+          const target = projects[event.projectId] ??= emptyState();
+          target.pending[id] = event;
+          target.firstAt = state.firstAt;
+          target.lastAt = state.lastAt;
+        }
+        await save();
+      } else if (legacy !== null && legacy !== undefined) bb.log.warn("Saved Helper notification data is invalid; starting a new observation baseline.");
     }
-    schedule();
-  });
+    for (const projectId of Object.keys(projects)) schedule(projectId);
+  })();
   function serial<T>(action: () => Promise<T>): Promise<T> {
     const next = work.then(action);
-    work = next.catch(() => { bb.log.warn("Helper notification delivery unavailable; will retry."); schedule(RETRY_MS); });
+    work = next.catch(() => { bb.log.warn("Helper notification delivery unavailable; will retry."); });
     return next;
   }
-  function schedule(retry?: number) {
-    clearTimeout(timer);
-    if (disposed || !Object.keys(state.pending).length) return;
+  function schedule(projectId: string, retry?: number) {
+    clearTimeout(timers.get(projectId));
+    timers.delete(projectId);
+    const state = projects[projectId];
+    if (disposed || !state || !Object.keys(state.pending).length) return;
     const due = Math.min(state.lastAt! + QUIET_MS, state.firstAt! + CAP_MS);
-    timer = setTimeout(() => { void serial(flush).catch(() => undefined); }, retry ?? Math.max(0, due - Date.now()));
+    timers.set(projectId, setTimeout(() => {
+      void serial(() => flush(projectId)).catch(() => schedule(projectId, RETRY_MS));
+    }, retry ?? Math.max(0, due - Date.now())));
   }
-  async function flush() {
-    if (disposed || !Object.keys(state.pending).length) return;
-    const selected = await helper.read();
-    if (!selected) { schedule(RETRY_MS); return; }
+  async function flush(projectId: string) {
+    const state = projects[projectId];
+    if (disposed || !state || !Object.keys(state.pending).length) return;
+    const selected = await helper.read(projectId);
+    if (!selected) { schedule(projectId, RETRY_MS); return; }
     const events = Object.values(state.pending).filter((event) => event.landing || confirmed.get(event.projectId)?.has(event.key));
-    if (!events.length) { schedule(RETRY_MS); return; }
+    if (!events.length) { schedule(projectId, RETRY_MS); return; }
     await bb.sdk.threads.send({ threadId: selected.threadId, mode: "queue-if-active",
       input: [{ type: "text", text: events.map((event) => event.line).sort().join("\n"), mentions: [] }] });
     for (const event of events) {
@@ -60,12 +85,13 @@ export function registerHelperNotifier(bb: BbPluginApi, helper: { read(): Promis
     }
     if (!Object.keys(state.pending).length) state.firstAt = state.lastAt = null;
     await save();
-    schedule(RETRY_MS);
+    schedule(projectId, RETRY_MS);
   }
-  bb.onDispose(async () => { disposed = true; clearTimeout(timer); await work; });
+  bb.onDispose(async () => { disposed = true; for (const timer of timers.values()) clearTimeout(timer); await work; });
   function observe(projectId: string, projectName: string, board: Board | null) {
     return serial(async () => {
       if (disposed) return;
+      const state = projects[projectId] ??= emptyState();
       const items = openNeeds(board);
       const current = new Set(items.map((item) => item.key));
       confirmed.set(projectId, current);
@@ -100,7 +126,7 @@ export function registerHelperNotifier(bb: BbPluginApi, helper: { read(): Promis
       if (!Object.keys(state.pending).length) state.firstAt = state.lastAt = null;
       else if (added) { state.firstAt ??= Date.now(); state.lastAt = Date.now(); }
       await save();
-      schedule();
+      schedule(projectId);
     });
   }
   return { observe };

@@ -5,7 +5,7 @@ import type { Board } from "./board-model.js";
 import type { Helper } from "./helper-contract.js";
 import { oneLine, openNeeds, unreadableProject } from "./project-observation.js";
 
-const key = "helper.summary.v1";
+const key = "helper.summary.projects.v1";
 const savedSchema = z.object({
   boundary: z.number().nullable(),
   day: z.string().nullable(),
@@ -13,19 +13,34 @@ const savedSchema = z.object({
   landed: z.record(z.string(), z.object({ projectId: z.string(), specId: z.string() })),
 });
 type History = z.infer<typeof savedSchema>;
+const emptyHistory = (): History => ({ boundary: null, day: null, seen: [], landed: {} });
 const timeSchema = z.string().regex(/^(Off|([01]\d|2[0-3]):[0-5]\d)$/, "Use HH:MM in 24-hour time, or Off.");
 
-export function registerHelperSummary(bb: BbPluginApi, helper: { read(): Promise<Helper | null> }) {
+export function registerHelperSummary(bb: BbPluginApi, helper: { read(projectId: string): Promise<Helper | null> }) {
   const settings = bb.settings.define({ dailySummaryTime: { type: "string", label: "Daily summary time", default: "08:00",
     description: "Server-local time, HH:MM (24-hour), or Off. One summary per day; a missed time sends on the next schedule check.",
     experimental_schema: timeSchema } });
-  let history: History = { boundary: null, day: null, seen: [], landed: {} };
+  let histories: Record<string, History> = {};
   let disposed = false;
-  const ready = bb.storage.kv.get<unknown>(key).then((saved) => {
-    if (saved === null || saved === undefined) return;
+  const ready = (async () => {
+    const saved = await bb.storage.kv.get<unknown>(key);
     // Refuse corrupt history rather than silently forgetting what was delivered.
-    history = savedSchema.parse(saved);
-  });
+    if (saved !== null && saved !== undefined) {
+      histories = z.record(z.string(), savedSchema).parse(saved);
+      return;
+    }
+    const legacy = await bb.storage.kv.get<unknown>("helper.summary.v1");
+    if (legacy === null || legacy === undefined) return;
+    const history = savedSchema.parse(legacy);
+    const projects = await bb.sdk.projects.list();
+    for (const project of projects) histories[project.id] = { ...emptyHistory(), day: history.day, boundary: history.boundary };
+    for (const id of history.seen) {
+      const [projectId] = JSON.parse(id) as [string, string];
+      (histories[projectId] ??= emptyHistory()).seen.push(id);
+    }
+    for (const [id, item] of Object.entries(history.landed)) (histories[item.projectId] ??= emptyHistory()).landed[id] = item;
+    await bb.storage.kv.set(key, histories);
+  })();
   let work: Promise<unknown> = ready.catch(() => undefined);
   function serial<T>(action: () => Promise<T>): Promise<T> {
     const next = work.then(async () => { await ready; return action(); });
@@ -34,13 +49,14 @@ export function registerHelperSummary(bb: BbPluginApi, helper: { read(): Promise
   }
   async function remember(projectId: string, board: Board | null) {
     if (board?.tracker?.state !== "current") return;
+    const history = histories[projectId] ??= emptyHistory();
     for (const lane of board.lanes) {
       const id = JSON.stringify([projectId, lane.leadThreadId]);
       if (lane.state !== "landed" || history.seen.includes(id)) continue;
       history.seen.push(id);
       history.landed[id] = { projectId, specId: lane.specId };
     }
-    await bb.storage.kv.set(key, history);
+    await bb.storage.kv.set(key, histories);
   }
   function observe(projectId: string, _name: string, board: Board | null) {
     return serial(async () => { if (!disposed) await remember(projectId, board); });
@@ -55,27 +71,32 @@ export function registerHelperSummary(bb: BbPluginApi, helper: { read(): Promise
       const now = new Date();
       const day = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`;
       const [hour, minute] = time.split(":").map(Number);
-      if (now.getHours() * 60 + now.getMinutes() < hour * 60 + minute || history.day === day) return;
-      const selected = await helper.read();
-      if (!selected) return;
+      if (now.getHours() * 60 + now.getMinutes() < hour * 60 + minute) return;
       const projects = await bb.sdk.projects.list();
-      const lines: string[] = [];
+      const failures: unknown[] = [];
       for (const project of projects) {
-        const board = await read(project.id).catch(() => null);
-        await remember(project.id, board);
-        const landed = [...new Set(Object.values(history.landed).filter((item) => item.projectId === project.id).map((item) => oneLine(item.specId)))].sort();
-        const flying = board ? [...new Set(board.lanes.filter((lane) => lane.state !== "landed").map((lane) => oneLine(lane.specId)))].sort().join(", ") || "none" : "unavailable";
-        lines.push(`${oneLine(project.name)} | Landed since last summary: ${landed.join(", ") || "none"} | Flying: ${flying} | Needs you: ${openNeeds(board).length}${board ? "" : ` | Setup: ${unreadableProject}`}`);
+        try {
+          const history = histories[project.id] ??= emptyHistory();
+          if (history.day === day) continue;
+          const selected = await helper.read(project.id);
+          if (!selected) continue;
+          const board = await read(project.id).catch(() => null);
+          await remember(project.id, board);
+          const landed = [...new Set(Object.values(history.landed).map((item) => oneLine(item.specId)))].sort();
+          const flying = board ? [...new Set(board.lanes.filter((lane) => lane.state !== "landed").map((lane) => oneLine(lane.specId)))].sort().join(", ") || "none" : "unavailable";
+          const line = `${oneLine(project.name)} | Landed since last summary: ${landed.join(", ") || "none"} | Flying: ${flying} | Needs you: ${openNeeds(board).length}${board ? "" : ` | Setup: ${unreadableProject}`}`;
+          // Settings and Helper selection may change while the board is read.
+          const current = timeSchema.parse((await settings.get()).dailySummaryTime);
+          const latest = await helper.read(project.id);
+          if (disposed || current !== time || latest?.threadId !== selected.threadId) continue;
+          await bb.sdk.threads.send({ threadId: selected.threadId, mode: "queue-if-active",
+            input: [{ type: "text", mentions: [], text: `Daily summary\n${line}` }] });
+          histories[project.id] = { ...history, day, boundary: now.getTime(), landed: {} };
+          await bb.storage.kv.set(key, histories);
+        } catch (error) { failures.push(error); }
       }
-      // Recheck after asynchronous board reads: Off or a later time takes effect
-      // before delivery, and a replacement Helper must receive its own summary.
-      const current = timeSchema.parse((await settings.get()).dailySummaryTime);
-      const latest = await helper.read();
-      if (disposed || current !== time || latest?.threadId !== selected.threadId) return;
-      await bb.sdk.threads.send({ threadId: selected.threadId, mode: "queue-if-active",
-        input: [{ type: "text", mentions: [], text: ["Daily summary", ...lines].join("\n") }] });
-      history = { ...history, day, boundary: now.getTime(), landed: {} };
-      await bb.storage.kv.set(key, history);
+      // One failed project's delivery must not consume or prevent another's.
+      if (failures.length) throw failures[0];
     }));
   }
   bb.onDispose(async () => { disposed = true; await work; });

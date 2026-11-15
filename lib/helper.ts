@@ -47,14 +47,10 @@ export function registerHelper(bb: BbPluginApi) {
     return selected((await selections())[projectId]);
   }
   function read(projectId: string) { return serial(() => readProject(projectId)); }
-  // Transitional adapter for SQD-232's existing delivery consumers only. Board
-  // and CLI selection always use the project map. Remove this with that ticket.
-  function readLegacy() { return serial(async () => selected(await bb.storage.kv.get<string>(key) ?? undefined)); }
   async function remember(projectId: string, threadId: string) {
     const saved = await selections();
     for (const [id, helperId] of Object.entries(saved)) if (helperId === threadId) delete saved[id];
     await bb.storage.kv.set(projectsKey, { ...saved, [projectId]: threadId });
-    await bb.storage.kv.set(key, threadId); // SQD-232 compatibility; never used for project selection.
   }
   function start(projectId: string, fresh = false) {
     return serial(async () => {
@@ -104,5 +100,5 @@ export function registerHelper(bb: BbPluginApi) {
       return use(threadId, projectId);
     },
   });
-  return { read, start, use, readLegacy };
+  return { read, start, use };
 }

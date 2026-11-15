@@ -1,8 +1,8 @@
 import { useMemo } from "react";
 import { layoutPixels } from "../lib/pixels.js";
 
-/** The board's shared 5x7 lettering, with an accessible text copy. */
-export function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: number; gap?: number; className?: string }) {
+/** The board's shared 5x7 lettering, with an accessible text copy (`alt` when it should read differently). */
+export function PixelText({ text, cell = 3, gap, className, alt }: { text: string; cell?: number; gap?: number; className?: string; alt?: string }) {
   gap ??= cell >= 3 ? 1 : 0;
   const run = useMemo(() => layoutPixels(text), [text]);
   const pitch = cell + gap;
@@ -20,7 +20,7 @@ export function PixelText({ text, cell = 3, gap, className }: { text: string; ce
           <rect key={`${x}.${y}`} x={x * pitch} y={y * pitch} width={cell} height={cell} />
         ))}
       </svg>
-      <span className="sq-sr">{text}</span>
+      <span className="sq-sr">{alt ?? text}</span>
     </span>
   );
 }

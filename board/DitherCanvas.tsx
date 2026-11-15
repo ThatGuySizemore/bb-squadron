@@ -5,6 +5,7 @@ import { useEffect, useRef, type CSSProperties } from "react";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
 import { airstream, burst, BURST_SECONDS, createSurface, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
 import { runway, runwayMotion, type RunwayState } from "../lib/runway.js";
+import { readingMotion, readingRow } from "../lib/reading.js";
 
 /** What a canvas draws. Inks are read from the board's CSS, so they follow the theme. */
 export type Fx =
@@ -14,7 +15,8 @@ export type Fx =
   | { kind: "plate" }
   | { kind: "section-rule" }
   | { kind: "runway"; narrow: boolean; label: string; state: RunwayState }
-  | { kind: "burst" };
+  | { kind: "burst" }
+  | { kind: "reading"; delay: number };
 
 type Inks = (name: string) => number;
 
@@ -29,6 +31,7 @@ function painterFor(fx: Fx, ink: Inks): Painter {
       stand: ink("--sq-stand"), plane: ink("--sq-sky"),
     } });
     case "burst": return burst({ ink: ink("--sq-green") });
+    case "reading": return readingRow({ ink: ink("--sq-cloud"), delay: fx.delay });
     case "peg":
       switch (fx.state) {
         case "working": return pegFill({ ink: ink("--sq-sky"), base: 0.07, amp: 0.3, speed: 9, edge: ink("--sq-sky") });
@@ -48,6 +51,7 @@ function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until">
     case "needs-you": return { animated: true, stillAt: 0.9 };
     case "runway": return runwayMotion(fx.state);
     case "burst": return { animated: true, stillAt: BURST_SECONDS, until: BURST_SECONDS };
+    case "reading": return readingMotion;
     case "peg": return { animated: fx.state === "working", stillAt: 1.2 };
     case "plate":
     case "section-rule": return { animated: false, stillAt: 0 };

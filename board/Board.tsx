@@ -17,7 +17,7 @@ import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
 import { workingAgents } from "../lib/working-agents.js";
-import { runwayLayout, runwayState, type RunwayLayout, type RunwayState } from "../lib/runway.js";
+import { runwayLayout, runwayLoading, runwayState, type RunwayLayout, type RunwayState } from "../lib/runway.js";
 import { PixelText } from "./PixelText.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
@@ -65,17 +65,19 @@ interface Runway {
   /** Null until the live board's first read, so the banner never counts lanes it hasn't read. */
   count: ReturnType<typeof flyingCount> | null;
   layout: RunwayLayout;
+  /** The first read is in flight: the planes taxi on their stands. */
+  loading: boolean;
 }
 
 /** The banner's state and geometry, measured from the banner's own width so the DOM text and the painted art agree. */
-function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: number): Runway {
+function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: number, loading: boolean): Runway {
   const ref = useRef<HTMLDivElement | null>(null);
   const width = useWidth(ref);
   const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
-  const state: RunwayState = lanesKnown ? runwayState(board.lanes, board.laneCapacity, working) : { stands: [], working: 0 };
-  const count = lanesKnown ? flyingCount(flying, board.laneCapacity) : null;
+  const state: RunwayState = loading ? runwayLoading() : lanesKnown ? runwayState(board.lanes, board.laneCapacity, working) : { stands: [], working: 0 };
+  const count = lanesKnown && !loading ? flyingCount(flying, board.laneCapacity) : null;
   const layout = runwayLayout(width ?? (narrow ? 560 : 1200), narrow, state.stands.length, count?.text ?? "");
-  return { ref, narrow, state, count, layout };
+  return { ref, narrow, state, count, layout, loading };
 }
 
 /**
@@ -87,7 +89,7 @@ function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: 
 function RunwayBanner({ runway }: { runway: Runway }) {
   const { layout: g, state, count, narrow } = runway;
   return (
-    <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length} style={{ height: g.height }}>
+    <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length} data-loading={runway.loading || undefined} style={{ height: g.height }}>
       <DitherCanvas fx={{ kind: "runway", narrow, label: count?.text ?? "", state }} className="sq-runway-art" />
       <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined}>
         {g.title ? <PixelText text="Squadron" cell={g.title.cell} gap={g.title.gap} /> : <span className="sq-sr">Squadron</span>}
@@ -804,6 +806,23 @@ function EmptySection({ text, action }: { text: string; action?: ReactNode }) {
   );
 }
 
+/**
+ * A section's stand-in while the board's first read is in flight: one or two
+ * rows' shapes in neutral dither, shimmering right to left. Hidden from
+ * assistive tech; the reading line and the board's aria-busy say what's happening.
+ */
+function ReadingRows({ rows }: { rows: 1 | 2 }) {
+  return (
+    <ul className="sq-list sq-reading" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <li key={i} className="sq-row sq-reading-row">
+          <DitherCanvas fx={{ kind: "reading", delay: i * 0.18 }} className="sq-reading-art" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: Plan; opening: boolean }) {
   const meta = issue.kind || issue.priority || issue.labels.length || issue.under || opening;
   return (
@@ -930,6 +949,16 @@ export interface TrackerInfo {
   note?: string | null;
 }
 
+/** The one plain line while the board's first read is in flight, named for the project's tracker when it's known. */
+function ReadingLine({ tracker }: { tracker?: TrackerInfo }) {
+  const kind = tracker?.kind;
+  return (
+    <p className="sq-trackerline sq-reading-line" role="status" aria-live="polite">
+      {kind ? `Reading ${trackerName(kind)}…` : "Reading the board…"}
+    </p>
+  );
+}
+
 function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerInfo; now: number }) {
   const status = board.tracker;
   const kind = tracker ? tracker.kind : status?.kind !== undefined ? status.kind : status ? "linear" : undefined;
@@ -1001,7 +1030,9 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
             <span className="sq-station-label">
               {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : <Term text={label} nested />}
             </span>
-            <span className="sq-station-count sq-num">{n === null ? "–" : <PixelText text={String(n)} cell={layout === "narrow" ? 2 : 3} gap={0} />}</span>
+            <span className="sq-station-count sq-num">
+              <PixelText text={n === null ? "-" : String(n)} alt={n === null ? "–" : undefined} cell={layout === "narrow" ? 2 : 3} gap={0} />
+            </span>
             {key !== "landed" ? <Chevron className="sq-station-chev" /> : null}
           </button>
         );
@@ -1052,6 +1083,8 @@ interface BoardViewProps {
   tracker?: TrackerInfo;
   /** False until the live board's first read, so the banner never counts lanes it hasn't read. */
   lanesKnown?: boolean;
+  /** The live board's first read is in flight: a loading state replaces every empty state and count. */
+  loading?: boolean;
   autopilotSaving?: boolean;
   onAutopilotChange?: (patch: AutopilotChange) => void;
   onAutopilotResume?: () => void;
@@ -1061,7 +1094,7 @@ interface BoardViewProps {
 }
 
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, autopilotSaving = false, onAutopilotChange, onAutopilotResume, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, loading = false, autopilotSaving = false, onAutopilotChange, onAutopilotResume, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const [howOpen, setHowOpen] = useState(false);
@@ -1082,7 +1115,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   const onLine = board.lanes.filter((l) => l.state !== "landed" || phase.landing(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !phase.landing(l));
   // The board's one working-agent count paces the banner's clouds, as it paces each lane's wind.
-  const runway = useRunway(board, lanesKnown, layout === "narrow", workingAgents(board.lanes));
+  const runway = useRunway(board, lanesKnown, layout === "narrow", workingAgents(board.lanes), loading);
   const startable = board.ready.find((spec) => (spec.startReason !== undefined ? spec.startReason : canStart(board, spec)) === null);
   const sections = useRef<Partial<Record<Station, HTMLElement | null>>>({});
   const jump = (station: Station) => sections.current[station]?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
@@ -1101,16 +1134,18 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
       </Btn>
     </>
   ) : null;
-  // While the board can't show Ready, Shaping and Open issues, their stations show a dash, not a false zero.
+  // While the board can't show Ready, Shaping and Open issues, their stations show a dash, not a false zero;
+  // before the first read, every station does.
+  const unread = loading || Boolean(notice);
   const counts: Record<Station, number | null> = {
-    open: notice ? null : board.openIssues.length, shaping: notice ? null : board.shaping.length, ready: notice ? null : board.ready.length,
-    flying: flying.length, landed: landed.length,
+    open: unread ? null : board.openIssues.length, shaping: unread ? null : board.shaping.length, ready: unread ? null : board.ready.length,
+    flying: loading ? null : flying.length, landed: loading ? null : landed.length,
   };
 
   return (
     <PlacementContext.Provider value={placement}>
     <LayoutContext.Provider value={layout}>
-    <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout}>
+    <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout} aria-busy={loading || undefined}>
       <header className="sq-head">
         <RunwayBanner runway={runway} />
         <div className="sq-controls">
@@ -1154,19 +1189,20 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
       </header>
       <div className="sq-page">
         {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
-        <TrackerLine board={board} tracker={tracker} now={Date.now()} />
+        {loading ? <ReadingLine tracker={tracker} /> : <TrackerLine board={board} tracker={tracker} now={Date.now()} />}
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
         <PathStrip counts={counts} onJump={jump} />
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <SectionHead id="sq-needs-h" title="Needs you" count={items.length} amber />
-          <NeedsYouStrip items={items} dispatch={dispatch} setUp={setUpButton} demo={demo} acting={acting} onAutopilotResume={onAutopilotResume} autopilotSaving={autopilotSaving} />
+          {loading ? <ReadingRows rows={1} />
+            : <NeedsYouStrip items={items} dispatch={dispatch} setUp={setUpButton} demo={demo} acting={acting} onAutopilotResume={onAutopilotResume} autopilotSaving={autopilotSaving} />}
           <DoctorPanel open={doctorOpen} id={doctorId} projectId={projectId} />
         </section>
 
         <section className="sq-section" aria-labelledby="sq-flying-h" ref={(el) => { sections.current.flying = el; }}>
           <SectionHead id="sq-flying-h" title="Flying" count={flying.length} />
-          {onLine.length === 0 ? (
+          {loading ? <ReadingRows rows={2} /> : onLine.length === 0 ? (
             <EmptySection text="Nothing is flying. Start a Ready spec or work item to launch its lane." action={startable ? (
               <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
                 {starting === startable.id ? "Opening…" : `Start ${startable.id}`}
@@ -1183,7 +1219,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section" aria-labelledby="sq-ready-h" ref={(el) => { sections.current.ready = el; }}>
           <SectionHead id="sq-ready-h" title="Ready" count={notice ? 0 : board.ready.length} />
-          {notice ? (
+          {loading ? <ReadingRows rows={2} /> : notice ? (
             <p className="sq-clear">{notice}</p>
           ) : board.ready.length === 0 ? (
             <EmptySection text="Nothing is Ready. Specs need the ready-for-agent label and a ticket that can start. Work items need the label and no hold."
@@ -1199,7 +1235,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section" aria-labelledby="sq-shaping-h" ref={(el) => { sections.current.shaping = el; }}>
           <SectionHead id="sq-shaping-h" title="Shaping" count={notice ? 0 : board.shaping.length} />
-          {notice ? null : board.shaping.length === 0 ? (
+          {loading ? <ReadingRows rows={1} /> : notice ? null : board.shaping.length === 0 ? (
             <EmptySection text="No spec is being shaped. Plan an open issue, or start a new spec from nothing." action={newSpec()} />
           ) : (
             <ul className="sq-list">
@@ -1212,7 +1248,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section sq-open" aria-labelledby="sq-open-issues-h" ref={(el) => { sections.current.open = el; }}>
           <SectionHead id="sq-open-issues-h" title="Open issues" count={notice ? 0 : board.openIssues.length} />
-          {notice ? null : board.openIssues.length === 0 ? (
+          {loading ? <ReadingRows rows={2} /> : notice ? null : board.openIssues.length === 0 ? (
             <EmptySection text="No open issues. Issues that need planning wait here for Plan." action={newSpec()} />
           ) : (
             <ul className="sq-list">
@@ -1225,7 +1261,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section sq-landed" aria-labelledby="sq-landed-h" ref={(el) => { sections.current.landed = el; }}>
           <SectionHead id="sq-landed-h" title="Landed" count={landed.length} />
-          {landed.length === 0 ? (
+          {loading ? <ReadingRows rows={1} /> : landed.length === 0 ? (
             <EmptySection text="Nothing has landed yet. A lane lands when its PR merges or, in a repo with no remote, when its integration branch merges into main." />
           ) : (
             <ul className="sq-list">
@@ -1538,7 +1574,9 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", escape); };
   }, [pickerOpen]);
-  const notice = liveNotice({ projectId, board, failed });
+  // The first read is in flight until a board or a failure arrives, including while the project list is read.
+  const loading = board === null && !failed && (projectId !== null || listed === null);
+  const notice = loading ? null : liveNotice({ projectId, board, failed });
   const projectName = listed?.projects.find((item) => item.id === projectId)?.name ?? null;
   const row = counts?.projects.find((item) => item.id === projectId);
   const trackerKind = board?.tracker?.kind !== undefined ? board.tracker.kind : row?.tracker;
@@ -1551,6 +1589,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
       projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(trackerKind, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
       projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} onCounts={setCounts} /> : null}
       lanesKnown={board !== null}
+      loading={loading}
       onSetUp={() => void setUp()}
       settingUp={settingUp}
       autopilotSaving={autopilotSaving}

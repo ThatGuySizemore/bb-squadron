@@ -1102,6 +1102,18 @@ button.sq-peg:hover {
   padding: 11px 0;
   border-bottom: 1px solid var(--sq-rule);
 }
+/* Before the board's first read: a row's shape in neutral dither, the size of a list row so the
+   real rows land without a jump. The renderer draws the shimmer; CSS adds no texture. */
+.sq-reading-row {
+  display: block;
+}
+.sq-reading-art {
+  width: 100%;
+  height: 42px;
+}
+.sq-reading-line {
+  color: var(--sq-muted);
+}
 /* Spec numbers in lists sit on the band, like the lane tail cards. */
 .sq-plate {
   position: relative;

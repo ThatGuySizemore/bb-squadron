@@ -133,7 +133,10 @@ export function runwayLayout(width: number, narrow: boolean, slots: number, labe
  * What one stand shows. This ticket draws empty stands and lanes flying over
  * their stands; the lane moments (takeoff, beacon, holding, landing) add kinds here.
  */
-export type RunwayStand = { kind: "empty" } | { kind: "flying"; laneId: string };
+export type RunwayStand =
+  | { kind: "empty" }
+  | { kind: "flying"; laneId: string }
+  | { kind: "taxiing" };
 
 /** The banner's whole state, derived from the board in the same update as the lane rows. */
 export interface RunwayState {
@@ -155,6 +158,18 @@ export function runwayState(lanes: ReadonlyArray<{ specId: string; state: string
     stands: Array.from({ length: slots }, (_, i): RunwayStand => i < flying.length ? { kind: "flying", laneId: flying[i]!.specId } : { kind: "empty" }),
     working: Math.max(0, working),
   };
+}
+
+/** How many planes taxi before the board's first read: the lane limit isn't known yet. */
+export const LOADING_STANDS = 3;
+
+/**
+ * The banner before the board's first read (SQD-247): every stand holds a plane
+ * taxiing in place, in the stand's neutral ink, so the banner never shows an
+ * empty runway or a lane count it hasn't read. Nobody is counted as working.
+ */
+export function runwayLoading(slots = LOADING_STANDS): RunwayState {
+  return { stands: Array.from({ length: Math.max(1, slots) }, (): RunwayStand => ({ kind: "taxiing" })), working: 0 };
 }
 
 /** Whether the banner moves, and the still frame drawn under reduced motion. */
@@ -199,6 +214,15 @@ function dotted(s: Surface, ink: number, x: number, y: number, cell: number): vo
 }
 
 /**
+ * A taxiing plane: the solid sprite in the stand's neutral ink, rolling a cell and a
+ * half either way along its stand on a slow sine, each stand on its own phase.
+ */
+function taxi(s: Surface, ink: number, park: Box, cell: number, seconds: number, i: number): void {
+  const roll = Math.sin(seconds * 0.9 + i * 2.1) * cell * 1.5;
+  sprite(s, ink, Math.round(park.x + roll), park.y, cell);
+}
+
+/**
  * The runway banner. Clouds drift right to left over the sky only, at the
  * working-agent pace; the tarmac is flat under the stencil and the label so no
  * text sits on moving dither. Empty stands are dotted; a flying lane's plane is
@@ -236,6 +260,7 @@ export function runway({ state, narrow, label, inks }: { state: RunwayState; nar
     g.stands.forEach(({ park, air }, i) => {
       const stand = state.stands[i];
       if (!stand || stand.kind === "empty") { dotted(s, inks.stand, park.x, park.y, g.cell); return; }
+      if (stand.kind === "taxiing") { taxi(s, inks.stand, park, g.cell, seconds, i); return; }
       const phase = i * 1.7;
       const dx = Math.sin(seconds * 0.7 + phase) * 0.8, dy = Math.sin(seconds * 1.3 + phase) * 1.2;
       sprite(s, inks.plane, air.x + dx, air.y + dy, g.cell);

@@ -68,8 +68,9 @@ test("path counts preserve zero, multiple digits and unknown values without chan
   assert.equal(doc.querySelector(".sq-station-count svg")?.getAttribute("width"), "18", "the comp's narrow 1 and 2 glyphs share a two-pixel gap");
   const unknown = await view("panel", empty, "Still reading the tracker");
   const stations = [...unknown.querySelectorAll(".sq-station")];
-  assert.deepEqual(stations.slice(0, 3).map((n) => n.querySelector(".sq-station-count")?.textContent), ["–", "–", "–"]);
-  assert.ok(stations.slice(0, 3).every((n) => !n.querySelector(".sq-station-count svg")), "unknown is a text dash, never a blank unsupported pixel glyph");
+  assert.deepEqual(stations.slice(0, 3).map((n) => n.querySelector(".sq-station-count .sq-sr")?.textContent), ["–", "–", "–"]);
+  // SQD-247: unknown is the pixel font's dash (a supported glyph), never a blank glyph and never a zero.
+  assert.ok(stations.slice(0, 3).every((n) => n.querySelectorAll(".sq-station-count svg.sq-pixeltext rect").length === 3), "unknown is a three-cell pixel dash");
   assert.equal(stations[0]?.querySelector(".sq-station-long")?.textContent, "Open issues");
   assert.equal(stations[0]?.querySelector(".sq-station-short")?.getAttribute("aria-hidden"), "true");
 });

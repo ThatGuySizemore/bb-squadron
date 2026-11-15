@@ -775,7 +775,7 @@ function ShapingRow({ spec, onPlan, opening }: { spec: ShapingSpec; onPlan: Plan
       <div className="sq-row-actions">
         <Btn tone="primary" disabled={opening} title={opening ? undefined : `${label} for ${spec.id}`}
           onClick={() => (spec.action === "resume" ? onPlan(spec.id) : onPlan(spec.id, "tickets"))}>
-          {opening ? "Opening…" : spec.action === "resume" ? label : <>Plan <Term text="tickets" word="Ticket" nested /></>}
+          {opening ? "Opening…" : spec.action === "resume" ? label : <span>Plan <Term text="tickets" word="Ticket" nested /></span>}
         </Btn>
       </div>
     </li>
@@ -1072,7 +1072,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   // New spec starts the path from nothing; one planning thread opens at a time.
   const newSpec = (tone: "primary" | "plain" = "plain") => (
     <Btn tone={tone} disabled={planning === ""} title={planning === "" ? "Opening a planning thread" : "Plan a new spec from nothing"} onClick={() => onPlan()}>
-      {planning === "" ? "Opening…" : <>New <Term text="spec" word="Spec" nested /></>}
+      {planning === "" ? "Opening…" : <span>New <Term text="spec" word="Spec" nested /></span>}
     </Btn>
   );
   const doctor = doctorStatus(board);

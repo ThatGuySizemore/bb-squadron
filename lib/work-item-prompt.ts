@@ -3,8 +3,15 @@ import type { SquadronSettings } from "./squadron-settings.js";
 /** A self-contained one-item lane brief; no Lead skill or parent thread is needed. */
 export function workItemPrompt(input: {
   identifier: string; url: string; settings: SquadronSettings; houseRules: string; machine: string; acceptOwner: boolean;
+  /** The Start brief's final-review line, from the same resolver as the board and launch path. */
+  finalReview?: string;
 }): string {
   const { settings } = input;
+  const launchReview = "`bb squadron launch final-review --base-branch <this branch> --prompt-stdin`";
+  // This thread builds the work item, so its own family decides the reviewer.
+  const reviewer = settings.finalReviewFamily === "same"
+    ? `The configured final-review family is same, your own: use a fresh subagent where the harness allows, otherwise launch one with ${launchReview}.`
+    : input.finalReview ?? `Launch it with ${launchReview}; it chooses the review route from this lane's recorded builders.`;
   const stopTarget = `'${input.identifier.replaceAll("'", "'\\''")}'`;
   return [
     "Run this standalone work item through implementation, fresh review, fixes, PR and merge. You own this whole lane in this worktree.",
@@ -21,7 +28,7 @@ export function workItemPrompt(input: {
     "Keep one branch and one PR in this managed worktree. Never install/reinstall Squadron or redirect BB loading.",
     `The worker time limit applies to the whole lane, including implementation, review, fixes and PR: ${settings.limits.workerTimeLimitMs} ms from this thread's creation. Track cumulative elapsed time across Stop/Resume; at the limit save work, post a progress summary and end the run. Do not use the longer spec lane limit.`,
     "Run typechecking regularly, single test files regularly, and the full test suite once at the end. Run the project's quick check before merge. Never weaken a test or assertion to get a pass; report failed and unrun checks honestly.",
-    `After implementation, run one fresh code-review of the whole branch against its base. Use a fresh subagent where the harness allows, otherwise one fresh review thread. The configured final-review family is ${settings.finalReviewFamily}, relative to your own family; use high effort. Give it the issue, rules, branch and check evidence. The reviewer is read-only.`,
+    `After implementation, commit and push this branch, then run one fresh code-review of the whole branch against its base, at high effort. ${reviewer} Give it the issue, rules, branch and check evidence. The reviewer is read-only. Copy the printed statement of which work the reviewer is independent of into the PR under Evidence.`,
     "Fix findings inside this issue on this branch, then check the fixes. A second look checks only the original findings. Put owner questions and unproven behavior in the PR; file only real out-of-scope defects as needs-triage after checking duplicates.",
     "Count two strikes for this work item: reported-done work failing its quick check or final review, or truly stuck work. Ordinary red tests and compile failures during tdd aren't strikes. After two strikes stop the lane, preserve the branch and post a one-paragraph progress summary for the owner. Resume doesn't reset strikes or the time budget.",
     `For a policy wind-down caused by a hold or blocker, two strikes, or the time limit, run \`bb squadron stop ${stopTarget}\` once before your final progress summary and normal turn completion. This sends the shared fixed Stop control to this lane so BB records the stop; ending your turn alone doesn't stop the lane. If delivery fails, report it rather than claiming Stopped. On the fixed Stop message, finish saving work and the summary without sending Stop again. This records a stop only and grants no owner approval. Never send Resume yourself or clear a hold.`,

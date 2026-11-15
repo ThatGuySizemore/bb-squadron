@@ -62,7 +62,7 @@ test("mixed builders: the family that built the most tickets decides, and the st
   assert.deepEqual(choice.counts, { claude: 1, gpt: 2 });
   assert.deepEqual([choice.independentOf, choice.sameFamily], [["FIX-2", "FIX-4"], ["FIX-3"]]);
   assert.equal(choice.statement, "Final review: claude-code claude-opus-5-5, high effort, default tier. GPT built 2 of 3 integrated tickets, so the Review of codex route reviews. "
-    + "Independent of FIX-2, FIX-4. Not independent of FIX-3: the same family built it.");
+    + "Independent of FIX-2, FIX-4. Not independent of FIX-3: its builder is in the reviewer's family.");
 });
 
 test("reordering route rows changes nothing: House rules rows and legacy repo rows alike", () => {
@@ -108,7 +108,7 @@ test("before anything is integrated, the board projects from launched builders a
   const projected = chooseFinalReviewer(sharedSettings, { ...lane, projectRoutes: true });
   assert.equal(projected.basis, "lane");
   assert.deepEqual(projected.route, CLAUDE_BUILT_REVIEW);
-  assert.match(projected.statement, /Claude built 2 of 2 tickets/);
+  assert.match(projected.statement, /Claude builds 2 of 2 tickets so far/);
   assert.match(projected.statement, /Independent of FIX-2, FIX-3 \(not launched yet\)\./);
   // The final review itself counts only recorded builders: the unlaunched ticket stays unknown.
   const recorded = chooseFinalReviewer(sharedSettings, lane);

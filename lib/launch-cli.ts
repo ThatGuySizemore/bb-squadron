@@ -1,4 +1,4 @@
-// The one documented way a Lead launches workers, reviewers and helper threads.
+// The one documented way a Lead launches workers, reviewers, research and merger threads.
 // It resolves the route with the same resolver as Start, Doctor and the board,
 // refuses an unrunnable route rather than substituting, and records the launch.
 import { cliCommand, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -146,7 +146,7 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
   }
 
   const command = cliCommand({
-    summary: "Launch a worker, reviewer or helper thread from a Lead on its recorded route.",
+    summary: "Launch a worker, reviewer, research or merger thread from a Lead on its recorded route.",
     options: {
       ticket: { type: "string", description: "Ticket identifier the thread builds; required for worker and worker-hard." },
       "base-branch": { type: "string", required: true, description: "The integration branch the new worktree starts from." },

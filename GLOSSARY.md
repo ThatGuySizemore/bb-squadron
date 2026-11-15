@@ -74,7 +74,7 @@ _Avoid_: supervisor, manager → Lead
 **Worker**: A child thread of a Lead that builds one ticket with `tdd`, in its own worktree, on a branch cut from the integration branch.
 _Avoid_: builder, implementer, subagent → Worker
 
-**Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its pull request merges.
+**Reviewer**: A fresh thread that runs `code-review` once on a lane's whole integration branch before its pull request merges. With Final review `other`, it runs on the review route for the family that built most of the branch's tickets, read from launch records.
 
 **Planning thread**: A thread started from the Plan button that runs `grill-with-docs` with the owner. Multi-ticket specs continue through `to-spec` and `to-tickets`; one-piece work becomes a work item.
 

@@ -137,7 +137,8 @@ export function chooseFinalReviewer(settings: SquadronSettings, lane: {
       try { route = resolveLaunch(settings, { role }, lane.catalog).route; }
       catch (error) { problem = error instanceof Error ? error.message : String(error); role = null; }
       const tie = built.length > 1 && counts.claude === counts.gpt;
-      chosenBy = `${BUILT_BY[family]} built ${counts[family]} of ${total} ${basis === "integrated" ? "integrated " : ""}${total === 1 ? "ticket" : "tickets"}${tie ? ", a tie that Squadron settles toward Claude-built work" : ""}, so the ${role ?? REVIEW_ROLE[family]} route reviews.`;
+      const tickets = `${total} ${basis === "integrated" ? "integrated " : ""}${total === 1 ? "ticket" : "tickets"}`;
+      chosenBy = `${BUILT_BY[family]} ${basis === "integrated" ? `built ${counts[family]} of ${tickets}` : `builds ${counts[family]} of ${tickets} so far`}${tie ? ", a tie that Squadron settles toward Claude-built work" : ""}, so the ${role ?? REVIEW_ROLE[family]} route reviews.`;
     }
   }
 
@@ -167,7 +168,7 @@ function statement(choice: Omit<FinalReviewer, "statement">, chosenBy: string, e
   const planned = new Set(evidence.filter((item) => item.planned).map((item) => item.ticket.identifier));
   const named = (ids: string[]) => list(ids.map((id) => planned.has(id) ? `${id} (not launched yet)` : id));
   if (choice.independentOf.length) lines.push(`Independent of ${named(choice.independentOf)}.`);
-  if (choice.sameFamily.length) lines.push(`Not independent of ${named(choice.sameFamily)}: the same family built ${choice.sameFamily.length === 1 ? "it" : "them"}.`);
+  if (choice.sameFamily.length) lines.push(`Not independent of ${named(choice.sameFamily)}: ${choice.sameFamily.length === 1 ? "its builder is" : "their builders are"} in the reviewer's family.`);
   if (choice.unknown.length) lines.push(`Independence unknown for ${list(choice.unknown)}: no recorded builder on a known family, or an earlier attempt may share the reviewer's family.`);
   if (choice.unrecorded) lines.push(`${threads(choice.unrecorded)} in this lane ${choice.unrecorded === 1 ? "has" : "have"} no launch record, so independence from ${choice.unrecorded === 1 ? "its" : "their"} work is unknown.`);
   return lines.join(" ");

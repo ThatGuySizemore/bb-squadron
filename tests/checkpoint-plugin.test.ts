@@ -13,11 +13,12 @@ const route = { providerId: "codex", model: "gpt-6.1-sol", effort: "medium", ser
 async function fixture(t: TestContext, checkpoint: string | null) {
   const done = new Set<string>();
   const comments = new Map<string, string>();
+  const ticketVariables: Record<string, unknown>[] = [];
   const f = await helperFixture(t, epoch, {
-    ticketHistory: (id, variables) => Response.json({ data: { issue: { id, identifier: id.toUpperCase(), title: `Ticket ${id}`, url: `https://linear.app/fixture/issue/${id}`,
+    ticketHistory: (id, variables) => (ticketVariables.push(variables), Response.json({ data: { issue: { id, identifier: id.toUpperCase(), title: `Ticket ${id}`, url: `https://linear.app/fixture/issue/${id}`,
       completedAt: done.has(id) ? "2026-11-15T11:00:00.000Z" : null, state: { type: done.has(id) ? "completed" : "started" },
       ...variables.withComments ? { comments: { nodes: comments.has(id) ? [{ id: `c-${id}`, body: comments.get(id), createdAt: "2026-11-15T11:00:00.000Z" }] : [],
-        pageInfo: { hasNextPage: false, endCursor: null } } } : {} } } }),
+        pageInfo: { hasNextPage: false, endCursor: null } } } : {} } } })),
   }, undefined, undefined, undefined, { houseRules: policy(checkpoint) });
   const metadata = new Map<string, Record<string, unknown>>();
   // Thread metadata lives in BB, so it survives a plugin reload.
@@ -37,7 +38,7 @@ async function fixture(t: TestContext, checkpoint: string | null) {
   const historyReads = () => f.linear.operations.filter((name) => name === "SquadronTicketHistory").length;
   const original = f.reload;
   const reload = async () => { await original(); stub(); };
-  return Object.assign(f, { done, comments, launch, historyReads, metadata, reload });
+  return Object.assign(f, { done, comments, ticketVariables, launch, historyReads, metadata, reload });
 }
 
 test("the checkpoint wakes only that project's Helper once, at n completed routine tickets", async (t) => {
@@ -56,6 +57,11 @@ test("the checkpoint wakes only that project's Helper once, at n completed routi
   // Project two has no Helper, so its own checkpoint waits; project one's Helper hears only about project one.
   assert.deepEqual(f.sends(), [{ threadId: "helper", mode: "queue-if-active", input: [{ type: "text", mentions: [], text:
     `Fixture | Checkpoint | 2 routine tickets | 2 routine tickets are done since the first policy-resolved Worker launch, reaching your Checkpoint of 2. Nothing needs you and lanes keep starting. To compare like categories with earlier runs, use bb squadron report. | @thread:${first}` }] }]);
+  // Observation reads launch metadata and completion only: no usage, comments, or routes past the cohort start.
+  const calls = (name: string) => f.harness.inspection.sdk.callsTo(name).map((call) => call[0] as { threadId: string; types?: string[] });
+  assert.deepEqual(calls("threads.events.list").filter((call) => call.threadId.startsWith("w-")).flatMap((call) => call.types ?? []).filter((type) => type !== "provider/modelFallback"), []);
+  assert.deepEqual([...new Set(calls("threads.defaultExecutionOptions").map((call) => call.threadId).filter((id) => id.startsWith("w-")))].sort(), [first, "w-two-5"]);
+  assert.ok(f.ticketVariables.every((variables) => variables.withComments === false), "the checkpoint never reads comments");
   const reads = f.historyReads();
   await f.advance(CHECKPOINT_CHECK_MS); await f.advance(CHECKPOINT_CHECK_MS);
   assert.equal(f.sends().length, 1, "repeated observations don't repeat it");
@@ -91,6 +97,16 @@ test("a ticket first launched before the first verified policy Worker, or abando
   f.launch("one", "fix-20", { replacesThreadId: start });
   await f.advance(CHECKPOINT_CHECK_MS); await f.advance(120_000);
   assert.equal(f.sends().length, 0);
+});
+
+test("the checkpoint starts at the first policy Worker BB confirms, skipping one that runs something else", async (t) => {
+  const f = await fixture(t, "1");
+  f.launch("one", "fix-20", { requested: { ...route, model: "gpt-other" } });
+  const start = f.launch("one", "fix-21");
+  f.done.add("fix-20"); f.done.add("fix-21");
+  await f.startWatcher(); await f.advance(120_000);
+  assert.equal(f.sends().length, 1);
+  assert.match(f.sends()[0].input[0].text, new RegExp(`1 routine tickets[^]*@thread:${start}$`), "fix-20 predates the verified start and doesn't count");
 });
 
 test("a failed send stays pending and is delivered once on retry", async (t) => {

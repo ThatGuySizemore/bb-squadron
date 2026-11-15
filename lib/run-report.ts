@@ -1,7 +1,7 @@
 // `bb squadron report`: how each ticket went, derived on demand from launch records,
 // BB thread usage and ticket evidence. Nothing here is stored, and nothing acts.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { readLaunchRecords, type LaunchAttempt, type LaunchRecords } from "./launch-record.js";
+import { readLaunchRecords, type LaunchAttempt, type LaunchEntry, type LaunchRecords } from "./launch-record.js";
 import type { LaunchRoute, ReportedRoute } from "./launch-route.js";
 import type { HistoryRead, TicketHistory, TicketHistoryReader, TicketOutcome } from "./ticket-history.js";
 import type { TicketResult } from "./ticket-result.js";
@@ -97,8 +97,10 @@ export function categoryOf(record: LaunchAttempt["record"]): string {
 }
 
 /** Each ticket's attempts, oldest first, keyed by stable tracker ID. */
-export function attemptsByTicket(records: LaunchRecords): Map<string, { identifier: string; attempts: LaunchAttempt[] }> {
-  const tickets = new Map<string, { identifier: string; attempts: LaunchAttempt[] }>();
+/** Launch records with their cohort start: the full read or the checkpoint's light one. */
+type Cohort<T extends LaunchEntry> = { attempts: T[]; firstVerifiedPolicyWorker: LaunchEntry | null };
+export function attemptsByTicket<T extends LaunchEntry>(records: Cohort<T>): Map<string, { identifier: string; attempts: T[] }> {
+  const tickets = new Map<string, { identifier: string; attempts: T[] }>();
   for (const attempt of records.attempts) for (const ticket of attempt.record.tickets) {
     const entry = tickets.get(ticket.id) ?? { identifier: ticket.identifier, attempts: [] };
     entry.attempts.push(attempt);
@@ -108,13 +110,13 @@ export function attemptsByTicket(records: LaunchRecords): Map<string, { identifi
 }
 
 /** Whether a ticket's first launch falls in the checkpoint period: policy-resolved, at or after the earliest verified policy Worker. */
-function inPolicyPeriod(first: LaunchAttempt, start: LaunchAttempt | null): boolean {
+function inPolicyPeriod(first: LaunchEntry, start: LaunchEntry | null): boolean {
   return start !== null && first.record.policyResolved && (first.createdAt > start.createdAt
     || first.createdAt === start.createdAt && first.threadId >= start.threadId);
 }
 
 /** Routine tickets first launched in the policy period. Only these can count toward the checkpoint. */
-export function checkpointCandidates(records: LaunchRecords): { id: string; identifier: string }[] {
+export function checkpointCandidates(records: Cohort<LaunchEntry>): { id: string; identifier: string }[] {
   const start = records.firstVerifiedPolicyWorker;
   return [...attemptsByTicket(records)].flatMap(([id, { identifier, attempts }]) =>
     inPolicyPeriod(attempts[0], start) && categoryOf(attempts[0].record) === "routine" ? [{ id, identifier }] : []);

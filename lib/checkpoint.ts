@@ -2,7 +2,7 @@
 // of routine tickets under the shared policy, its Helper gets one plain notice. The count
 // is derived each time; only the notifier's delivery receipt is stored. It never pauses launches.
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { readLaunchRecords } from "./launch-record.js";
+import { readLaunchCohort } from "./launch-record.js";
 import { oneLine } from "./project-observation.js";
 import { checkpointCandidates } from "./run-report.js";
 import type { TicketHistoryReader } from "./ticket-history.js";
@@ -37,7 +37,8 @@ export function registerCheckpoint(bb: BbPluginApi, sources: CheckpointSources) 
     if (await sources.notifier.noticed(projectId, CHECKPOINT_NOTICE)) return;
     const setting = await sources.checkpoint(projectId, lifetime.signal);
     if (typeof setting !== "number") return;
-    const records = await readLaunchRecords(bb, projectId);
+    // Metadata and the cohort start only: usage, comments and other evidence belong to the on-demand report.
+    const records = await readLaunchCohort(bb, projectId);
     const start = records.firstVerifiedPolicyWorker;
     const candidates = checkpointCandidates(records);
     // Fewer launched routine tickets than the setting can't reach it, so the tracker isn't read.

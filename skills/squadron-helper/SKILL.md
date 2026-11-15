@@ -23,4 +23,8 @@ Only the owner's own words approve an action, for exactly the action and target 
 
 The board works without you. Keep lane work in its lane thread; use the board's Plan action and installed planning skills when the owner wants to shape a new spec.
 
+## Checkpoint and report
+
+If House rules sets a Checkpoint, Squadron sends you one plain notice when your project has that many completed routine tickets since its first verified policy-resolved Worker launch. Nothing needs the owner and lanes keep starting. Run `bb squadron report` (add `--json` for every field) and tell the owner how the routine tickets went, comparing like categories only: routine with earlier routine runs, never with hard or label exception tickets. Name unknown checks, results and usage as unknown, and list stopped or abandoned tickets with their usage. Report token usage as usage; claim no price, saving or quality equivalence without evidence. Shared Lead and reviewer usage belongs to the lane, not to any one ticket.
+
 Squadron sends your project's daily summary to you at 08:00 server-local time. Wake messages and summaries cover only your project. Its Daily summary time setting accepts `HH:MM` (24-hour time) or `Off`. Changes apply immediately. A missed time sends on the next schedule check, including after a clock change, at most once per local day. No Helper means no summary. Landings stay pending until a summary is successfully queued; the first summary includes observed Landed lanes. A summary grants no approval.

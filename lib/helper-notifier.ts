@@ -5,7 +5,10 @@ import type { Board } from "./board-model.js";
 import type { Helper } from "./helper-contract.js";
 import { boardLink, needLine, oneLine, openNeeds } from "./project-observation.js";
 
-const eventSchema = z.object({ projectId: z.string(), key: z.string(), line: z.string(), landing: z.literal(true).optional() });
+// A landing or a plain notice is an event, not Needs you: it needs no recheck and never clears with Needs you.
+const eventSchema = z.object({ projectId: z.string(), key: z.string(), line: z.string(), landing: z.literal(true).optional(), notice: z.literal(true).optional() });
+/** Plain notice keys. Once reported, a notice is never sent again for that key. */
+const NOTICE_PREFIX = "notice:";
 const deliverySchema = z.object({
   lanes: z.record(z.string(), z.boolean()),
   reported: z.record(z.string(), z.array(z.string())),
@@ -74,7 +77,7 @@ export function registerHelperNotifier(bb: BbPluginApi, helper: { read(projectId
     if (disposed || !state || !Object.keys(state.pending).length) return;
     const selected = await helper.read(projectId);
     if (!selected) { schedule(projectId, RETRY_MS); return; }
-    const events = Object.values(state.pending).filter((event) => event.landing || confirmed.get(event.projectId)?.has(event.key));
+    const events = Object.values(state.pending).filter((event) => event.landing || event.notice || confirmed.get(event.projectId)?.has(event.key));
     if (!events.length) { schedule(projectId, RETRY_MS); return; }
     await bb.sdk.threads.send({ threadId: selected.threadId, mode: "queue-if-active",
       input: [{ type: "text", text: events.map((event) => event.line).sort().join("\n"), mentions: [] }] });
@@ -98,9 +101,9 @@ export function registerHelperNotifier(bb: BbPluginApi, helper: { read(projectId
       // A failed tracker read cannot establish that an earlier item cleared.
       const complete = board?.tracker?.state === "current";
       if (complete) {
-        state.reported[projectId] = (state.reported[projectId] ?? []).filter((key) => key.startsWith("landed:") || current.has(key));
+        state.reported[projectId] = (state.reported[projectId] ?? []).filter((key) => key.startsWith("landed:") || key.startsWith(NOTICE_PREFIX) || current.has(key));
         for (const [id, event] of Object.entries(state.pending))
-          if (event.projectId === projectId && !event.landing && !current.has(event.key)) delete state.pending[id];
+          if (event.projectId === projectId && !event.landing && !event.notice && !current.has(event.key)) delete state.pending[id];
       }
       let added = false;
       for (const item of items) {
@@ -129,5 +132,30 @@ export function registerHelperNotifier(bb: BbPluginApi, helper: { read(projectId
       schedule(projectId);
     });
   }
-  return { observe };
+  /** Whether this project's notice was already reported or is waiting for delivery. */
+  function noticed(projectId: string, name: string) {
+    return serial(async () => {
+      const key = NOTICE_PREFIX + name;
+      return projects[projectId]?.reported[projectId]?.includes(key) === true || Boolean(projects[projectId]?.pending[JSON.stringify([projectId, key])]);
+    });
+  }
+  /**
+   * Queue one plain notice for this project's Helper alone, in the same batch, retry and missing-Helper handling as Needs you.
+   * It is neither Needs you nor a landing, and a reported notice never repeats.
+   */
+  function notice(projectId: string, name: string, line: string) {
+    return serial(async () => {
+      if (disposed) return;
+      const state = projects[projectId] ??= emptyState();
+      const key = NOTICE_PREFIX + name;
+      const id = JSON.stringify([projectId, key]);
+      if (state.reported[projectId]?.includes(key) || state.pending[id]) return;
+      state.pending[id] = { projectId, key, line, notice: true };
+      state.firstAt ??= Date.now();
+      state.lastAt = Date.now();
+      await save();
+      schedule(projectId);
+    });
+  }
+  return { observe, noticed, notice };
 }

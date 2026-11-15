@@ -33,7 +33,7 @@ function host(options: { setupFiles: string[] }) {
           return { content, contentEncoding: "utf8", path, sha256: "tracker", sizeBytes: content.length };
         }
         assert.equal(path, "/repo/docs/agents/squadron.md");
-        throw new Error("ENOENT: no such file");
+        throw Object.assign(new Error("ENOENT: no such file"), { code: "ENOENT" });
       } },
       skills: { list: async () => ({ skills: ["claude-code", "codex"].flatMap((provider) => skillNames.map((name) => ({
         id: `${provider}-${name}`, name: `mattpocock-skills:${name}`, description: null,

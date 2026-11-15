@@ -130,8 +130,11 @@ export function needsYou(board: Board): NeedsYouItem[] {
       ...(board.autopilot.pauseLog ? { log: board.autopilot.pauseLog } : {}) });
   }
   const fixes = (board.doctor?.checks ?? []).filter((check) => check.status === "fix");
+  const setupUnavailable = board.tracker?.state === "unscoped" && board.doctor?.checks.some((check) =>
+    (check.id === "settings" || check.id === "tracker") && check.status === "warning");
   // A Scope problem Doctor already names needs one row, not two.
   if ((board.tracker?.state === "disconnected" || board.tracker?.state === "unscoped")
+    && !setupUnavailable
     && !fixes.some((check) => check.message.includes(board.tracker!.message))) {
     items.push({ key: "setup", kind: "setup", specId: "", text: board.tracker.message, threadId: null });
   }

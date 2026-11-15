@@ -38,7 +38,16 @@ export async function githubLogin(signal: AbortSignal, checkoutPath: string | un
     const result = await run("gh", ["auth", "status", "--active", "--hostname", repo.hostname, "--json", "hosts", "--jq", classify], { cwd: checkoutPath, signal });
     const status = result.code === 0 ? result.stdout.trim() : "unknown";
     return { authenticated: status === "signed-in" ? true : status === "signed-out" ? false : null, hostname: repo.hostname };
-  } catch { return { authenticated: null }; }
+  } catch {
+    // repo view also fails before making a request when no hosts are signed in.
+    // Only that definite local absence overrides an unavailable repository lookup.
+    try {
+      const result = await run("gh", ["auth", "status", "--json", "hosts", "--jq",
+        '.hosts | if length == 0 then "signed-out" else "unknown" end'], { cwd: checkoutPath, signal });
+      if (result.code === 0 && result.stdout.trim() === "signed-out") return { authenticated: false };
+    } catch { /* A failed fallback still proves nothing about login. */ }
+    return { authenticated: null };
+  }
 }
 
 const connection = <T extends z.ZodType>(node: T) => z.object({ nodes: z.array(node),

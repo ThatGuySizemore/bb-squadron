@@ -69,3 +69,26 @@ test("machine Doctor finds Matt's skills that Codex enables as a plugin, as regu
     assert.deepEqual(await host.experimental_call("codexMattSkills", { names }), { skills: [] }, "a disabled plugin doesn't count");
   } finally { await host.experimental_dispose(); }
 });
+
+test("machine Doctor leaves unreadable files unknown instead of reporting them missing", async () => {
+  const { mkdtemp, mkdir, writeFile, chmod } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "squadron-unreadable-"));
+  const config = join(root, "config.toml");
+  await writeFile(config, '[plugins."mattpocock-skills@mattpocock"]\nenabled = true\n');
+  const repo = join(root, "repo");
+  await mkdir(repo);
+  await writeFile(join(repo, "AGENTS.md"), "Repo rules");
+  const host = experimental_createHostEntryHarness(createDoctorHost(undefined, () => root, undefined, () => root));
+  try {
+    await chmod(config, 0);
+    await assert.rejects(host.experimental_call("codexMattSkills", { names: ["tdd"] }));
+    await chmod(repo, 0);
+    await assert.rejects(host.experimental_call("inspectFiles", { checkoutPath: repo, skillPaths: [] }));
+  } finally {
+    await chmod(config, 0o600);
+    await chmod(repo, 0o700);
+    await host.experimental_dispose();
+  }
+});

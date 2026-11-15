@@ -64,6 +64,14 @@ test("Doctor keeps a failed repository lookup unknown", async () => {
   } finally { await host.experimental_dispose(); }
 });
 
+test("Doctor reports a confirmed absence of all logins even when repository lookup fails", async () => {
+  const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async (_command, args) =>
+    args[0] === "repo" ? { code: 1, stdout: "" } : { code: 0, stdout: "signed-out" }));
+  try {
+    assert.deepEqual(await host.experimental_call("githubLogin", { checkoutPath: "/repo" }), { authenticated: false });
+  } finally { await host.experimental_dispose(); }
+});
+
 test("Doctor distinguishes signed out from unavailable authentication checks without returning diagnostics", async () => {
   for (const [stdout, code, expected] of [["signed-out", 0, false], ["unknown", 0, null], ["signed-in", 0, true], ["", 1, null], ["", -1, null]] as const) {
     const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async (command, args, options) => {

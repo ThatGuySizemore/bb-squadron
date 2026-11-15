@@ -14,8 +14,13 @@ import { mainCheckHostContract } from "./lib/main-check-contract.js";
 import { runMainQuickCheck } from "./lib/main-check-host.js";
 import { codexPluginEnabled, MATT_CODEX_PLUGIN, newestVersion } from "./lib/codex-skills.js";
 
+function absent(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException)?.code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
 async function exists(path: string): Promise<boolean> {
-  try { return (await stat(path)).isFile(); } catch { return false; }
+  try { return (await stat(path)).isFile(); } catch (error) { if (absent(error)) return false; throw error; }
 }
 
 async function regularSkillFile(path: string): Promise<boolean> {
@@ -29,19 +34,20 @@ async function regularSkillFile(path: string): Promise<boolean> {
       if (parent === part) return true;
       part = parent;
     }
-  } catch { return false; }
+  } catch (error) { if (absent(error)) return false; throw error; }
 }
 
 /** Directories directly inside `path`, never through a symlink. */
 async function directories(path: string): Promise<string[]> {
   try { return (await readdir(path, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name); }
-  catch { return []; }
+  catch (error) { if (absent(error)) return []; throw error; }
 }
 
 /** Matt's skills enabled in Codex's config.toml, found as regular `<name>/SKILL.md` files in the newest cached version. */
 export async function findCodexMattSkills(codexHome: string, names: readonly string[]): Promise<string[]> {
   let config: string;
-  try { config = await readFile(join(codexHome, "config.toml"), "utf8"); } catch { return []; }
+  try { config = await readFile(join(codexHome, "config.toml"), "utf8"); }
+  catch (error) { if (absent(error)) return []; throw error; }
   if (!codexPluginEnabled(config)) return [];
   const cache = join(codexHome, "plugins/cache", MATT_CODEX_PLUGIN.marketplace, MATT_CODEX_PLUGIN.name);
   const version = newestVersion(await directories(cache));

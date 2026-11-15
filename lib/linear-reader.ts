@@ -72,6 +72,7 @@ async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pag
 
 const empty = (scope: MirrorSnapshot["scope"] = null, error: string | null = null): MirrorSnapshot =>
   ({ scope, issues: [], relations: [], labels: [], states: [], syncedAt: null, error });
+const content = (value: MirrorSnapshot) => JSON.stringify([value.scope, value.issues, value.relations, value.labels, value.states, value.error]);
 
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
   /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
@@ -90,8 +91,10 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   const inFlight = new Map<string, { key: string; task: Promise<MirrorSnapshot> }>();
   const polls = new Map<string, number>();
   const cadences = new Map<string, number>();
+  const actionTurns = new Map<string, number>();
   const reads = new Map<string, ReadState>();
   function resetCadence(bbProjectId: string) {
+    actionTurns.set(bbProjectId, (actionTurns.get(bbProjectId) ?? 0) + 1);
     cadences.set(bbProjectId, 30_000);
     polls.set(bbProjectId, now() + 30_000);
   }
@@ -123,7 +126,6 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   function commit(bbProjectId: string, key: string, snapshot: MirrorSnapshot) {
     const previous = getSnapshot(bbProjectId);
     snapshots.set(bbProjectId, { key, snapshot });
-    const content = (value: MirrorSnapshot) => JSON.stringify([value.scope, value.issues, value.relations, value.labels, value.states, value.error]);
     if (content(previous) !== content(snapshot)) changed(bbProjectId);
     return snapshot;
   }
@@ -145,6 +147,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   }
 
   async function sync(bbProjectId: string, signal?: AbortSignal): Promise<MirrorSnapshot> {
+    const actionTurn = actionTurns.get(bbProjectId) ?? 0;
     known.add(bbProjectId);
     const combined = AbortSignal.any([lifetime.signal, ...(signal ? [signal] : [])]);
     let source: ScopeSource;
@@ -156,7 +159,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     const turn = ++sequence;
     latest.set(bbProjectId, turn);
     lastReads.set(bbProjectId, now());
-    const task = syncOnce(bbProjectId, source, key, turn, combined);
+    const task = syncOnce(bbProjectId, source, key, turn, actionTurn, combined);
     running.add(task);
     inFlight.set(bbProjectId, { key, task });
     void task.finally(() => {
@@ -166,7 +169,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     return task;
   }
 
-  async function syncOnce(bbProjectId: string, source: ScopeSource, key: string, turn: number, signal: AbortSignal): Promise<MirrorSnapshot> {
+  async function syncOnce(bbProjectId: string, source: ScopeSource, key: string, turn: number, actionTurn: number, signal: AbortSignal): Promise<MirrorSnapshot> {
     const superseded = () => latest.get(bbProjectId) !== turn;
     // A missing or invalid Scope shows no issues: data read for another scope would mislead.
     if (!source.ok) {
@@ -184,11 +187,13 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
       if (superseded()) return getSnapshot(bbProjectId);
       reads.set(bbProjectId, { ...result.state, key });
       const before = getSnapshot(bbProjectId);
-      const contentChanged = JSON.stringify([before.issues, before.relations, before.labels, before.states, before.error]) !==
-        JSON.stringify([result.snapshot.issues, result.snapshot.relations, result.snapshot.labels, result.snapshot.states, result.snapshot.error]);
-      const cadence = full || contentChanged ? 30_000 : Math.min(180_000, (cadences.get(bbProjectId) ?? 15_000) * 2);
-      cadences.set(bbProjectId, cadence);
-      polls.set(bbProjectId, now() + cadence);
+      // An action during this read owns the deadline it just set.
+      if ((actionTurns.get(bbProjectId) ?? 0) === actionTurn) {
+        const cadence = full || content(before) !== content(result.snapshot) ? 30_000
+          : Math.min(180_000, (cadences.get(bbProjectId) ?? 15_000) * 2);
+        cadences.set(bbProjectId, cadence);
+        polls.set(bbProjectId, now() + cadence);
+      }
       return commit(bbProjectId, key, result.snapshot);
     } catch (error) {
       if (error instanceof ScopeError) {
@@ -280,12 +285,14 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     const refreshed = new Set<string>();
     /** The full open walk establishes membership without another request. */
     const walked = new Set(base.issues.filter((issue) => issue.inProject && isOpenIssue(issue) && !changedIds.has(issue.id)).map((issue) => issue.id));
-    function putIssue(node: z.infer<typeof reference>, labels?: MirrorIssue["labels"]) {
+    function putIssue(node: z.infer<typeof reference>, labels?: MirrorIssue["labels"], graphRead = false) {
       const existing = issues.get(node.id);
       if (existing && labels === undefined && Date.parse(existing.updatedAt) > Date.parse(node.updatedAt)) return;
       refreshed.add(node.id);
-      newest = Math.max(newest, Date.parse(node.updatedAt));
-      versions.set(node.id, node.updatedAt);
+      if (!previous) newest = Math.max(newest, Date.parse(node.updatedAt));
+      // A reference has no labels or relations. It cannot acknowledge a newer
+      // version of an issue whose full fields still need reading next poll.
+      if (graphRead || labels !== undefined && !versions.has(node.id)) versions.set(node.id, node.updatedAt);
       issues.set(node.id, {
         id: node.id, identifier: node.identifier, title: node.title, description: node.description, url: node.url,
         ...(node.sortOrder !== undefined ? { sortOrder: node.sortOrder } : {}),
@@ -339,7 +346,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     }
     if (!previous) for (const node of nodes) walked.add(node.id);
     for (const node of nodes) {
-      putIssue(node, await allLabels(node));
+      putIssue(node, await allLabels(node), true);
       for (const relation of node.relations.nodes) putRelation(relation, relation.relatedIssue);
       for (const relation of node.inverseRelations.nodes) putRelation(relation, relation.issue);
       await remainingRelations(node.id, node.relations.pageInfo);
@@ -427,12 +434,17 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
       }
     }
     const allIssues = [...issues.values()];
+    if (!previous) for (const issue of allIssues) {
+      if (!versions.has(issue.id)) versions.set(issue.id, issue.updatedAt);
+    }
     const snapshot: MirrorSnapshot = { scope: { name: scope.name }, issues: allIssues, relations: [...relations.values()],
       labels: [...new Map([...allIssues.flatMap((issue) => issue.labels), ...base.labels, ...teamLabels].map((label) => [label.id, label])).values()],
       states: [...new Map([...allIssues.map((issue) => issue.state), ...base.states, ...teamStates].map((state) => [state.id, state])).values()],
       syncedAt: now(), error: null };
     return { snapshot, state: { fullAt: previous?.fullAt ?? startedAt,
-      newest: newest || startedAt, versions, laneIds } };
+      // Paging and hydration may observe later edits. Never advance past the
+      // start of this read, or an edit behind a page cursor could be skipped.
+      newest: Math.min(newest || startedAt, startedAt), versions, laneIds } };
   }
 
   bb.background.service("linear-reader", { start: async (signal) => {

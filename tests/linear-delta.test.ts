@@ -23,6 +23,8 @@ async function fixture(t: TestContext) {
   let shown = true;
   let lanes: string[] = [];
   let failPage = false;
+  let deltaGate: Promise<void> | null = null;
+  let onHydrate: (() => void) | null = null;
   let source: ScopeSource = { ok: true, scope: { project: "Fixture project" } };
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   const fetch: typeof globalThis.fetch = async (_url, init) => {
@@ -39,13 +41,19 @@ async function fixture(t: TestContext) {
       case "SquadronViewMembers": return Response.json({ data: { customView: { issues: page(nodes.filter((node) =>
         filter.id.in.includes(node.id) && node.labels.nodes.length).map(({ id }) => ({ id }))) } } });
       case "SquadronDelta": {
+        const gate = deltaGate;
+        deltaGate = null;
+        if (gate) await gate;
         if (variables.after && failPage) return Response.json({ errors: [{ message: "fixture page failure" }] });
         const result = page(nodes.filter((node) => Date.parse(node.updatedAt) > Date.parse(filter.updatedAt.gt)));
         return Response.json({ data: { issues: failPage ? { ...result,
           pageInfo: { hasNextPage: true, endCursor: "next" } } : result } });
       }
-      case "SquadronIssues": return Response.json({ data: { issues: page(nodes.filter((node) =>
-        filter.id ? filter.id.in.includes(node.id) : node.project?.id === "linear-one" && node.state.type === "unstarted")) } });
+      case "SquadronIssues": {
+        if (filter.id) onHydrate?.();
+        return Response.json({ data: { issues: page(nodes.filter((node) =>
+          filter.id ? filter.id.in.includes(node.id) : node.project?.id === "linear-one" && node.state.type === "unstarted")) } });
+      }
       case "SquadronScopeMembers": return Response.json({ data: { issues: page(nodes.filter((node) =>
         filter.id.in.includes(node.id) && node.project?.id === "linear-one").map(({ id }) => ({ id }))) } });
       case "SquadronVocabulary": return Response.json(vocabularyResponse);
@@ -66,6 +74,8 @@ async function fixture(t: TestContext) {
     setScope: (value: ScopeSource) => { source = value; },
     setLanes: (value: string[]) => { lanes = value; },
     failPage: (value: boolean) => { failPage = value; },
+    onHydrate: (callback: (() => void) | null) => { onHydrate = callback; },
+    pauseDelta: () => { let release!: () => void; deltaGate = new Promise<void>((resolve) => { release = resolve; }); return release; },
     advance: async (ms: number) => { t.mock.timers.tick(ms); await settle(); },
   };
 }
@@ -218,4 +228,37 @@ test("changed external blockers update their state and removed relations drop un
   await f.reader.sync("one");
   assert.deepEqual(f.reader.getSnapshot("one").relations, []);
   assert.deepEqual(f.reader.getSnapshot("one").issues.map((issue) => issue.id), [specIssue.id]);
+});
+
+test("relation references never acknowledge labels that changed after the delta probe", async (t) => {
+  const f = await fixture(t);
+  const other: Node = { ...specIssue, id: "other", identifier: "FIX-2" };
+  f.setNodes([specIssue, other]);
+  await f.reader.sync("one");
+  const changed = { ...specIssue, updatedAt: new Date(epoch + 1_000).toISOString() };
+  const changedOther: Node = { ...other, updatedAt: new Date(epoch + 2_000).toISOString(), labels: { nodes: [], pageInfo: end } };
+  f.setNodes([changed, other]);
+  f.onHydrate(() => f.setNodes([{ ...changed, relations: { nodes: [
+    { id: "new-block", type: "blocks", issue: changed, relatedIssue: changedOther },
+  ], pageInfo: end } }, changedOther]));
+  await f.reader.sync("one");
+  f.onHydrate(null);
+  await f.reader.sync("one");
+  assert.deepEqual(f.reader.getSnapshot("one").issues.find((issue) => issue.id === "other")?.labels, []);
+});
+
+test("a board action's reset survives an unchanged delta already in flight", async (t) => {
+  const f = await fixture(t);
+  f.harness.behavior.runService("linear-reader"); await settle();
+  await f.advance(30_000);
+  const release = f.pauseDelta();
+  await f.advance(60_000);
+  await f.advance(5_000);
+  f.reader.resetCadence("one");
+  release(); await settle();
+  const count = f.requests.length;
+  await f.advance(29_999);
+  assert.equal(f.requests.length, count);
+  await f.advance(1);
+  assert.equal(f.requests.length, count + 1, "the action keeps its 30 second deadline");
 });

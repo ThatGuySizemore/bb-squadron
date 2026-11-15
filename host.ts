@@ -59,7 +59,7 @@ export async function findCodexMattSkills(codexHome: string, names: readonly str
   return names.filter((name) => found.has(name));
 }
 
-export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<{ authenticated: boolean; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand,
+export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath?: string) => Promise<{ authenticated: boolean | null; hostname?: string }>) | undefined = undefined, home: () => string = homedir, commands: GithubCommand = runGithubCommand,
   codexHome: () => string = () => process.env.CODEX_HOME || join(home(), ".codex")) {
   return experimental_defineHostEntry({
     contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract, ...repositoryHostContract, ...mainCheckHostContract },
@@ -84,7 +84,7 @@ export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath
         try {
           return await (checkLogin ? checkLogin(signal, checkoutPath) : githubLogin(signal, checkoutPath, commands));
         }
-        catch { return { authenticated: false }; }
+        catch { return { authenticated: null }; }
       },
     },
   });

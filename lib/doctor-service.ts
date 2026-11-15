@@ -25,10 +25,16 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: (projectId: stri
   const host = bb.hosts.experimental_client({ contract: doctorHostContract });
   const repository = bb.hosts.experimental_client({ contract: repositoryHostContract });
   async function read(projectId: string, signal?: AbortSignal, environmentId?: string) {
-    const checkout = await selectProjectCheckout(bb, projectId, signal, environmentId).catch(() => null);
+    let checkoutUnavailable = false;
+    const checkout = await selectProjectCheckout(bb, projectId, signal, environmentId).catch(() => { checkoutUnavailable = true; return null; });
     if (!checkout) {
       const report = doctor({ skills: {}, setupFiles: [], configurationFiles: [], settingsMarkdown: null, issueTrackerMarkdown: null, linearConnected: false, ghAuthenticated: false });
       for (const check of report.checks) {
+        if (checkoutUnavailable) {
+          check.status = "warning";
+          check.message = "Couldn't check this project's checkout just now; checking again on the next check.";
+          continue;
+        }
         if (check.status === "fix" && check.id !== "linear") check.message = "Choose a ready checkout for this project, then check again.";
       }
       return report;
@@ -51,12 +57,14 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: (projectId: stri
     }) : [];
     const inspection = await host.call("inspectFiles", { checkoutPath: path, skillPaths: candidates.map((skill) => skill.path) }, { hostId, signal, timeoutMs: 15_000 }).catch(() => null);
     const installed: Partial<Record<Family, string[]>> = {};
+    let skillsUnavailable = skills.status === "rejected" || !inspection;
     for (const skill of candidates) {
       if (inspection?.regularSkillFiles.includes(skill.path)) (installed[skill.family] ??= []).push(skill.name);
     }
     // BB's catalogue omits Codex's Matt plugin (it ships no .codex-plugin/); ask Codex's own config and cache.
     if (skills.status === "fulfilled" && !candidates.some((skill) => skill.family === "gpt")) {
       const codex = await host.call("codexMattSkills", { names: requiredSkills }, { hostId, signal, timeoutMs: 15_000 }).catch(() => null);
+      if (!codex) skillsUnavailable = true;
       if (codex?.skills.length) installed.gpt = codex.skills;
     }
     const configurationFiles: ConfigurationFile[] = [
@@ -78,12 +86,24 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: (projectId: stri
       linearConnected: linear.status === "fulfilled" && linear.value.status === "connected",
       linearMessage: linear.status === "fulfilled" && linear.value.message === LINEAR_BUDGET_WAIT_MESSAGE ? linear.value.message : undefined,
       linearScopeProblem: config.tracker.kind === "linear" ? linearScopeProblem(projectId) : null,
-      ghAuthenticated: github.status === "fulfilled" && github.value.authenticated,
+      ghAuthenticated: github.status === "fulfilled" && github.value.authenticated === true,
       ghHostname: github.status === "fulfilled" ? github.value.hostname : undefined,
       ghRequired: !localOnly,
     });
-    if (skills.status === "rejected" || !inspection) report.checks[0].message = "Couldn't check this repo's installed plugins. Make sure its machine is online, then check again.";
+    function warn(id: string, message: string) {
+      const check = report.checks.find((check) => check.id === id);
+      if (check) { check.status = "warning"; check.message = message; report.ready = false; }
+    }
+    if (skillsUnavailable) warn("skills", "Couldn't check this repo's installed plugins just now; checking again on the next check.");
+    if (!inspection) {
+      warn("setup", "Couldn't check this repo's setup files just now; checking again on the next check.");
+      for (const id of ["playbook", "machine-profile"]) warn(id, "Couldn't check this machine's optional setup files just now; checking again on the next check.");
+    }
+    if (!localOnly && (github.status === "rejected" || github.value.authenticated === null)) warn("github", "Couldn't reach GitHub just now; checking again on the next check.");
+    if (linear.status === "rejected") warn("linear", "Couldn't check Linear just now; checking again on the next check.");
     if (config.settingsMarkdown === null) report.checks[2].message = SETTINGS_UNREADABLE;
+    if (config.unavailableFiles.includes("docs/agents/squadron.md")) warn("settings", "Couldn't check this repo's project settings just now; checking again on the next check.");
+    if (config.unavailableFiles.length && !config.tracker.kind) warn("tracker", "Couldn't check this repo's issue tracker setup just now; checking again on the next check.");
     return report;
   }
   bb.rpc.register(doctorContract, { doctor: ({ projectId, environmentId }, context) => read(projectId, context.experimental_signal, environmentId) });

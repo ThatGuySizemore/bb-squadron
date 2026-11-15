@@ -57,13 +57,34 @@ test("body-line parent and blockers are used when native links are missing", asy
   } finally { await host.experimental_dispose(); }
 });
 
-test("Doctor rejects a github.com-only login for the checkout's enterprise host and discards auth output", async () => {
+test("Doctor keeps a failed repository lookup unknown", async () => {
+  const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async () => ({ code: 1, stdout: "private diagnostic" })));
+  try {
+    assert.deepEqual(await host.experimental_call("githubLogin", { checkoutPath: "/repo" }), { authenticated: null });
+  } finally { await host.experimental_dispose(); }
+});
+
+test("Doctor distinguishes signed out from unavailable authentication checks without returning diagnostics", async () => {
+  for (const [stdout, code, expected] of [["signed-out", 0, false], ["unknown", 0, null], ["signed-in", 0, true], ["", 1, null], ["", -1, null]] as const) {
+    const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async (command, args, options) => {
+      if (args[0] === "repo") return recorded(command, args, options);
+      assert.ok(args.includes("--json"));
+      assert.ok(args.includes("--jq"));
+      return { code, stdout };
+    }));
+    try {
+      assert.deepEqual(await host.experimental_call("githubLogin", { checkoutPath: "/repo" }), { authenticated: expected, hostname: "github.example" });
+    } finally { await host.experimental_dispose(); }
+  }
+});
+
+test("Doctor rejects a github.com-only login for the checkout's enterprise host and filters auth output", async () => {
   let authenticatedHost = "github.com";
   const host = experimental_createHostEntryHarness(createDoctorHost(undefined, undefined, async (command, args, options) => {
     if (args[0] === "repo") return recorded(command, args, options);
     assert.equal(options.cwd, "/enterprise-checkout");
-    assert.equal(options.discardOutput, true);
-    return { code: args[args.indexOf("--hostname") + 1] === authenticatedHost ? 0 : 1, stdout: "private auth diagnostic" };
+    assert.ok(args.includes("--jq"));
+    return { code: 0, stdout: args[args.indexOf("--hostname") + 1] === authenticatedHost ? "signed-in" : "signed-out" };
   }));
   try {
     assert.deepEqual(await host.experimental_call("githubLogin", { checkoutPath: "/enterprise-checkout" }), {

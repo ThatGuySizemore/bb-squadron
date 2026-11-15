@@ -6,7 +6,7 @@ import { createDoctorHost } from "../host.js";
 test("machine Doctor reports only the GitHub check result, including unavailable CLI", async () => {
   const cases = [
     { checkLogin: async () => ({ authenticated: true }), expected: { authenticated: true } },
-    { checkLogin: async () => { throw new Error("private command error"); }, expected: { authenticated: false } },
+    { checkLogin: async () => { throw new Error("private command error"); }, expected: { authenticated: null } },
   ];
   for (const { checkLogin, expected } of cases) {
     const host = experimental_createHostEntryHarness(createDoctorHost(checkLogin));

@@ -226,6 +226,8 @@ test("the bundled Lead skill points to installed Matt skills and adds BB lane ru
   }
   assert.ok(!/squadron_\w+/.test(skill), "the Lead names no Squadron agent tools");
   assert.ok(skill.split(/\s+/).length < 700, "the wrapper stays about one page");
+  assert.match(skill, /Never install\/reinstall Squadron or redirect BB loading/);
+  assert.match(skill, /the owner's checkout and Helper handle it/);
 });
 
 test("Start on the board opens the Lead beside it, refreshes the board, and reports refusals", async () => {
@@ -992,8 +994,9 @@ test("merged main failure pauses before any next start, links its host log, and 
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
-  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
   await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await Promise.race([checking, new Promise((_, reject) => setTimeout(() => reject(new Error("main check never started")), 2000))]);
   assert.equal(native.count, 1, "no next lane may start while the main check runs");
   assert.deepEqual(calls, [{ checkoutPath: "/repo", prNumber: 7, quickCheck: "npm run check" }]);
@@ -1059,11 +1062,11 @@ test("a returning Lead cannot hide the previous lane's unchecked merge from the 
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
   native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   assert.equal(native.count, 2);
-  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(checks, 1);
   assert.equal(board.autopilot?.status, "paused");
@@ -1082,9 +1085,9 @@ test("a merged Outside lane also checks shared main without changing the stop br
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   native.threads.set("outside", makeThreadResponse({ id: "outside", title: "Lead FIX-7", environmentId: "env_outside", projectId: "proj-one", status: "active" }));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
   harness.sdk.stub("plugins.callRpc", async () => ({ env_outside: lanePr("merged") }));
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
-  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(checks, 1);
   assert.equal(board.autopilot?.status, "paused");
@@ -1107,8 +1110,8 @@ test("merged main forwards the project's optional Check setup through settings t
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
-  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on" });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(calls, [{ checkoutPath: "/repo", prNumber: 7, quickCheck: "npm run check", checkSetup: "./prepare-check" }]);
   assert.equal(board.autopilot?.status, "paused");

@@ -1424,16 +1424,26 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
   const changeAutopilot = useCallback(async (patch: AutopilotChange) => {
     if (!projectId || autopilotSaving) return;
     setAutopilotSaving(true);
-    try { await rpc.call("autopilot.set", { projectId, ...patch }); }
+    try {
+      const state = await rpc.call("autopilot.set", { projectId, ...patch });
+      request.current++;
+      shown.current = "";
+      setBoard((board) => board ? { ...board, autopilot: state, laneCapacity: state.laneLimit, autoStart: state.status === "on" } : board);
+    }
     catch (error) { toast(error instanceof Error && error.message ? error.message : "Couldn't save Autopilot. Try again."); }
-    finally { await load(); setAutopilotSaving(false); }
+    finally { setAutopilotSaving(false); void load(); }
   }, [rpc, projectId, autopilotSaving, load]);
   const resumeAutopilot = useCallback(async () => {
     if (!projectId || autopilotSaving) return;
     setAutopilotSaving(true);
-    try { await rpc.call("autopilot.resume", { projectId }); }
+    try {
+      const state = await rpc.call("autopilot.resume", { projectId });
+      request.current++;
+      shown.current = "";
+      setBoard((board) => board ? { ...board, autopilot: state, laneCapacity: state.laneLimit, autoStart: state.status === "on" } : board);
+    }
     catch (error) { toast(error instanceof Error && error.message ? error.message : "Couldn't resume Autopilot. Try again."); }
-    finally { await load(); setAutopilotSaving(false); }
+    finally { setAutopilotSaving(false); void load(); }
   }, [rpc, projectId, autopilotSaving, load]);
   const setUp = useCallback(async () => {
     if (!projectId || settingUp) return;

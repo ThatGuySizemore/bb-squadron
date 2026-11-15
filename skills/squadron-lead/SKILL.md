@@ -11,7 +11,7 @@ Use Owner words from `GLOSSARY.md` in PR bodies, comments and Needs you text. Sq
 
 Run Matt Pocock's installed `implement-spec`, reaching its `tdd`, `code-review` and `pr` skills as needed. Invoke skills or follow their installed `SKILL.md`; ask the owner to install missing skills. Squadron adds:
 
-- Coordinate and merge; workers build tickets, including UI.
+- Workers build tickets, including UI. Never install/reinstall Squadron or redirect BB loading; the owner's checkout and Helper handle it.
 - Workers are visible BB child threads. Use `bb thread spawn` with `--parent-self`, `--parent-notifications auto`, `--new-environment worktree`, `--base-branch` naming the integration branch, `--service-tier default`, and a title containing the ticket identifier. Give workers ticket, spec and current-rules pointers. Each ticket's labels select the first matching route in project settings, with the default row as fallback; `Lead` is reserved for the coordinator. Set its provider (`claude-code` for Claude, `codex` for GPT), model and effort explicitly with `--provider`, `--model` and `--reasoning-level`.
 - Each worker brief points to the spec's Testing Decisions as the confirmed `tdd` seams. Tell workers: "Run typechecking regularly, single test files regularly, and the full test suite once at the end." Split tickets that keep overrunning upstream rather than raising effort.
 - Keep worker communication sparse, through context pointers. Write one line per event to the owner unless asked for more.

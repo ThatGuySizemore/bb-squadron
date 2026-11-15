@@ -147,6 +147,23 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     return board;
   }
 
+  // Switch-on reads merge evidence only, without Doctor, checks, or lane starts.
+  sources.autopilot?.setMergeBaselineReader(async (projectId) => {
+    const snapshot = await sources.tracker.getSnapshot(projectId);
+    if (snapshot.error || snapshot.syncedAt === null) throw new Error("Couldn't read existing merges. Try again shortly.");
+    const leads = await lanesOf(projectId, snapshot, await sources.planning?.(projectId));
+    const visible = leads.flatMap(({ outside, thread }) => outside && thread.environmentId ? [thread.environmentId] : []);
+    const retained = await sources.autopilot!.rememberOutside(projectId, visible);
+    const environments = [...new Set([...leads.flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []), ...retained])];
+    const rows = environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : {};
+    const merges = environments.flatMap(id => {
+      const row = rows?.[id];
+      if (row?.outcome === "unavailable") throw new Error("Couldn't read existing merges. Try again shortly.");
+      return row?.outcome === "available" && row.pullRequest.state === "merged" ? [row.pullRequest] : [];
+    });
+    await sources.autopilot!.rememberMerges(projectId, merges);
+  });
+
   let publishing = false;
   function publishIfChanged(projectId: string, board: Board) {
     const entry = project(projectId);
@@ -184,7 +201,7 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
               await sources.startLane(projectId, next.id, "autopilot", async () => {
                 // Owner controls and hand starts can change while Start checks Doctor.
                 const current = await compute(projectId, false);
-                return !lifetime.signal.aborted && current.autopilot?.status === "on"
+                return !lifetime.signal.aborted && current.autopilot?.status === "on" && sources.autopilot!.isOn(projectId)
                   && current.ready.some((spec) => spec.id === next.id && spec.startReason === null)
                   && autopilotLaneCount(current) < current.autopilot.laneLimit;
               });

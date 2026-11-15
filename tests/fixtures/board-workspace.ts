@@ -63,6 +63,25 @@ export function workspace(options: {
 } = {}) {
   const operations: string[] = [];
   const seen = new Map<string, { team?: { id: string }; project?: { id: string } | null }>();
+  const revisions = new Map<string, { content: string; at: number }>();
+  // Custom scenarios change issue fields through a callback. Model Linear's
+  // corresponding updatedAt change so delta reads can observe those changes.
+  async function issueResponse() {
+    const response = options.issues ? options.issues() : Response.json(workspaceIssues);
+    if (!options.issues || !response.ok) return response;
+    const body = await response.clone().json().catch(() => null);
+    if (!Array.isArray(body?.data?.issues?.nodes)) return response;
+    for (const node of body.data.issues.nodes) {
+      const { updatedAt, ...fields } = node;
+      const content = JSON.stringify(fields);
+      const previous = revisions.get(node.id);
+      let at = Math.max(Date.parse(updatedAt), previous?.at ?? 0);
+      if (previous && previous.content !== content && at <= previous.at) at = Math.max(Date.now(), previous.at + 1);
+      node.updatedAt = new Date(at).toISOString();
+      revisions.set(node.id, { content, at });
+    }
+    return Response.json(body, { status: response.status, headers: response.headers });
+  }
   const fetch = async (_url: string | URL | Request, init?: RequestInit) => remember(seen, await answer(init));
   const answer = async (init?: RequestInit) => {
     const { query, variables } = JSON.parse(String(init?.body)) as { query: string; variables?: Record<string, unknown> };
@@ -76,7 +95,7 @@ export function workspace(options: {
       case "SquadronScope": return Response.json(scopeResponse);
       case "SquadronScopeMembers": return scopeMembers(seen, variables);
       case "SquadronDelta":
-      case "SquadronIssues": return options.issues ? options.issues() : Response.json(workspaceIssues);
+      case "SquadronIssues": return issueResponse();
       case "SquadronLaneSpec": {
         const id = String(variables?.id);
         if (options.laneSpec) return options.laneSpec(id);

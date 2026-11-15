@@ -17,7 +17,7 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { runwayLayout, runwayState, type RunwayLayout, type RunwayMoments, type RunwayStand, type RunwayState } from "../lib/runway.js";
+import { planeBox, runwayLayout, runwayState, type RunwayLayout, type RunwayMoments, type RunwayStand, type RunwayState } from "../lib/runway.js";
 import { PixelText } from "./PixelText.js";
 import { FlipCount } from "./FlipCount.js";
 import { DitherCanvas } from "./DitherCanvas.js";
@@ -95,9 +95,9 @@ function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: 
 type PlaneStand = Extract<RunwayStand, { beacon: string | null }>;
 const clickable = (stand: RunwayStand): stand is PlaneStand => "beacon" in stand;
 
-/** What a plane's button says: its lane, its state, and where a click goes. */
+/** What a plane's button says: its lane (named a work item when it is one, as its smaller plane shows), its state, and where a click goes. */
 function planeName(stand: PlaneStand, title: string | undefined): string {
-  const lane = title ? `${stand.laneId}, ${title}` : stand.laneId;
+  const lane = `${stand.workKind === "work-item" ? "Work item " : ""}${title ? `${stand.laneId}, ${title}` : stand.laneId}`;
   if (stand.beacon) return `${lane} needs you${stand.kind === "holding" ? " (stopped)" : ""}. Go to its Needs you row.`;
   return `${lane}: ${stand.kind === "holding" ? "stopped" : stand.kind === "takeoff" ? "taking off" : "flying"}. Go to its lane.`;
 }
@@ -113,11 +113,12 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
       </h1>
       {count && g.label ? <FlyingLabel count={count} box={g.label} /> : null}
       {state.stands.map((stand, i) => {
-        const air = g.stands[i]?.air;
-        if (!air || !clickable(stand)) return null;
+        if (!g.stands[i] || !clickable(stand)) return null;
+        // The click target is the plane as drawn: a work item's is the smaller one, centred on its stand.
+        const air = planeBox(g, i, "air", stand.workKind);
         const pad = 10, name = planeName(stand, titles.get(stand.laneId));
         return (
-          <button key={stand.laneId} type="button" className="sq-runway-plane" data-plane={stand.kind} data-beacon={stand.beacon ?? undefined}
+          <button key={stand.laneId} type="button" className="sq-runway-plane" data-plane={stand.kind} data-work-kind={stand.workKind} data-beacon={stand.beacon ?? undefined}
             aria-label={name} title={name} onClick={() => onPlane(stand)}
             style={{ left: air.x - pad, top: air.y - pad, width: air.w + pad * 2, height: air.h + pad * 2 }} />
         );

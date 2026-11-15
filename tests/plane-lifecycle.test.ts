@@ -41,7 +41,7 @@ test("the plane faces right: one nose cell leads on the centre row, and the T ta
   assert.ok(tall(0) > 1 && tall(0) < rows, "the tail's fin stands at the left edge");
 
   // Painted, the rightmost lit pixel of the plane is on its centre line.
-  const s = paint(one({ kind: "flying", laneId: "A-1", beacon: null }), 0);
+  const s = paint(one({ kind: "flying", laneId: "A-1", beacon: null, workKind: "spec" }), 0);
   const g = runwayLayout(1200, false, 2, "");
   let right = -1, rightY = -1;
   for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) if (at(s, x, y) === INKS.plane && x > right) { right = x; rightY = y; }
@@ -64,7 +64,7 @@ test("each lit plane draws two trails that start at its engines, behind the main
   const g = runwayLayout(1200, false, 2, "");
   const air = g.stands[0]!.air, c = g.cell;
   for (const seconds of [0, 0.8, 2.4]) {
-    const s = paint(one({ kind: "flying", laneId: "A-1", beacon: null }), seconds);
+    const s = paint(one({ kind: "flying", laneId: "A-1", beacon: null, workKind: "spec" }), seconds);
     for (const { col, row } of RUNWAY_ENGINES) {
       const ex = air.x + col * c, ey = air.y + (row + 0.5) * c;
       const start = count(s, INKS.trail, { x: ex - 10, y: ey - c - 2, w: 10, h: 2 * c + 4 });
@@ -120,42 +120,42 @@ test("one lane through start, needs you, stop, resume and land: its plane's stat
   // Start: the lane appears, so its plane takes off from its stand, starting in this update.
   now += 5_000;
   step = update(step.moments, boardOf([lane()]), now);
-  assert.deepEqual(step.plane, { kind: "takeoff", laneId: "A-1", since: now, beacon: null });
+  assert.deepEqual(step.plane, { kind: "takeoff", laneId: "A-1", since: now, beacon: null, workKind: "spec" });
   assert.equal(step.state.at, now, "the banner's moments are measured from this update");
 
   // The takeoff is over by the next read: flying.
   now += TAKEOFF_MS + 15_000;
   step = update(step.moments, boardOf([lane()]), now);
-  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: null });
+  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: null, workKind: "spec" });
 
   // Needs you: a worker asks a question, so the plane beacons to that row.
   now += 15_000;
   const asking = boardOf([lane({ tickets: [{ ...lane().tickets[0]!, state: "question", question: "Which width?" }] })]);
   step = update(step.moments, asking, now);
-  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: "question:A-2" });
+  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: "question:A-2", workKind: "spec" });
   assert.ok(needsYou(asking).some((item) => item.key === "question:A-2"), "the beacon names a real Needs you row");
 
   // Answered: the beacon goes out exactly when the row does.
   now += 15_000;
   step = update(step.moments, boardOf([lane()]), now);
-  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: null });
+  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: null, workKind: "spec" });
 
   // Stop: the plane holds, and beacons to the stopped row that carries Resume.
   now += 15_000;
   const stopped = boardOf([lane({ state: "stopped", stopped: true, workingThreads: 0 })]);
   step = update(step.moments, stopped, now);
-  assert.deepEqual(step.plane, { kind: "holding", laneId: "A-1", beacon: "stopped:A-1" });
+  assert.deepEqual(step.plane, { kind: "holding", laneId: "A-1", beacon: "stopped:A-1", workKind: "spec" });
 
   // Resume: back to flying, no takeoff replay.
   now += 15_000;
   step = update(step.moments, boardOf([lane()]), now);
-  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: null });
+  assert.deepEqual(step.plane, { kind: "flying", laneId: "A-1", beacon: null, workKind: "spec" });
 
   // Land: the plane lands from this update, the same start as the lane's burst, and keeps its stand until the burst ends.
   now += 15_000;
   const landed = boardOf([lane({ state: "landed", workingThreads: 0, pr: { number: 7, checks: "passing", url: "u", state: "merged" } })]);
   step = update(step.moments, landed, now);
-  assert.deepEqual(step.plane, { kind: "landing", laneId: "A-1", since: now });
+  assert.deepEqual(step.plane, { kind: "landing", laneId: "A-1", since: now, workKind: "spec" });
   assert.equal(step.moments.until["A-1"]! - LANDING_MS, now, "the lane's burst starts in this same update");
 
   // After the landing, nothing flies: the plane is parked on its stand.
@@ -166,7 +166,7 @@ test("one lane through start, needs you, stop, resume and land: its plane's stat
 
 test("a lane already flying when the board opens doesn't replay its takeoff, and a landed one doesn't land again", () => {
   const first = update(null, boardOf([lane(), lane({ specId: "B-1", state: "landed" })]), 5_000);
-  assert.deepEqual(first.state.stands, [{ kind: "flying", laneId: "A-1", beacon: null }, { kind: "empty" }]);
+  assert.deepEqual(first.state.stands, [{ kind: "flying", laneId: "A-1", beacon: null, workKind: "spec" }, { kind: "empty" }]);
   assert.equal(first.state.at, undefined, "no moment is playing");
 });
 
@@ -183,7 +183,7 @@ test("the beacon names the lane's first Needs you row, in the strip's order", ()
 test("a takeoff rolls off the stand and lifts into the air over its stand", () => {
   const g = runwayLayout(1200, false, 2, "");
   const { park, air } = g.stands[0]!;
-  const state = one({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null }, { at: 1000 });
+  const state = one({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null, workKind: "spec" }, { at: 1000 });
   const solid = RUNWAY_PLANE.join("").split("#").length - 1;
   const rolling = paint(state, 0.05);
   assert.ok(count(rolling, INKS.plane, park) > solid * g.cell * g.cell * 0.6, "it starts on its stand");
@@ -195,7 +195,7 @@ test("a takeoff rolls off the stand and lifts into the air over its stand", () =
 test("a landing glides from the air back onto its stand", () => {
   const g = runwayLayout(1200, false, 2, "");
   const { park, air } = g.stands[0]!;
-  const state = one({ kind: "landing", laneId: "A-1", since: 1000 }, { at: 1000 });
+  const state = one({ kind: "landing", laneId: "A-1", since: 1000, workKind: "spec" }, { at: 1000 });
   const solid = RUNWAY_PLANE.join("").split("#").length - 1;
   assert.ok(count(paint(state, 0), INKS.plane, air) > solid * g.cell * g.cell * 0.8, "the glide starts in the air");
   const down = paint(state, LANDING_MS / 1000);
@@ -205,8 +205,8 @@ test("a landing glides from the air back onto its stand", () => {
 
 test("moments that started in an earlier update keep their own clock", () => {
   // The banner is redrawn from a later update; the takeoff started 1s before it.
-  const fresh = paint(one({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null }, { at: 1000 }), 1.2);
-  const later = paint(one({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null }, { at: 2000 }), 0.2);
+  const fresh = paint(one({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null, workKind: "spec" }, { at: 1000 }), 1.2);
+  const later = paint(one({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null, workKind: "spec" }, { at: 2000 }), 0.2);
   assert.deepEqual(count(later, INKS.plane, { x: 0, y: 0, w: later.w, h: later.h }), count(fresh, INKS.plane, { x: 0, y: 0, w: fresh.w, h: fresh.h }));
 });
 
@@ -214,19 +214,19 @@ test("a beacon blinks amber brackets around its plane; a holding plane circles r
   const g = runwayLayout(1200, false, 2, "");
   const air = g.stands[0]!.air;
   const around = { x: air.x - 12, y: air.y - 12, w: air.w + 24, h: air.h + 24 };
-  const frames = [0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1].map((t) => paint(one({ kind: "flying", laneId: "A-1", beacon: "question:A-2" }), t));
+  const frames = [0, 0.3, 0.6, 0.9, 1.2, 1.5, 1.8, 2.1].map((t) => paint(one({ kind: "flying", laneId: "A-1", beacon: "question:A-2", workKind: "spec" }), t));
   const lit = frames.map((s) => count(s, INKS.beacon, around));
   assert.ok(lit.every((n) => n > 40), "the brackets and the plane stay amber");
   assert.ok(new Set(lit).size > 1, "and blink");
   assert.equal(count(frames[0]!, INKS.plane, around), 0, "a beaconing plane is amber, not sky");
 
-  const holding = paint(one({ kind: "holding", laneId: "A-1", beacon: null }), 1);
+  const holding = paint(one({ kind: "holding", laneId: "A-1", beacon: null, workKind: "spec" }), 1);
   const ring = { x: air.x - g.plane.w * 0.4, y: air.y - g.plane.h * 0.6, w: g.plane.w * 1.8, h: g.plane.h * 2.2 };
   assert.ok(count(holding, INKS.holding, ring) > 150, "the plane and its ring are red");
   assert.equal(count(holding, INKS.plane, ring), 0);
   assert.equal(count(holding, INKS.trail, { x: 0, y: 0, w: holding.w, h: holding.h }), 0, "a holding plane leaves no trail");
   const rows = (s: Surface) => s.buf.slice(0);
-  assert.notDeepEqual(rows(holding), rows(paint(one({ kind: "holding", laneId: "A-1", beacon: null }), 2)), "it circles");
+  assert.notDeepEqual(rows(holding), rows(paint(one({ kind: "holding", laneId: "A-1", beacon: null, workKind: "spec" }), 2)), "it circles");
 });
 
 test("under reduced motion each state keeps its form in one still frame", async () => {
@@ -239,12 +239,12 @@ test("under reduced motion each state keeps its form in one still frame", async 
   };
   const solid = RUNWAY_PLANE.join("").split("#").length - 1;
   const around = { x: air.x - 12, y: air.y - 12, w: air.w + 24, h: air.h + 24 };
-  assert.ok(count(still({ kind: "flying", laneId: "A-1", beacon: "q" }), INKS.beacon, around) > solid * 4, "steady beacon brackets, lit");
-  const hold = still({ kind: "holding", laneId: "A-1", beacon: null });
+  assert.ok(count(still({ kind: "flying", laneId: "A-1", beacon: "q", workKind: "spec" }), INKS.beacon, around) > solid * 4, "steady beacon brackets, lit");
+  const hold = still({ kind: "holding", laneId: "A-1", beacon: null, workKind: "spec" });
   const ring = { x: air.x - g.plane.w * 0.4, y: air.y - g.plane.h * 0.6, w: g.plane.w * 1.8, h: g.plane.h * 2.2 };
   assert.ok(count(hold, INKS.holding, ring) > solid * 8, "a still plane inside its ring");
-  assert.ok(count(still({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null }), INKS.plane, air) > solid * 8, "a takeoff shows the plane up");
-  assert.ok(count(still({ kind: "landing", laneId: "A-1", since: 1000 }), INKS.plane, park) > solid * 8, "a landing shows the plane down on its stand");
+  assert.ok(count(still({ kind: "takeoff", laneId: "A-1", since: 1000, beacon: null, workKind: "spec" }), INKS.plane, air) > solid * 8, "a takeoff shows the plane up");
+  assert.ok(count(still({ kind: "landing", laneId: "A-1", since: 1000, workKind: "spec" }), INKS.plane, park) > solid * 8, "a landing shows the plane down on its stand");
 });
 
 // ---------- the board view ----------

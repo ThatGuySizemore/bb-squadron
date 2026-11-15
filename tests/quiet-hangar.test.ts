@@ -258,7 +258,7 @@ test("the pass crosses once from off the left edge to off the right, lit, with l
 
 test("before the pass starts, the last landing glides as usual; the pass keeps its own start on a later clock", () => {
   const g = runwayLayout(1200, false, 3, "");
-  const landing: RunwayState = { stands: [{ kind: "landing", laneId: "A-1", since: 10_000 }, { kind: "empty" }, { kind: "empty" }],
+  const landing: RunwayState = { stands: [{ kind: "landing", laneId: "A-1", since: 10_000, workKind: "spec" }, { kind: "empty" }, { kind: "empty" }],
     working: 0, at: 10_000, flyPast: { since: 10_000 + LANDING_MS } };
   const gliding = paint(landing, 0.2);
   assert.ok(count(gliding, INKS.plane, all(gliding)) === SOLID * g.cell * g.cell, "one plane, gliding in");

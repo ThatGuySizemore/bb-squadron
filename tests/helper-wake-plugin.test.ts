@@ -66,7 +66,7 @@ test("a stopped work item sends one Needs you line across repeated observations 
   assert.deepEqual((await f.board()).lanes.map((lane) => [lane.specId, lane.kind, lane.state]), [["FIX-9", "work-item", "stopped"]]);
   await f.advance(120_000);
   assert.deepEqual(f.sends().map((send) => send.input[0].text), [
-    "Fixture | Stopped | FIX-9 | The lane stopped. | @thread:lead-one",
+    "Fixture | Stopped | FIX-9 | The lane was stopped. Resume to continue. | @thread:lead-one",
   ]);
   await f.advance(120_000);
   assert.equal(f.sends().length, 1);

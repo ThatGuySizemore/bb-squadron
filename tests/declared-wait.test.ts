@@ -4,6 +4,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { helperFixture } from "./fixtures/helper-plugin.js";
 import { workspaceIssues } from "./fixtures/board-workspace.js";
 import { done } from "./fixtures/linear-mirror.js";
+import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { needsYou } from "../lib/board-model.js";
 
 const epoch = Date.parse("2026-11-15T12:00:00Z");
@@ -144,4 +145,85 @@ test("an owner question from a waiting Lead still reaches Needs you and wakes th
   assert.deepEqual(board.lanes[0].waitingOn, ["FIX-9"]);
   assert.deepEqual(needsYou(board).map(({ kind }) => kind), ["waiting"]);
   assert.equal(f.sends().filter((send) => send.threadId === "helper").length, 1);
+});
+
+/** The latest-first events of a Lead that declared a wait, then took a turn started only by a peer's message. */
+function peerTurn(f: Fixture, leadId: string, extra: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["events"]["list"]>> = [], text = "[bb message from thread:thr_helper]\nHow is it going?") {
+  const events = f.events.get(leadId)!;
+  f.events.set(leadId, [
+    { id: "end-2", threadId: leadId, seq: 9, createdAt: epoch + 2, scope: { kind: "thread" },
+      type: "turn/completed", data: { status: "completed", providerThreadId: null } },
+    { id: "started-2", threadId: leadId, seq: 8, createdAt: epoch + 1, scope: { kind: "thread" },
+      type: "turn/started", data: { providerThreadId: null } as never },
+    { id: "peer", threadId: leadId, seq: 7, createdAt: epoch + 1, scope: { kind: "thread" },
+      type: "client/turn/requested", data: { direction: "inbound", source: "tell", senderThreadId: "thr_helper", initiator: "agent",
+        execution: { model: "fixture", permissionMode: "auto", reasoningLevel: "medium", serviceTier: "default", source: "client/turn/requested" },
+        input: [{ type: "text", text, mentions: [] }], request: { method: "turn/start", params: {} }, requestId: "peer", target: { kind: "auto", expectedTurnId: null } } },
+    ...extra, ...events,
+  ] as never);
+}
+
+test("a peer message that starts no work leaves a declared wait in place", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "FIX-9"], { projectId: "one", threadId: lead.id });
+  peerTurn(f, lead.id);
+  idle(f, lead.id);
+  const board = await f.board();
+  assert.deepEqual(board.lanes[0].waitingOn, ["FIX-9"]);
+  assert.equal(board.lanes[0].stopped, false);
+  assert.deepEqual(needsYou(board), []);
+});
+
+test("a peer message that makes the Lead launch a worker clears the wait", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "FIX-9"], { projectId: "one", threadId: lead.id });
+  peerTurn(f, lead.id);
+  idle(f, lead.id);
+  f.threads.set("worker", makeThreadResponse({ id: "worker", projectId: "one", parentThreadId: lead.id, title: "Worker FIX-6", status: "idle", createdAt: epoch + 1 }));
+  assert.equal((await f.board()).lanes[0].waitingOn, undefined);
+});
+
+test("a turn started by anything but a peer message clears the wait", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "FIX-9"], { projectId: "one", threadId: lead.id });
+  peerTurn(f, lead.id, [], "Carry on with the reader files.");
+  idle(f, lead.id);
+  assert.equal((await f.board()).lanes[0].waitingOn, undefined);
+});
+
+test("a lane stopped at its time limit says so and offers Resume", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  const result = await f.harness.behavior.runCli(["stop", "FIX-5", "--reason", "time-limit"], { projectId: "one", threadId: lead.id });
+  assert.equal(result.exitCode, 0, result.stderr);
+  idle(f, lead.id);
+  const board = await f.board();
+  assert.equal(board.lanes[0].stopped, true);
+  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [
+    { kind: "stopped", text: "Stopped at its 8-hour limit. Work saved. Resume to continue." },
+  ]);
+});
+
+test("a plain Stop says the lane was stopped and offers Resume", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["stop", "FIX-5"], { projectId: "one", threadId: lead.id });
+  idle(f, lead.id);
+  assert.deepEqual(needsYou(await f.board()).map(({ text }) => text), ["The lane was stopped. Resume to continue."]);
+});
+
+test("stop takes only the two policy reasons", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  const result = await f.harness.behavior.runCli(["stop", "FIX-5", "--reason", "bored"], { projectId: "one", threadId: lead.id });
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /two-strikes or time-limit/);
 });

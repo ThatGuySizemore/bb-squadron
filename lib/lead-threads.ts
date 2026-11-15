@@ -3,7 +3,7 @@ import { familyForProvider } from "./squadron-settings.js";
 import type { LaunchView, Route } from "./board-model.js";
 import { launchView, readLaunchMetadata, reportedRoute, type LaunchRecord, type ReportedRoute } from "./launch-record.js";
 import type { LaneLaunch } from "./final-reviewer.js";
-import { readWaitTarget, STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
+import { PEER_MESSAGE_LEAD_IN, readWaitTarget, STOP_MESSAGE, TIME_LIMIT_STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
 type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
@@ -29,8 +29,8 @@ export interface LeadThread {
   idleSince?: number;
   /** The latest reply in the completed turn explicitly asks the owner to act. */
   asksOwner?: boolean;
-  /** A policy stop recorded by a fixed control input, never inferred from reply prose. */
-  stopReason?: "two-strikes";
+  /** Why the lane stopped, recorded by a fixed control input, never inferred from reply prose. "stop" is a plain Stop. */
+  stopReason?: "two-strikes" | "time-limit" | "stop";
   /** What the Lead declared it waits on, from a fixed control input; never from reply prose. */
   declaredWait?: string;
   thread: Pick<BbThread,
@@ -121,12 +121,13 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       if (metadata.role !== "lead" || typeof metadata.specId !== "string" || !metadata.specId) continue;
       const reported = await reportedRoute(bb, thread);
       const record = readLaunchMetadata(metadata);
-      const idle = await readLeadLifecycle(bb, thread);
       const workers = await readWorkers(bb, projectId, thread.id);
+      const launches = await readLaneLaunches(bb, projectId, thread.id, workers);
+      const idle = await readLeadLifecycle(bb, thread, Math.max(-1, ...launches.map((launch) => launch.createdAt)));
       leads.push({ ...(metadata.kind === "work-item" || metadata.kind === "spec" ? { kind: metadata.kind } : {}),
         ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...idle, specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
         asksOwner: idle.idleSince !== undefined && await readOwnerQuestion(bb, thread.id),
-        workers, launches: await readLaneLaunches(bb, projectId, thread.id, workers),
+        workers, launches,
         route: reported ? reportedThreadRoute(reported) : threadRoute(thread.providerId, null),
         ...(record ? { record, launch: launchView(record, reported) } : {}) });
     }
@@ -174,39 +175,70 @@ async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boo
   } catch { return false; }
 }
 
-/** Unknown history retains the existing Stopped fallback. No assistant text is classified. */
-async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<Pick<LeadThread, "idleSince" | "stopReason" | "declaredWait">> {
+/** Unknown history retains the existing Stopped fallback. No assistant text is classified.
+ * `newestChild` is when the Lead last started a child thread; a wait doesn't survive new work. */
+async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], newestChild = -1): Promise<Pick<LeadThread, "idleSince" | "stopReason" | "declaredWait">> {
   if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return {};
   try {
-    const [terminal, request, started] = await Promise.all([
+    const [terminal, request] = await Promise.all([
       bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/completed", "system/thread/interrupted", "turn/started"] }),
       readLatestControl(bb, thread.id),
-      bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/started"] }),
     ]);
     const end = terminal[0];
+    const completed = end?.type === "turn/completed" && end.data.status === "completed";
     // The board/CLI Stop sends this exact fixed input. A normal wind-down completion stays Stopped.
     if (request?.type === "client/turn/requested") {
-      if (request.data.input?.some((part) => part.type === "text" && part.text === TWO_STRIKES_STOP_MESSAGE))
-        return { stopReason: "two-strikes" };
-      if (request.data.input?.some((part) => part.type === "text" && part.text === STOP_MESSAGE)) return {};
-      // A wait is steered into the Lead's own turn, so no turn starts after it. A later turn means work began again.
-      const declared = request.data.input?.flatMap((part) => part.type === "text" ? [readWaitTarget(part.text)] : []).find((target) => target !== null);
-      if (declared && end?.type === "turn/completed" && end.data.status === "completed" && (started[0]?.seq ?? -1) < request.seq)
+      const texts = inputTexts(request);
+      if (texts.includes(TWO_STRIKES_STOP_MESSAGE)) return { stopReason: "two-strikes" };
+      if (texts.includes(TIME_LIMIT_STOP_MESSAGE)) return { stopReason: "time-limit" };
+      if (texts.includes(STOP_MESSAGE)) return { stopReason: "stop" };
+      // A message from another thread isn't the Lead's own work: look past it for a wait it left in place.
+      const control = isPeerMessage(request) ? await readLatestControl(bb, thread.id, true) : request;
+      const declared = control?.type === "client/turn/requested"
+        ? inputTexts(control).flatMap((text) => { const target = readWaitTarget(text); return target === null ? [] : [target]; })[0] : undefined;
+      // A wait is steered into the Lead's own turn, so no turn starts after it. A later turn of the Lead's own, or a child it launched, means work began again.
+      if (control && declared && completed && newestChild < control.createdAt && !await workedSince(bb, thread.id, control.seq))
         return { declaredWait: declared, idleSince: end.createdAt }; // an owner question in the reply still counts
     }
-    if (end?.type === "turn/completed" && end.data.status === "completed" && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
+    if (completed && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
   } catch { /* Unreadable lifecycle isn't evidence of a normal idle Lead. */ }
   return {};
 }
 
+type ThreadEvent = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["events"]["list"]>>[number];
+type Control = ThreadEvent;
+const inputTexts = (control: Control) => control.type === "client/turn/requested"
+  ? (control.data.input ?? []).flatMap((part) => part.type === "text" ? [part.text] : []) : [];
+const isPeerMessage = (control: Control) => inputTexts(control).some((text) => text.startsWith(PEER_MESSAGE_LEAD_IN));
+
+/** Whether the Lead did work of its own after `seq`: a turn nobody's message started, or file changes in any turn.
+ * A turn a peer's message started that only replies is not work. */
+async function workedSince(bb: BbPluginApi, threadId: string, seq: number): Promise<boolean> {
+  const after: ThreadEvent[] = [];
+  for (let beforeSeq: string | undefined; ;) {
+    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested", "turn/started", "item/completed"] });
+    after.push(...events.filter((event) => event.seq > seq));
+    if (events.length < 200 || events[events.length - 1].seq <= seq) break;
+    beforeSeq = String(events[events.length - 1].seq);
+  }
+  // Oldest first, so each turn's start is read against the request just before it, whichever page it fell on.
+  let asked: ThreadEvent | undefined;
+  for (const event of after.sort((a, b) => a.seq - b.seq)) {
+    if (event.type === "client/turn/requested") asked = event;
+    else if (event.type === "item/completed" && event.data.item.type === "fileChange") return true;
+    else if (event.type === "turn/started" && (!asked || !isPeerMessage(asked))) return true;
+  }
+  return false;
+}
+
 /** Child outcomes and other automatic system deliveries aren't Stop or Resume.
  * Page past them so saving workers cannot erase the lane's latest control. */
-async function readLatestControl(bb: BbPluginApi, threadId: string) {
+async function readLatestControl(bb: BbPluginApi, threadId: string, skipPeers = false): Promise<ThreadEvent | undefined> {
   let beforeSeq: string | undefined;
   for (;;) {
     const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested"] });
     const control = events.find((event) => event.type === "client/turn/requested" &&
-      (!event.data.systemMessageKind || event.data.systemMessageKind === "unlabeled"));
+      (!event.data.systemMessageKind || event.data.systemMessageKind === "unlabeled") && !(skipPeers && isPeerMessage(event)));
     if (control || events.length < 200) return control;
     beforeSeq = String(events[events.length - 1].seq);
   }

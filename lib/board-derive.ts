@@ -264,7 +264,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
-      ...(stopped && lead.stopReason === "two-strikes" ? { stopReason: "Stopped after two strikes, wants a new go" } : {}),
+      ...(stopped && lead.stopReason ? { stopReason: stopReasonText(lead.stopReason, workItem ? settings?.limits.workerTimeLimitMs : settings?.limits.laneTimeLimitMs) } : {}),
       ...(landedAt !== undefined ? { outcomeAt: landedAt } : stopped ? {
         outcomeAt: Math.max(...[lead.thread, ...workers].map((thread) => thread.updatedAt ?? thread.createdAt)),
       } : {}),
@@ -421,4 +421,14 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       autoStart: false, lanes, ready, shaping, openIssues,
     },
   };
+}
+
+/** What Needs you says of a lane that stopped for a recorded reason. */
+function stopReasonText(reason: NonNullable<LeadThread["stopReason"]>, limitMs?: number): string {
+  if (reason === "two-strikes") return "Stopped after two strikes, wants a new go";
+  if (reason === "stop") return "The lane was stopped. Resume to continue.";
+  const hours = limitMs && limitMs >= 3_600_000 ? Math.round(limitMs / 360_000) / 10 : undefined;
+  const minutes = limitMs && !hours ? Math.round(limitMs / 60_000) : undefined;
+  const named = hours ? `its ${hours}-hour limit` : minutes ? `its ${minutes}-minute limit` : "its time limit";
+  return `Stopped at ${named}. Work saved. Resume to continue.`;
 }

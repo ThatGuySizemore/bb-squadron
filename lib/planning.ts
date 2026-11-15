@@ -172,8 +172,12 @@ export function registerPlanning(bb: BbPluginApi, sources: PlanningSources) {
     }
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) throw new Error("This BB project has no default checkout to plan in.");
+    // Absent settings keep legacy planning on BB's default. Configured settings that don't resolve refuse by name rather than fall back.
+    if (checkout.settings && !checkout.settings.ok) {
+      throw new Error(`Fix docs/agents/squadron.md and House rules before planning: ${checkout.settings.issues.map((issue) => issue.message).join(" ")}`);
+    }
     const settings = checkout.settings?.ok ? checkout.settings.settings : null;
-    const resolved = settings ? resolveLaunch(settings, { role: "Planning" }) : null;
+    const resolved = settings ? resolveLaunch(settings, { role: "Planning" }, checkout.providerCatalog) : null;
     const requested = requestedRoute(resolved?.route ?? null);
     const launch: LaunchRecord = { version: 1, role: "Planning", category: null, policyResolved: resolved?.policyResolved ?? false,
       overrideNote: resolved?.overrideNote ?? null, specId: issue?.id ?? null, tickets: [], leadThreadId: null,

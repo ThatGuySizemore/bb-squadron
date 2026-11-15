@@ -57,8 +57,10 @@ const lane = z.object({
   stopReason: z.string().optional(), landedAt: z.number().optional(),
   /** Latest thread update for a stop, or merge time for a landing; orders newly observed outcomes. */
   outcomeAt: z.number().optional(),
-  /** Who runs the lane's final review, from the final-review family. */
+  /** Who runs the lane's final review, chosen from who built the branch. Absent when no reviewer can be chosen. */
   reviewer: route.optional(),
+  /** Which work the reviewer is independent of, or why none could be chosen, in owner words. */
+  finalReview: z.string().optional(),
   /** The spec in its planning tracker. */
   url: z.string().optional(),
   /** Child threads of the Lead that match no ticket, so no thread is hidden. */
@@ -274,12 +276,16 @@ export function otherFamily(family: Family): Family {
   return family === "claude" ? "gpt" : "claude";
 }
 
-/** The final reviewer: the Lead's own route for "same", else the first route of the other family. */
-export function reviewerFor(lead: Route, finalReviewFamily: "other" | "same", routes: readonly Route[]): Route {
-  if (finalReviewFamily === "same") return lead;
-  const family = otherFamily(lead.family);
-  return routes.find((route) => route.family === family)
-    ?? { family, model: family === "claude" ? "Claude" : "GPT", effort: lead.effort };
+/**
+ * The demo board's stand-in reviewer, from its own ticket routes: the other family to most tickets.
+ * Live lanes carry the reviewer lib/final-reviewer.ts chooses from recorded builders.
+ */
+export function demoReviewer(routes: readonly Route[]): Route | null {
+  const claude = routes.filter((route) => route.family === "claude").length;
+  const gpt = routes.filter((route) => route.family === "gpt").length;
+  if (!claude && !gpt) return null;
+  const family = otherFamily(claude >= gpt ? "claude" : "gpt");
+  return routes.find((route) => route.family === family) ?? { family, model: family === "claude" ? "Claude" : "GPT", effort: "high" };
 }
 
 export function formatMinutes(minutes: number): string {

@@ -8,7 +8,7 @@ import type { ReactNode, Ref } from "react";
 import { experimental_FileLink as FileLink, experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { Board, Lane, LaunchView, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
-import { canMerge, dependencyColumns, formatMinutes, LANDING_MS, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
+import { canMerge, dependencyColumns, formatMinutes, LANDING_MS, needsYou, nextLandings, demoReviewer, type Landings } from "../lib/board-model.js";
 import { FLYPAST_MS, nextFlyPast, type FlyPast } from "../lib/fly-past.js";
 import type { boardContract, PickerProjects } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
@@ -144,7 +144,7 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
 
 /** The agent's family icon, model and effort. A compact chip with a prefix shows only the icon and prefix; the model stays in its hover title.
  * With a launch record, the hover adds the service tier and any escalation reason, and a substitution BB reports is said in words. */
-function AiChip({ route, prefix, compact = false, launch }: { route: Route; prefix?: string; compact?: boolean; launch?: LaunchView }) {
+function AiChip({ route, prefix, compact = false, launch, note }: { route: Route; prefix?: string; compact?: boolean; launch?: LaunchView; note?: string }) {
   const { providers } = useProviders();
   const id = route.providerId ?? (route.family === "claude" ? "claude-code" : "codex");
   const provider = providers.find((p) => p.id === id) ?? { id };
@@ -154,6 +154,7 @@ function AiChip({ route, prefix, compact = false, launch }: { route: Route; pref
     `${route.providerId ?? (route.family === "claude" ? "Claude Code" : "Codex")} · ${route.model} · ${route.effort} effort${tier ? ` · ${tier} tier` : ""}`,
     substituted ? `BB runs this instead of the requested ${launchRouteText(launch.requested)}.` : null,
     launch?.escalation ? `${launch.escalation.kind === "effort" ? "Effort raised" : "Moved to a stronger model"}: ${launch.escalation.reason}` : null,
+    note ?? null,
   ].filter(Boolean).join("\n");
   return (
     <span className="sq-ai" title={compact && prefix ? `${prefix}: ${title}` : title} data-substituted={substituted || undefined}>
@@ -169,6 +170,13 @@ function AiChip({ route, prefix, compact = false, launch }: { route: Route; pref
       {substituted ? <span className="sq-ai-swap">substituted</span> : null}
     </span>
   );
+}
+
+/** The lane's final reviewer; its hover says which work the reviewer is independent of, or why none was chosen. */
+function ReviewerChip({ lane, demo, compact = false }: { lane: Lane; demo: boolean; compact?: boolean }) {
+  const reviewer = laneReviewer(lane, demo);
+  if (reviewer) return <AiChip route={reviewer} prefix="Reviewer" compact={compact} note={lane.finalReview} />;
+  return lane.finalReview ? <span className="sq-ai" title={lane.finalReview}><span>Reviewer · not chosen</span></span> : null;
 }
 
 /** A worker's chip shows what BB reports it runs, keeping the planned route's family for its icon when BB names no provider. */
@@ -287,9 +295,9 @@ function useOpen() {
 
 // ---------- the board ----------
 
-/** The settings' reviewer on a live lane; the demo pairs the other family from its own routes. */
-function laneReviewer(lane: Lane): Route {
-  return lane.reviewer ?? reviewerFor(lane.lead, "other", lane.tickets.map((t) => t.route));
+/** A live lane's reviewer comes from its builders; a demo lane pairs the other family to its own ticket routes. */
+function laneReviewer(lane: Lane, demo: boolean): Route | null {
+  return lane.reviewer ?? (demo ? demoReviewer(lane.tickets.map((t) => t.route)) : null);
 }
 
 const PR_CHECKS: Record<PullRequest["checks"], string> = {
@@ -344,9 +352,9 @@ function SlimTicketRow({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
   ) : <div className="sq-ticket-row" data-state={displayState} aria-label={label}>{body}</div>;
 }
 
-function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
+function Peg({ ticket, lane, demo }: { ticket: Ticket; lane: Lane; demo: boolean }) {
   const open = useOpen();
-  const reviewer = laneReviewer(lane);
+  const reviewer = laneReviewer(lane, demo);
   const state = ticketDisplayState(ticket, lane);
   const fill = state === "blocked" || state === "held" || state === "ready" ? null : <DitherCanvas fx={{ kind: "peg", state }} className="sq-fx" />;
   const waitsOn = ticket.blockedBy.filter((b) => {
@@ -357,7 +365,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
     state === "blocked"
       ? "Waiting"
       : state === "review"
-        ? `Review · ${reviewer.model}`
+        ? reviewer ? `Review · ${reviewer.model}` : "Review"
         : TICKET_LABEL[state];
   const clickable = Boolean(ticket.threadId);
   const size = state === "branch" || state === "done" ? "compact" : state === "blocked" || state === "held" ? "slim" : "full";
@@ -394,7 +402,7 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       {lane.state === "flying" && isActiveTicket(state) ? <LiveStepLine activity={ticket.liveStep} /> : null}
       {size === "full" ? (
         <span className="sq-peg-foot">
-          {state === "review" ? <AiChip route={reviewer} />
+          {state === "review" ? (reviewer ? <AiChip route={reviewer} note={lane.finalReview} /> : null)
             : <AiChip route={ticket.launch?.reported ? launchedRoute(ticket.launch.reported, ticket.route) : ticket.route} launch={ticket.launch} />}
           {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
         </span>
@@ -551,7 +559,7 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
         {lane.tickets.length ? <span className="sq-lane-count sq-num">{inBranch(lane)}/{lane.tickets.length} in branch</span> : null}
         <div className="sq-lane-row-end">
           {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}><Term text={LANE_LABEL[lane.state]} /></span> : null}
-          {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" compact /> : null}
+          {lane.state === "spec-review" ? <ReviewerChip lane={lane} demo={demo} compact /> : null}
           {lane.pr ? <PrChip pr={lane.pr} /> : null}
           {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
           {lane.outside ? null : <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} />}
@@ -663,7 +671,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           </span> : null}
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
-        {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" /> : null}
+        {lane.state === "spec-review" ? <ReviewerChip lane={lane} demo={demo} /> : null}
         {lane.pr ? <PrChip pr={lane.pr} /> : null}
         {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
         <span className="sq-branch">{lane.branch}</span>
@@ -681,7 +689,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
                 {i > 0 ? <Chevron className="sq-chevron" /> : null}
                 <div className="sq-column-stack">
                   {col.map((t) => (
-                    <Peg key={t.id} ticket={t} lane={lane} />
+                    <Peg key={t.id} ticket={t} lane={lane} demo={demo} />
                   ))}
                 </div>
               </div>

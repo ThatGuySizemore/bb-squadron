@@ -140,7 +140,8 @@ test("Start uses the Lead row even on a ui spec and keeps ticket routes separate
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel], ["codex", "gpt-6.1-sol", "medium"]);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes[0].tickets[0].route, { family: "claude", model: "claude-opus-5-5", effort: "high" });
-  assert.deepEqual(board.lanes[0].reviewer, { family: "claude", model: "claude-opus-5-5", effort: "high" });
+  // A GPT Lead with Claude-built tickets still gets the GPT reviewer: the Lead only coordinates.
+  assert.deepEqual(board.lanes[0].reviewer, { family: "gpt", model: "gpt-6.1-sol", effort: "high" });
 });
 
 test("a ready-marked spec with open planning is Shaping in the board and picker and cannot Start through RPC", async (t) => {

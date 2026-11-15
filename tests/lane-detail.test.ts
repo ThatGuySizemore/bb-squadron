@@ -152,9 +152,12 @@ test("the same Linear snapshot, threads and PRs give the same board after a rest
   assert.deepEqual(deriveBoard(make()).board, deriveBoard(structuredClone(make())).board);
 });
 
-test("the lane's reviewer comes from the final-review family in project settings", () => {
+test("the lane's reviewer comes from who builds its tickets, not the Lead's family; same keeps the Lead's route", () => {
+  // Nothing is launched yet: FIX-2 and FIX-12 take the GPT default route and FIX-3 the Claude ui route, so GPT builds most.
   const other = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()] })).board.lanes[0];
-  assert.deepEqual(other.reviewer, { family: "gpt", model: "gpt-6.1-sol", effort: "high" }, "the default row, not the data row");
+  assert.deepEqual(other.reviewer, { family: "claude", model: "claude-opus-5-5", effort: "high" }, "a Claude reviewer even under a Claude Lead");
+  assert.match(other.finalReview ?? "", /GPT built 2 of 3 tickets/);
+  assert.match(other.finalReview ?? "", /Not independent of FIX-3 \(not launched yet\): the same family built it\./);
   const same = parseSquadronSettings(readFileSync("tests/fixtures/squadron.md", "utf8").replace(/## Final review\s+other/, "## Final review\n\nsame"));
   assert.ok(same.ok);
   assert.deepEqual(deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], settings: same })).board.lanes[0].reviewer, LEAD_ROUTE);

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-15T03:28:55.039086Z",
+  "generatedAt": "2026-11-15T04:02:29.102349Z",
   "title": "Design System: BB Squadron",
   "extensions": {
     "colorMeta": {
@@ -189,17 +189,17 @@
       {
         "name": "takeoff",
         "value": "1500ms; roll for 35%, then lift",
-        "purpose": "Newly observed lanes only; first read never replays."
+        "purpose": "New real starts only; unknown first reads, reloads and project changes seed history without replay."
       },
       {
         "name": "beacon",
         "value": "2.4s bracket blink",
-        "purpose": "Amber while a flying lane has Needs you; reduced motion keeps brackets lit."
+        "purpose": "Amber plane and brackets for a flying lane with Needs you; holding keeps its red plane and adds amber brackets. Reduced motion keeps brackets lit."
       },
       {
         "name": "holding",
         "value": "4.5s circuit",
-        "purpose": "Stopped plane and dotted red ring; still frame under reduced motion."
+        "purpose": "Red plane and dotted red ring, with amber brackets while its Needs you row exists; reduced motion retains both forms."
       },
       {
         "name": "landing",
@@ -224,16 +224,16 @@
       {
         "name": "digit-flip",
         "value": "460ms cubic-bezier(0.16, 1, 0.3, 1)",
-        "purpose": "Changed Landed digit faces drop from -105%; windows receive 90ms/place delays, units upward. Sequential timing unproven without rendered check."
+        "purpose": "Changed Landed faces drop from -105%; the animated child explicitly inherits the window delay of 90ms/place, units upward. Declared association tested; live timing unproven."
       },
       {
         "name": "fly-past",
         "value": "3400ms, once per observed queue clearing",
-        "purpose": "Long V begins as the final landing ends, then parks. Reloads never replay."
+        "purpose": "Long V begins as the final landing ends, then parks. Reloads never replay; new Ready or Flying work cancels the pass in the same update and rearms the next earned pass."
       },
       {
         "name": "needs-you-edge",
-        "value": "3.6s sine, depth 10–14px",
+        "value": "3.6s sine, depth 10\u201314px",
         "purpose": "Amber edge grain keeps text on clean ground."
       },
       {
@@ -248,7 +248,7 @@
       },
       {
         "name": "hover",
-        "value": "130–140ms ease-out",
+        "value": "130\u2013140ms ease-out",
         "purpose": "Button fill and peg border."
       },
       {
@@ -274,20 +274,20 @@
     ],
     "provenance": {
       "workflow": "Installed impeccable 4.7.0 reference/document.md, scan mode and Step 4b",
-      "designSha256": "f1db5df3fdf31c1de8d3d962641fd316d4c689e1483c774b636d01468d92e73e",
-      "sourceBasis": "SQD-221 integration b41e444a3f44d150e8e9794c320e55ee5d261711",
+      "designSha256": "1e57a77e7c14cab58cf4462e0b6d4700377f33f847c0991268e0a896ced3a550",
+      "sourceBasis": "SQD-221 final-review repair source based on integration 1d41d7cbb509122747bcfab5685a0fe971f6f331",
       "visualEvidence": "Source-derived static component specimens only. No live BB visual acceptance. Held SQD-247 loading excluded.",
       "sourceSha256": {
-        "board/Board.tsx": "003b6d2a9bab8f059788b3e7dc92493b9b1782afcea9fd408f8198285a13a913",
-        "board/board.css": "597f1b1916887a03907b87412f6286ddb72ac129f3d8764415b3511ad4552171",
+        "board/Board.tsx": "e8dee2f79cc4ee4d504cdd9a68bf258d8b341d1ceb15ca635d3cb342f86d17e9",
+        "board/board.css": "80c8ba4598bacab87799bf774fb7fff1385a19f317b4be60e5306d5a224e2942",
         "board/FlipCount.tsx": "5c0511fa97ca2fd792c4960765de687f5ac146ab402db70a786a6f321bce90fb",
         "board/DitherCanvas.tsx": "d37b2a779b291b7d9c7d480d613ff7f131a4ddad741ded84cc9ec366f50263c0",
-        "lib/runway.ts": "91cbfde851ab0a737333aa6d83073bfa5d5c01a1513d5de400b2cce5dcb046ce",
+        "lib/runway.ts": "bfa4fe7fd01c7aa628b7aaa308ea704510113b2668e6e02e89cd205ba6d36bc5",
         "lib/dither.ts": "3516e1f7fdb261ea1e5814cb7cf0a3e7811008d9af9ba41ee8a8618abaa3b3a8",
         "lib/pixels.ts": "9b2484145ac9910f935f431d5d11c806af2873f940a9669b3a26afd723d158c8",
         "lib/working-agents.ts": "26d6a90a46202e7abc8d2a68068581014615ed1fc907b195078829421d085eac",
         "lib/board-model.ts": "1643c617153a982800bc0949979b9d930def762e8114da1d38733971b804f239",
-        "lib/fly-past.ts": "df2bd7c24766d5aa3af41739ad2928c342e69b450c0ed6017ca6aa8ae31de18a"
+        "lib/fly-past.ts": "5ea63b4d1e0d5e952c69dc1ece2587831d1094daa53caf19620a6e7402504254"
       }
     }
   },
@@ -329,13 +329,13 @@
       "kind": "chip",
       "refersTo": "tag",
       "description": "Normal UI-font work-kind tags; counts stay out of pixel type.",
-      "html": "<span class=\"ds-tag\">Work item</span> <span class=\"ds-tag\">Spec · 3 tickets</span>",
+      "html": "<span class=\"ds-tag\">Work item</span> <span class=\"ds-tag\">Spec \u00b7 3 tickets</span>",
       "css": ".ds-tag{display:inline-block;padding:1px 6px;border:1px solid var(--border, #dcdcd6);border-radius:2px;font:600 11px/1.4 inherit;color:var(--foreground, #1c1c1c);white-space:nowrap}.ds-tag-amber{color:#1d1600;background:#f2a900;border-color:#f2a900}"
     },
     {
       "name": "Runway planes",
       "kind": "custom",
-      "description": "Static specimen of shipped spec and smaller work-item sprites with the SQUADRON stencil. Runtime canvas supplies clouds, stands and lane moments. This is not a screenshot.",
+      "description": "Static specimen of shipped spec and smaller work-item sprites. Runtime canvas supplies moments. Above ten stands, a longer runway keeps 2px plane cells, 26px gaps and all lanes; a named focusable horizontal scroll region and visible hint expose overflow. Plane controls have 2px corners and outward sky focus at 2px offset. This is not a screenshot.",
       "html": "<div class=\"ds-runway\"><div class=\"ds-planes\"><svg aria-hidden=\"true\" width=\"48\" height=\"27\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"15\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"33\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"33\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"39\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"42\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"45\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"33\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"21\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"21\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"21\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"24\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"24\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"24\" width=\"3\" height=\"3\"/></svg><svg aria-hidden=\"true\" width=\"33\" height=\"21\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"9\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"18\" width=\"3\" height=\"3\"/></svg></div><div class=\"ds-tarmac\"><svg aria-label=\"SQUADRON\" role=\"img\" width=\"141\" height=\"21\" viewBox=\"0 0 141 21\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"3\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"9\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"27\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"30\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"36\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"48\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"39\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"42\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"45\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"57\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"60\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"63\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"57\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"60\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"63\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"54\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"66\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"75\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"78\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"81\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"84\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"72\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"75\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"78\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"81\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"93\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"96\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"99\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"102\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"102\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"93\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"96\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"99\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"96\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"99\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"90\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"102\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"111\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"114\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"117\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"108\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"120\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"111\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"114\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"117\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"129\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"132\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"135\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"126\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"138\" y=\"18\" width=\"3\" height=\"3\"/></svg></div></div>",
       "css": ".ds-runway{background:var(--background);color:var(--foreground);padding-top:14px}.ds-planes{display:flex;justify-content:flex-end;align-items:center;gap:30px;padding:10px 30px;color:#3fa7d6}.ds-tarmac{padding:10px 20px;background:color-mix(in oklab,var(--foreground) 7%,var(--background));border-block:2px solid color-mix(in oklab,var(--foreground) 30%,var(--background))}"
     },
@@ -350,7 +350,7 @@
       "name": "Needs you row",
       "kind": "card",
       "refersTo": "needs-you-row",
-      "description": "Delivered 2px amber border and offset 1px outline. Static structure; canvas edge grain is described in DESIGN.md.",
+      "description": "Delivered 2px amber border and offset 1px outline; rows stack 14px apart. Static structure; canvas edge grain is described in DESIGN.md.",
       "html": "<div class=\"ds-need\"><span class=\"ds-need-kind\">Question</span><span>Which option should this lane use?</span><button class=\"ds-answer\">Answer in thread</button></div>",
       "css": ".ds-need{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:16px 22px;border:2px solid #f2a900;outline:1px solid #f2a900;outline-offset:2px;background:var(--background);color:var(--foreground);font-size:13px}.ds-need-kind{font-size:11px;font-weight:700;color:color-mix(in oklab,#f2a900 46%,var(--foreground))}.ds-need-kind:before{content:\"\";display:inline-block;width:6px;height:6px;margin-right:6px;background:#f2a900}.ds-answer{height:28px;padding:0 11px;border:1px solid #f2a900;border-radius:2px;background:#f2a900;color:#1d1600;font-size:12px;font-weight:600;cursor:pointer}.ds-answer:hover{background:color-mix(in oklab,#f2a900 88%,var(--foreground))}.ds-answer:focus-visible{outline:2px solid color-mix(in oklab,#3fa7d6 50%,var(--foreground));outline-offset:2px}"
     },
@@ -364,7 +364,7 @@
     {
       "name": "Landed count",
       "kind": "custom",
-      "description": "Static 3px-cell count. Runtime FlipCount changes digit faces; reduced motion keeps the new number still.",
+      "description": "Changed digit faces animate for 460ms and explicitly inherit 90ms/place delays from stable keyed windows; unchanged identities remain. Static specimen, live timing unproven.",
       "html": "<div class=\"ds-landed-count\"><svg aria-label=\"12\" role=\"img\" width=\"27\" height=\"21\" viewBox=\"0 0 27 21\" fill=\"currentColor\" shape-rendering=\"crispEdges\"><rect x=\"3\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"0\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"3\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"6\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"0\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"3\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"6\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"9\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"12\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"15\" width=\"3\" height=\"3\"/><rect x=\"12\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"15\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"18\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"21\" y=\"18\" width=\"3\" height=\"3\"/><rect x=\"24\" y=\"18\" width=\"3\" height=\"3\"/></svg></div>",
       "css": ".ds-landed-count{color:var(--foreground);line-height:1}"
     }

@@ -3,6 +3,7 @@
 // draws clouds, tarmac and stands from it. Pixel tests, as for the formation.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { countInk as count, pixelAt as at } from "./fixtures/pixel-count.js";
 import { createDitherRenderer, type RendererEnv } from "../lib/dither-renderer.js";
 import { createSurface, pixelsOf, type Surface } from "../lib/dither.js";
 import { windSpeed } from "../lib/working-agents.js";
@@ -83,14 +84,6 @@ function paint(state: RunwayState, seconds: number, { width = 1200, narrow = fal
   const s = createSurface(width, narrow ? RUNWAY_HEIGHT.narrow : RUNWAY_HEIGHT.wide, 1);
   runway({ state, narrow, label, inks: INKS })(s, seconds);
   return s;
-}
-const at = (s: Surface, x: number, y: number) => s.buf[y * s.w + x]!;
-function count(s: Surface, ink: number, box: Box): number {
-  let n = 0;
-  for (let y = Math.max(0, Math.floor(box.y)); y < Math.min(s.h, Math.ceil(box.y + box.h)); y++) {
-    for (let x = Math.max(0, Math.floor(box.x)); x < Math.min(s.w, Math.ceil(box.x + box.w)); x++) if (at(s, x, y) === ink) n++;
-  }
-  return n;
 }
 
 test("clouds drift right to left on the lanes' wind, and stay put when nobody works", () => {

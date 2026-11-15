@@ -100,6 +100,19 @@
   overflow: hidden;
   background: var(--sq-pixel-rule) bottom / 100% 2px no-repeat;
 }
+.sq-runway[data-overflow="true"] {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-color: var(--sq-rule-ink) var(--background);
+}
+.sq-runway-scene {
+  position: relative;
+}
+.sq-runway-scroll-hint {
+  margin: 6px 14px 0;
+  font-size: 12px;
+  color: var(--sq-muted);
+}
 .sq-runway-art {
   position: absolute;
   inset: 0;
@@ -136,16 +149,13 @@
   position: absolute;
   padding: 0;
   border: 0;
-  border-radius: 4px;
+  border-radius: 2px;
   background: transparent;
   cursor: pointer;
 }
 .sq-runway-plane:focus-visible {
   outline: 2px solid var(--sq-sky-ink);
-  outline-offset: -2px;
-}
-.sq-runway-plane[data-beacon]:focus-visible {
-  outline-color: var(--sq-amber);
+  outline-offset: 2px;
 }
 
 .sq-controls {
@@ -325,6 +335,8 @@
 }
 .sq-flip-digit[data-flip="true"] > * {
   animation: sq-flip 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* Delay belongs to the animated face; each stable window supplies its place. */
+  animation-delay: inherit;
 }
 @keyframes sq-flip {
   from { transform: translateY(-105%); }

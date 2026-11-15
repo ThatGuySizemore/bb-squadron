@@ -71,6 +71,7 @@ async function fixture(t: TestContext, kind: "local-markdown" | "github" = "loca
     },
   }, experimental_callHostRpc: async ({ method, input, hostId }) => {
     assert.equal(hostId, "repo-host");
+    if (method === "readModelRoutes") return { markdown: null, policy: null };
     if (method === "inspectFiles") return { homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
       regularSkillFiles: (input as { skillPaths: string[] }).skillPaths };

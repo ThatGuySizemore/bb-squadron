@@ -55,7 +55,7 @@ function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e
           pluginId: "mattpocock-skills", provider, registrySkillId: null, scope: "plugin" as const,
         }))) }) },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "githubLogin" ? { authenticated: true } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "readModelRoutes" ? { markdown: null, policy: null } : method === "githubLogin" ? { authenticated: true } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: true, machineProfileExists: true,
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
       regularSkillFiles: (input as { skillPaths: string[] }).skillPaths,

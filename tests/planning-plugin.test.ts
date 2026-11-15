@@ -33,6 +33,8 @@ function host(options: HostOptions = {}) {
   const metadata = new Map<string, Record<string, unknown>>();
   return createFakePluginHost({
     pluginId: "squadron",
+    // A machine without House rules; any other host call stays unavailable, as before.
+    experimental_callHostRpc: async ({ method }) => { if (method === "readModelRoutes") return { markdown: null, policy: null }; throw new Error(`no fake host for ${method}`); },
     appUrl: options.appUrl === undefined ? "https://bb.example.test" : options.appUrl,
     settings: options.settings ?? { linearApiKey: "fake-planning-key" },
     sdk: {

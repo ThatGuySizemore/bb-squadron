@@ -47,7 +47,7 @@ test("non-Linear board and Doctor RPCs use the declared tracker without requesti
           : readFileSync("tests/fixtures/squadron.md", "utf8").replace(/## Status mapping[\s\S]*/, "");
         return { content, contentEncoding: "utf8", path, sha256: "fixture", sizeBytes: content.length };
       } },
-    }, experimental_callHostRpc: async ({ method }) => method === "githubLogin" ? { authenticated: true } : {
+    }, experimental_callHostRpc: async ({ method }) => method === "readModelRoutes" ? { markdown: null, policy: null } : method === "githubLogin" ? { authenticated: true } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: true, machineProfileExists: true,
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"], regularSkillFiles: [],
     } });

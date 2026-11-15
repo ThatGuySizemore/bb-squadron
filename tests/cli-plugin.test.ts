@@ -50,7 +50,7 @@ function host(native = nativeThreads(), settings = settingsFile) {
         },
       },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "githubLogin" ? { authenticated: true } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "readModelRoutes" ? { markdown: null, policy: null } : method === "githubLogin" ? { authenticated: true } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
       regularSkillFiles: (input as { skillPaths: string[] }).skillPaths,

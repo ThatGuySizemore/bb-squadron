@@ -104,8 +104,10 @@ _Avoid_: Lane state, Ticket state as separate entries → States
 
 **Two strikes**: Work reported done that then fails its quick check or review, or a worker that is truly stuck, is a strike. After two strikes on one ticket the Lead stops the lane and asks the owner.
 
-**Stop**: The owner's request that a Lead wind down. Its workers save their work in progress to their branches and tickets, and the Lead posts a summary on the spec.
+**Stop**: A request that a Lead wind down, sent by the owner or recorded by the Lead when a lane rule requires it. Its workers save their work in progress to their branches and tickets, and the Lead posts a summary on the spec.
 _Avoid_: cancel, kill → Stop
+
+**Policy stop**: A Stop the Lead records because a lane rule requires it, such as two strikes. It records state in BB's thread history and grants no owner approval or Resume.
 
 **Resume**: The owner's request that a stopped Lead carry on from its last summary.
 

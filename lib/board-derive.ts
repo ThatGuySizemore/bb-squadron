@@ -221,6 +221,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),
       stopped,
+      ...(stopped && lead.stopReason === "two-strikes" ? { stopReason: "Stopped after two strikes, wants a new go" } : {}),
       ...(landedAt !== undefined ? { outcomeAt: landedAt } : stopped ? {
         outcomeAt: Math.max(...[lead.thread, ...workers].map((thread) => thread.updatedAt ?? thread.createdAt)),
       } : {}),

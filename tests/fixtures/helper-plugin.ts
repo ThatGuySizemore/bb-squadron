@@ -26,7 +26,9 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
         id: `${provider}-${name}`, name: `mattpocock-skills:${name}`, description: null, filePath: `/plugins/${provider}/${name}/SKILL.md`, manageable: false, pluginId: "mattpocock-skills", provider, registrySkillId: null, scope: "plugin" as const,
       }))) }) },
       threads: {
-        events: { list: async ({ threadId, types, limit }) => (events.get(threadId) ?? []).filter((event) => !types || types.includes(event.type)).slice(0, Number(limit ?? 100)) },
+        events: { list: async ({ threadId, types, limit, beforeSeq }) => (events.get(threadId) ?? [])
+          .filter((event) => (!types || types.includes(event.type)) && (beforeSeq === undefined || event.seq < Number(beforeSeq)))
+          .slice(0, Number(limit ?? 100)) },
         list: async (args) => [...threads.values()].filter((thread) => thread.projectId === args?.projectId &&
           (!args?.parentThreadId || thread.parentThreadId === args.parentThreadId)).map((thread) => ({ ...thread, environmentBranchName: "spec/fix-5", hasPendingInteraction: thread.title === "Question" })),
         get: async ({ threadId }) => { const thread = threads.get(threadId); if (!thread) throw new Error("Thread not found"); return thread; },

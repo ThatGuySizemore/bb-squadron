@@ -100,6 +100,25 @@ test("an idle Lead's latest plain-text owner question becomes Needs you and wake
   assert.equal(f.sends().length, 1);
 });
 
+test("a bold mid-paragraph Needs you request appears on the board and wakes the Helper", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead");
+  f.threads.set(lead.id, { ...lead, status: "idle", runtime: { displayStatus: "idle" } });
+  f.events.set(lead.id, [
+    { id: "completed", threadId: lead.id, seq: 4, createdAt: epoch, scope: { kind: "thread" },
+      type: "turn/completed", data: { status: "completed", providerThreadId: null } },
+    { id: "message", threadId: lead.id, seq: 3, createdAt: epoch, scope: { kind: "thread" },
+      type: "item/completed", data: { providerThreadId: "provider", item: { id: "answer", type: "agentMessage",
+        text: "The branch and progress summary are saved. **Needs you:** a new go for focused repairs before another review." } } },
+  ]);
+  await f.startWatcher(); await f.advance(300_000);
+  assert.deepEqual(needsYou(await f.board()).map(({ kind, text }) => ({ kind, text })), [
+    { kind: "waiting", text: "The Lead is waiting on you" },
+  ]);
+  await f.advance(120_000);
+  assert.equal(f.sends()[0]?.input[0].text, "Fixture | Question | FIX-5 | The Lead is waiting on you | @thread:lead-one");
+});
+
 test("idle status messages and unreadable question evidence never wake the Helper", async (t) => {
   const f = await fixture(t);
   const lead = f.lead("one", "Lead");
@@ -112,6 +131,27 @@ test("idle status messages and unreadable question evidence never wake the Helpe
   await f.startWatcher(); await f.advance(480_000);
   assert.equal((await f.board()).lanes[0].needs, undefined);
   assert.equal(f.sends().length, 0);
+});
+
+test("quoted and inline-code Needs you markers stay quiet", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead");
+  f.threads.set(lead.id, { ...lead, status: "idle", runtime: { displayStatus: "idle" } });
+  for (const text of [
+    "> The old reply said **Needs you:** a new go.",
+    "The marker is `**Needs you:** a new go` in this example.",
+    "The marker is ``**Needs you:** a new go`` in this example.",
+  ]) {
+    f.events.set(lead.id, [
+      { id: "end", threadId: lead.id, seq: 4, createdAt: epoch, scope: { kind: "thread" },
+        type: "turn/completed", data: { status: "completed", providerThreadId: null } },
+      { id: "message", threadId: lead.id, seq: 3, createdAt: epoch, scope: { kind: "thread" },
+        type: "item/completed", data: { providerThreadId: "provider", item: { id: "reply", type: "agentMessage", text } } },
+    ]);
+    await f.startWatcher(); await f.advance(480_000);
+    assert.deepEqual(needsYou(await f.board()), [], text);
+    assert.equal(f.sends().length, 0, text);
+  }
 });
 
 test("questions inside Markdown fences never become Needs you, including unfinished fences", async (t) => {
@@ -158,6 +198,19 @@ test("an idle lane blocked outside itself stays quiet, but an explicit owner que
   assert.deepEqual(board.lanes[0].waitingOn, ["OUT-10"]);
   assert.deepEqual(needsYou(board), []);
   assert.equal(f.sends().length, 0);
+  for (const text of [
+    "FIX-6 waits on OUT-10. Nothing needs you: it starts when OUT-10 lands.",
+    "FIX-6 waits on OUT-10. **Needs you:**",
+    "FIX-6 waits on OUT-10. Needs you: none",
+    "FIX-6 waits on OUT-10. Needs you: 0",
+  ]) {
+    f.events.set(lead.id, events(text));
+    await f.advance(30_000); await f.advance(120_000);
+    board = await f.board();
+    assert.deepEqual(board.lanes[0].waitingOn, ["OUT-10"]);
+    assert.deepEqual(needsYou(board), [], text);
+    assert.equal(f.sends().length, 0, text);
+  }
   f.events.set(lead.id, events("Can you choose the wording while OUT-10 finishes?"));
   await f.advance(30_000); await f.advance(120_000);
   board = await f.board();

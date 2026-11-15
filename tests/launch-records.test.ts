@@ -443,6 +443,20 @@ test("final-review: a GPT Lead with a Claude worker still launches the GPT revie
   assert.equal(spawnArgs(2).pluginMetadata.launch.role, "Review of claude-code");
 });
 
+test("final-review: a legacy GPT-built lane launches the Claude row its Family table names, checked against BB's catalogue", async (t) => {
+  const { harness, spawnArgs, launch } = await setup(t, legacySettings, null);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const worker = await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"]);
+  assert.equal(worker.exitCode, 0, worker.stderr);
+  assert.deepEqual([spawnArgs(1).providerId, spawnArgs(1).model, spawnArgs(1).reasoningLevel], ["codex", "gpt-6.1-sol", "high"]);
+  const reviewed = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review."]);
+  assert.equal(reviewed.exitCode, 0, reviewed.stderr);
+  assert.deepEqual([spawnArgs(2).providerId, spawnArgs(2).model, spawnArgs(2).reasoningLevel], ["claude-code", "claude-opus-5-5", "high"]);
+  const record = spawnArgs(2).pluginMetadata.launch;
+  assert.deepEqual([record.role, record.policyResolved], ["Review of codex", false]);
+  assert.ok(reviewed.stdout.includes("GPT builds 1 of 1 ticket so far, so the Review of codex route reviews. Independent of FIX-6."), reviewed.stdout);
+});
+
 test("final-review refuses, launching nothing, when no ticket has a recorded builder: unrecorded threads are never synthesised", async (t) => {
   const { harness, native, launch } = await setup(t);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });

@@ -1,3 +1,4 @@
+import { fixtureProviderCatalog } from "./fixtures/provider-catalog.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { doctor, requiredSkills, setupFiles } from "../lib/doctor.js";
@@ -95,6 +96,7 @@ test("mechanical only allows low for Mechanical alone", () => {
 });
 
 const ready = {
+  providerCatalog: fixtureProviderCatalog,
   skills: { claude: requiredSkills, gpt: requiredSkills }, setupFiles,
   issueTrackerMarkdown: "# Issue tracker: Linear", linearConnected: true, ghAuthenticated: true,
   configurationFiles: [], settingsMarkdown: shared,

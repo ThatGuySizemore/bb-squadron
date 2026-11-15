@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
@@ -87,6 +88,7 @@ test("the board refreshes local files every 30 seconds and retains its last comp
   let offline = false;
   const host = experimental_createHostEntryHarness(createDoctorHost());
   const { bb, harness } = createFakePluginHost({ experimental_hostEntry: true, sdk: {
+      providers: fixtureProviders,
     projects: { get: async () => ({ id: "project", name: "Fixture project", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
       sources: [{ id: "source", projectId: "project", hostId: "host", path: root, isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
     files: { read: async ({ path }) => {

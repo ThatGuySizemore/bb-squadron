@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 // Spec A's end-to-end test: the real server.ts on the SDK's fake plugin host,
 // a recorded Linear workspace behind fetch, and the board read through RPC.
 import { test, mock } from "node:test";
@@ -33,6 +34,7 @@ function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e
     experimental_hostEntry: true,
     settings,
     sdk: {
+      providers: fixtureProviders,
       threads: { list: async () => [] },
       projects: { get: async () => ({
         id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,

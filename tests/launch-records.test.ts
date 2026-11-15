@@ -403,3 +403,14 @@ test("effort-only escalation refuses a changed role, provider or model and an un
   }
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 3, "no refused escalation launched a thread");
 });
+
+test("a valid legacy Family worker launch uses the discovered catalogue without substituting or joining the policy cohort", async (t) => {
+  const { harness, spawnArgs, launch } = await setup(t, legacySettings, null);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const result = await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "Implement FIX-6."]);
+  assert.equal(result.exitCode, 0, result.stderr);
+  const args = spawnArgs(1);
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["codex", "gpt-6.1-sol", "high", "default"]);
+  assert.equal(args.pluginMetadata.launch.role, "Worker");
+  assert.equal(args.pluginMetadata.launch.policyResolved, false);
+});

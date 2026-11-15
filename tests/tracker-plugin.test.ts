@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test, mock } from "node:test";
@@ -13,6 +14,7 @@ import type { Board } from "../lib/board-model.js";
 
 test("a Linear project without a Scope reads nothing and says to add one; the picker binding is gone", async (t) => {
   const { bb, harness } = createFakePluginHost({ sdk: {
+      providers: fixtureProviders,
     projects: { get: async () => ({ id: "project", name: "Example", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
       sources: [{ id: "source", projectId: "project", hostId: "host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
     files: { read: async ({ path }) => {
@@ -36,6 +38,7 @@ test("non-Linear board and Doctor RPCs use the declared tracker without requesti
   t.after(() => fetch.mock.restore());
   for (const name of ["local", "github"]) {
     const { bb, harness } = createFakePluginHost({ experimental_hostEntry: true, sdk: {
+      providers: fixtureProviders,
       threads: { list: async () => [] }, skills: { list: async () => ({ skills: [] }) },
       projects: { get: async () => ({ id: "project", name: "Example", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId: "project", hostId: "host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
@@ -64,6 +67,7 @@ test("non-Linear board and Doctor RPCs use the declared tracker without requesti
 
 test("recorded Linear assignees, parent links and URLs are available through the tracker reader", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" }, sdk: {
+      providers: fixtureProviders,
     threads: { list: async () => [] },
     projects: { get: async () => ({ id: "proj-one", name: "Example", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
       sources: [{ id: "source", projectId: "proj-one", hostId: "host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },

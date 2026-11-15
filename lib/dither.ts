@@ -75,7 +75,8 @@ function noise(x: number, y: number): number {
   const u = fade(xf), v = fade(yf);
   return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
 }
-const fbm = (x: number, y: number) => noise(x, y) * 0.65 + noise(x * 2.1 + 17.3, y * 2.1 + 5.1) * 0.35;
+/** Two octaves of value noise, in about [0, 1]. */
+export const fbm = (x: number, y: number) => noise(x, y) * 0.65 + noise(x * 2.1 + 17.3, y * 2.1 + 5.1) * 0.35;
 
 // ---------- painting helpers ----------
 
@@ -96,6 +97,35 @@ export function field(s: Surface, ink: number, fn: (x: number, y: number) => num
     const by = (y & 7) * 8;
     const o = y * w;
     for (let x = 0; x < w; x++) {
+      const v = row[Math.min(cssW - 1, Math.floor(x / dpr))]!;
+      if (v > BAYER[by + (x & 7)]!) buf[o + x] = ink;
+    }
+  }
+}
+
+/**
+ * field(), limited to a box of CSS pixels [x0, y0, x1, y1] and sampled every
+ * `step` CSS pixels on a grid fixed to the surface, for large low-frequency
+ * art such as the banner's clouds. Thresholds stay per device pixel.
+ */
+export function fieldIn(s: Surface, ink: number, fn: (x: number, y: number) => number, box: [number, number, number, number], step = 1): void {
+  const { w, h, dpr, cssW, cssH, buf } = s;
+  const bx0 = Math.max(0, Math.floor(box[0])), by0 = Math.max(0, Math.floor(box[1]));
+  const bx1 = Math.min(cssW, Math.ceil(box[2])), by1 = Math.min(cssH, Math.ceil(box[3]));
+  if (bx1 <= bx0 || by1 <= by0) return;
+  const row = new Float32Array(cssW);
+  let lastSy = -1;
+  const x0 = Math.round(bx0 * dpr), x1 = Math.min(w, Math.round(bx1 * dpr));
+  for (let y = Math.round(by0 * dpr); y < Math.min(h, Math.round(by1 * dpr)); y++) {
+    const cy = Math.min(cssH - 1, Math.floor(y / dpr));
+    const sy = cy - (cy % step);
+    if (sy !== lastSy) {
+      for (let cx = bx0; cx < bx1; cx++) row[cx] = cx % step === 0 || cx === bx0 ? fn(cx - (cx % step), sy) : row[cx - 1]!;
+      lastSy = sy;
+    }
+    const by = (y & 7) * 8;
+    const o = y * w;
+    for (let x = x0; x < x1; x++) {
       const v = row[Math.min(cssW - 1, Math.floor(x / dpr))]!;
       if (v > BAYER[by + (x & 7)]!) buf[o + x] = ink;
     }
@@ -170,20 +200,31 @@ export function pegFill({ ink, base, amp = 0, speed = 0, edge }: { ink: number; 
 export function needsYou({ ink }: { ink: number }): Painter {
   return (s, t) => {
     const breath = 0.5 + 0.5 * Math.sin((t * Math.PI * 2) / 3.6);
-    const depth = 7 + 3 * breath;
+    const depth = 10 + 4 * breath;
     field(s, ink, (x, y) => {
-      const edge = Math.min(y, s.cssH - 1 - y, x * 0.6, (s.cssW - 1 - x) * 0.6);
+      const edge = Math.min(y, s.cssH - 1 - y, x * 1.15, (s.cssW - 1 - x) * 1.15);
       if (edge > depth + 2) return 0;
       const n = fbm((x - t * 14) / 40, y / 9 + t * 0.08);
       const falloff = Math.max(0, 1 - edge / depth);
-      return falloff * falloff * (0.22 + 0.3 * breath + 0.35 * (n - 0.4));
+      return falloff * falloff * (0.36 + 0.3 * breath + 0.4 * (n - 0.4));
     });
   };
 }
 
-/** A still plate: a flat dither level. */
-export function plate({ ink, level }: { ink: number; level: number }): Painter {
-  return (s) => field(s, ink, () => level);
+/** A still Landed stamp: green edge grain with a clean centre for the number. */
+export function plate({ ink }: { ink: number }): Painter {
+  return (s) => field(s, ink, (x, y) => {
+    const edge = Math.min(y, s.cssH - 1 - y, x, s.cssW - 1 - x);
+    const falloff = Math.max(0, 1 - edge / 7);
+    return falloff * falloff * 0.85;
+  });
+}
+
+/** A section separator: 2px square dots on an 8px pitch, as in the Runway comp. */
+export function sectionRule({ ink }: { ink: number }): Painter {
+  return (s) => {
+    for (let x = 0; x < s.cssW; x += 8) rect(s, ink, x, 0, 2, 2);
+  };
 }
 
 /**

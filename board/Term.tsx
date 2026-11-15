@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { useEffect, useId, useRef } from "react";
 import { OWNER_WORDS, type OwnerWord } from "../lib/owner-words.js";
 import "./term.css";
@@ -13,16 +14,16 @@ export function isOwnerWord(text: string): text is OwnerWord {
  * `nested` marks a label inside a button or link: the control keeps the only tab
  * stop, and its own keyboard focus shows the definition.
  */
-export function Term({ text, word, nested = false }: { text: string; word?: OwnerWord; nested?: boolean }) {
+export function Term({ text, word, nested = false, children }: { text: string; word?: OwnerWord; nested?: boolean; children?: ReactNode }) {
   const defined = word ?? (isOwnerWord(text) ? text : null);
-  return defined ? <OwnerTerm word={defined} text={text} nested={nested} /> : <>{text}</>;
+  return defined ? <OwnerTerm word={defined} text={text} nested={nested}>{children}</OwnerTerm> : <>{children ?? text}</>;
 }
 
 const GAP = 6;
 const EDGE = 8;
 const HIDE_MS = 120;
 
-function OwnerTerm({ word, text, nested }: { word: OwnerWord; text: string; nested: boolean }) {
+function OwnerTerm({ word, text, nested, children }: { word: OwnerWord; text: string; nested: boolean; children?: ReactNode }) {
   const id = useId();
   const term = useRef<HTMLSpanElement>(null);
   const tip = useRef<HTMLSpanElement>(null);
@@ -92,7 +93,7 @@ function OwnerTerm({ word, text, nested }: { word: OwnerWord; text: string; nest
 
   return (
     <span ref={term} className="sq-term" data-term={word} tabIndex={nested ? undefined : 0} aria-describedby={nested ? undefined : id}>
-      {text}
+      {children ?? text}
       {/* In the top layer, so a scrolling rail or a narrow panel never clips it. A click on it stays off the control it sits in. */}
       <span ref={tip} id={id} role="tooltip" popover="manual" className="sq-term-tip" onClick={(event) => { event.preventDefault(); event.stopPropagation(); }}>
         {OWNER_WORDS[word]}

@@ -307,10 +307,8 @@ interface Pose { x: number; y: number; workKind: WorkKind; ink: number; trail: n
  * smaller plane takes the same path, centred in the same boxes.
  */
 function pose(stand: Exclude<RunwayStand, { kind: "empty" }>, g: RunwayLayout, i: number, seconds: number, age: number, inks: RunwayInks): Pose | null {
-  const o = inset(g, stand.workKind), w = stand.workKind === "work-item" ? g.small.w : g.plane.w;
-  const park = { x: g.stands[i]!.park.x + o.x, y: g.stands[i]!.park.y + o.y };
-  const air = { x: g.stands[i]!.air.x + o.x, y: g.stands[i]!.air.y + o.y };
   const { workKind } = stand;
+  const park = planeBox(g, i, "park", workKind), air = planeBox(g, i, "air", workKind);
   const phase = i * 1.7;
   const bob = { x: Math.sin(seconds * 0.7 + phase) * 0.8, y: Math.sin(seconds * 1.3 + phase) * 1.2 };
   switch (stand.kind) {
@@ -321,9 +319,8 @@ function pose(stand: Exclude<RunwayStand, { kind: "empty" }>, g: RunwayLayout, i
     }
     case "holding": {
       const a = -Math.PI / 4 + seconds * (Math.PI * 2 / HOLD_LAP), r = g.cell * 2;
-      const h = stand.workKind === "work-item" ? g.small.h : g.plane.h;
       return { x: air.x + Math.cos(a) * r, y: air.y + Math.sin(a) * r, workKind, ink: inks.holding, trail: 0,
-        ring: { cx: air.x + w / 2, cy: air.y + h / 2, r: w * 0.62 + r } };
+        ring: { cx: air.x + air.w / 2, cy: air.y + air.h / 2, r: air.w * 0.62 + r } };
     }
     case "takeoff":
     case "flying": {

@@ -377,3 +377,13 @@ test("a history Squadron can't read is surfaced, never read as a Stop", async (t
   assert.equal(board.lanes[0].state, "flying");
   assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [{ kind: "blocked", text: "Squadron couldn't read the Lead for FIX-5 (history unavailable). Open it to check." }]);
 });
+
+test("a Lead that is neither running nor idle by BB's own words is surfaced with both statuses, not Stopped", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  f.threads.set(lead.id, { ...f.threads.get(lead.id)!, status: "idle", runtime: { displayStatus: "provisioning" } });
+  const board = await f.board();
+  assert.equal(board.lanes[0].stopped, false);
+  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })),
+    [{ kind: "blocked", text: "Squadron couldn't read the Lead for FIX-5 (status idle, display provisioning). Open it to check." }]);
+});

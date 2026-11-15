@@ -180,7 +180,9 @@ async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boo
 /** Unknown history retains the existing Stopped fallback. No assistant text is classified.
  * `newestChild` is when the Lead last started a child thread; a wait doesn't survive new work. */
 async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], newestChild = -1): Promise<Pick<LeadThread, "idleSince" | "stopReason" | "declaredWait" | "unreadable">> {
-  if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return {};
+  if (isRunningThread(thread)) return {};
+  // Not running and not idle (for example status idle with another display status): say so rather than fall to Stopped.
+  if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle") return { unreadable: `status ${thread.status}, display ${thread.runtime.displayStatus}` };
   try {
     const [terminal, request] = await Promise.all([
       bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/completed", "system/thread/interrupted", "turn/started"] }),

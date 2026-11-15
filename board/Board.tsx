@@ -683,7 +683,13 @@ export function WorkKindTag({ kind = "spec", ticketCount }: { kind?: "spec" | "w
     : <><Term text="Spec" /> · {ticketCount > 25 ? "25+" : ticketCount} <Term text={ticketCount === 1 ? "ticket" : "tickets"} word="Ticket" /></>}</span>;
 }
 
-function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false, next = false }: { spec: ReadySpec; next?: boolean; board: Board; dispatch: (a: BoardAction) => void; opening?: boolean; startBusy?: boolean }) {
+function PlanningLink({ threadId }: { threadId?: string }) {
+  const open = useOpen();
+  return threadId ? <button type="button" className="sq-issue-link" title={`Open the planning thread ${open.where}`}
+    onClick={() => open.thread(threadId, "the planning thread")}>Planning thread</button> : null;
+}
+
+function ReadyRow({ spec, board, dispatch, onPlan, planning = false, opening = false, startBusy = false, next = false }: { spec: ReadySpec; next?: boolean; board: Board; dispatch: (a: BoardAction) => void; onPlan: Plan; planning?: boolean; opening?: boolean; startBusy?: boolean }) {
   // Real specs carry the board model's reason; the demo computes its own.
   const blocked = (spec.startReason !== undefined ? spec.startReason : canStart(board, spec))
     ?? (startBusy ? "Wait for the Lead thread to open." : null);
@@ -706,6 +712,7 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false, n
             </span>
           ) : null}
           {spec.acceptOwner ? <span className="sq-tag">accept:owner</span> : null}
+          <PlanningLink threadId={spec.planningThreadId} />
         </div>
         {waiting.length ? (
           <details className="sq-waits">
@@ -733,6 +740,9 @@ function ReadyRow({ spec, board, dispatch, opening = false, startBusy = false, n
         ) : null}
       </div>
       <div className="sq-row-actions">
+        {spec.planningThreadId ? <Btn disabled={planning || opening} onClick={() => onPlan(spec.id)}>
+          {planning ? "Opening…" : "Resume planning"}
+        </Btn> : null}
         {opening || blocked ? <span className="sq-why" role={opening ? "status" : undefined}>{opening ? "Opening its Lead thread" : blocked}</span> : null}
         <Btn tone="primary" disabled={opening || blocked !== null} title={blocked ?? `Start a lane for ${spec.id}`} onClick={() => dispatch({ type: "start", specId: spec.id })}>
           {opening ? "Opening…" : "Start"}
@@ -759,6 +769,7 @@ function ShapingRow({ spec, onPlan, opening }: { spec: ShapingSpec; onPlan: Plan
             {opening ? (spec.action === "resume" ? "Opening its planning thread" : "Starting a planning thread for its tickets") : spec.missing}
           </span>
           <WorkKindTag ticketCount={spec.totalTicketCount ?? spec.ticketCount} />
+          <PlanningLink threadId={spec.planningThreadId} />
         </div>
       </div>
       <div className="sq-row-actions">
@@ -782,7 +793,7 @@ function EmptySection({ text, action }: { text: string; action?: ReactNode }) {
 }
 
 function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: Plan; opening: boolean }) {
-  const meta = issue.kind || issue.priority || issue.labels.length || issue.under || opening;
+  const meta = issue.kind || issue.priority || issue.labels.length || issue.under || opening || issue.planningThreadId;
   return (
     <li className="sq-row sq-open-issue">
       <span className="sq-open-issues-id sq-num">{issue.id}</span>
@@ -794,6 +805,7 @@ function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: Pl
             {issue.priority ? <PriorityDot priority={issue.priority} /> : null}
             {issue.labels.map((l) => <span key={l} className="sq-tag">{l}</span>)}
             {issue.under ? <span className="sq-open-issues-under">{issue.under}</span> : null}
+            <PlanningLink threadId={issue.planningThreadId} />
             {opening ? <span className="sq-why" role="status">Starting its planning thread</span> : null}
           </div>
         ) : null}
@@ -1161,7 +1173,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
           ) : (
             <ul className="sq-list">
               {board.ready.map((spec) => (
-                <ReadyRow key={spec.id} next={startable?.id === spec.id} spec={spec} board={board} dispatch={dispatch} opening={starting === spec.id} startBusy={starting !== null} />
+                <ReadyRow key={spec.id} next={startable?.id === spec.id} spec={spec} board={board} dispatch={dispatch} onPlan={onPlan} planning={planning === spec.id} opening={starting === spec.id} startBusy={starting !== null} />
               ))}
             </ul>
           )}

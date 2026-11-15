@@ -3,7 +3,7 @@
 // leaves it when it unmounts or scrolls off screen.
 import { useEffect, useRef, type CSSProperties } from "react";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
-import { airstream, burst, BURST_SECONDS, createSurface, needsYou, packInk, pegFill, plate, type Painter, type Surface } from "../lib/dither.js";
+import { airstream, burst, BURST_SECONDS, createSurface, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
 import { runway, runwayMotion, type RunwayState } from "../lib/runway.js";
 
 /** What a canvas draws. Inks are read from the board's CSS, so they follow the theme. */
@@ -12,6 +12,7 @@ export type Fx =
   | { kind: "peg"; state: "working" | "question" | "review" | "branch" | "done" | "failed" }
   | { kind: "needs-you" }
   | { kind: "plate" }
+  | { kind: "section-rule" }
   | { kind: "runway"; narrow: boolean; label: string; state: RunwayState }
   | { kind: "burst" };
 
@@ -21,7 +22,8 @@ function painterFor(fx: Fx, ink: Inks): Painter {
   switch (fx.kind) {
     case "airstream": return airstream({ pace: fx.pace, ink: ink("--sq-sky") });
     case "needs-you": return needsYou({ ink: ink("--sq-amber") });
-    case "plate": return plate({ ink: ink("--sq-green"), level: 0.2 });
+    case "plate": return plate({ ink: ink("--sq-green") });
+    case "section-rule": return sectionRule({ ink: ink("--sq-rule-ink") });
     case "runway": return runway({ state: fx.state, narrow: fx.narrow, label: fx.label, inks: {
       cloud: ink("--sq-cloud"), tarmac: ink("--sq-tarmac"), line: ink("--sq-tarmac-line"), rule: ink("--sq-tarmac-rule"),
       stand: ink("--sq-stand"), plane: ink("--sq-sky"),
@@ -47,7 +49,8 @@ function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until">
     case "runway": return runwayMotion(fx.state);
     case "burst": return { animated: true, stillAt: BURST_SECONDS, until: BURST_SECONDS };
     case "peg": return { animated: fx.state === "working", stillAt: 1.2 };
-    case "plate": return { animated: false, stillAt: 0 };
+    case "plate":
+    case "section-rule": return { animated: false, stillAt: 0 };
   }
 }
 

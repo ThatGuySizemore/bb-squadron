@@ -189,7 +189,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const teamKey = (identifier: string) => /^([A-Za-z][A-Za-z0-9]*)-\d+$/.exec(identifier)?.[1].toLowerCase();
     const sameTeam = lead.declaredWait !== undefined && teamKey(lead.declaredWait) !== undefined && teamKey(lead.declaredWait) === teamKey(spec.identifier);
     const declaredWait = lead.declaredWait && !(named ? !isOpenIssue(named) : sameTeam) ? lead.declaredWait : undefined;
-    const stopped = noRunningThreads && ((lead.idleSince === undefined && declaredWait === undefined) || needs.some((need) => need.kind !== "waiting"));
+    // Stopped needs recorded evidence: a Stop control, an interrupted or failed turn, or a failed thread. A history Squadron couldn't read isn't any of those.
+    const stopped = noRunningThreads && ((lead.idleSince === undefined && declaredWait === undefined && !lead.unreadable) || needs.some((need) => need.kind !== "waiting"));
+    if (lead.unreadable && !stopped && noRunningThreads) {
+      needs.push({ threadId: lead.thread.id, kind: "blocked", text: `Squadron couldn't read the Lead for ${spec.identifier}. Open it to check.` });
+    }
     const children = [...workers].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const matched = new Set<string>();
     const tickets: Ticket[] = issues.sort(byIdentifier).map((issue) => {

@@ -87,6 +87,8 @@ const boardSchema = z.object({
     id: z.string(), title: z.string(), ticketCount: z.number(), routes: z.array(route), blockedBy: z.array(z.string()),
     acceptOwner: z.boolean(), url: z.string().optional(), blockers: z.array(blocker).optional(),
     startReason: z.string().nullable().optional(),
+    /** A landed spec whose remaining tickets are all in the landed branch. The owner can Start it; Autopilot never does. */
+    justLanded: z.boolean().optional(),
     /** Open blockers of the spec itself, distinct from tickets that can wait inside its lane. */
     waitingFor: z.array(blocker).optional(),
     /** Open tickets that wait on open blockers, so a partial frontier shows why the rest won't start. */

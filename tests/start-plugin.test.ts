@@ -1033,6 +1033,27 @@ test("a landed spec with remaining un-held tickets returns Ready and starts a fr
   assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_2" });
 });
 
+test("Autopilot leaves a just-landed spec alone while its tickets wait in branch, but the owner can still Start it", async (t) => {
+  const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-6"
+      ? { ...node, state: { id: "state-review", name: "In Review", type: "started" } } : node).filter((node) => node.identifier !== "FIX-1"),
+  } } }));
+  native.threads.set("old", makeThreadResponse({ id: "old", projectId: "proj-one", providerId: "codex",
+    environmentId: "env_lead_1", status: "idle", createdAt: 1 }));
+  native.metadata.set("old", { role: "lead", specId: "fix-5", startedBy: "owner" });
+  native.routes.set("old", { model: "gpt-6.1-sol", reasoningLevel: "high" });
+  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes[0].state, "landed");
+  assert.equal(board.ready.find((spec) => spec.id === "FIX-5")?.justLanded, true);
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 2 });
+  await watcherCycle(harness);
+  assert.equal(native.count, 0, "Autopilot starts no Lead in the moments after the merge");
+  const started = await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }) as { threadId: string };
+  assert.notEqual(started.threadId, "old", "the owner's Start still returns the spec");
+  assert.equal(native.count, 1);
+});
+
 test("a landed spec stays Landed while every remaining ticket is held, then returns when the hold clears", async (t) => {
   let held = true;
   const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,

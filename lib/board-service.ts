@@ -217,14 +217,14 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
           if (!attempted && sources.autopilot?.isOn(projectId) && sources.startLane) {
             const state = await sources.autopilot.get(projectId);
             const flying = autopilotLaneCount(board);
-            const next = board.ready.find((spec) => spec.kind !== "work-item" && spec.startReason === null);
+            const next = board.ready.find((spec) => spec.kind !== "work-item" && spec.startReason === null && !spec.justLanded);
             if (board.doctor?.ready && flying < state.laneLimit && next) {
               attempted = true;
               await sources.startLane(projectId, next.id, "autopilot", async () => {
                 // Owner controls and hand starts can change while Start checks Doctor.
                 const current = await compute(projectId, false);
                 return !lifetime.signal.aborted && current.autopilot?.status === "on" && sources.autopilot!.isOn(projectId)
-                  && current.ready.some((spec) => spec.id === next.id && spec.kind !== "work-item" && spec.startReason === null)
+                  && current.ready.some((spec) => spec.id === next.id && spec.kind !== "work-item" && spec.startReason === null && !spec.justLanded)
                   && autopilotLaneCount(current) < current.autopilot.laneLimit;
               });
             }

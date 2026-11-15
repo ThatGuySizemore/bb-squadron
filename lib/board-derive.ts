@@ -294,11 +294,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const returning = new Set(lanes.filter((lane) => lane.state === "landed" && !lane.outside)
     .map((lane) => lane.specId));
   const queueSpecs = [...specs, ...closedSpecs.filter((spec) => returning.has(spec.identifier))];
-  // Tickets already in the landed branch are the lane that just landed, not new work. Until the tracker
-  // marks them Done, a spec whose tickets are all in branch must not look like a returning spec.
-  const newWork = (ticket: TrackerIssue) => !held(ticket) && trackerTicketState(ticket, snapshot.kind, settings) !== "branch";
   for (const spec of queueSpecs.filter((spec) => !leads.has(spec.id) ||
-    (returning.has(spec.identifier) && ticketsOf(spec).some(newWork)))) {
+    (returning.has(spec.identifier) && ticketsOf(spec).some((ticket) => !held(ticket))))) {
     const tickets = ticketsOf(spec);
     const marked = readyMarked(spec);
     const heldTickets = tickets.filter(held);
@@ -319,7 +316,13 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       const ids = [...new Set(ticketBlockers.flat().map((blocker) => blocker.id))].sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
       const which = heldTickets.length ? "Every ticket that isn't held" : "Every ticket";
       shaping.push({ ...row, missing: `${which} waits on a blocker: ${ids.join(", ")}`, action: "tickets" });
-    } else ready.push(readyRow(spec, tickets));
+    } else {
+      // Tickets in the landed branch are that lane, not new work. Until the tracker marks them Done the spec
+      // stays Ready for an owner Start, but Autopilot must not return it.
+      const landedOnly = returning.has(spec.identifier)
+        && tickets.every((ticket) => held(ticket) || trackerTicketState(ticket, snapshot.kind, settings) === "branch");
+      ready.push({ ...readyRow(spec, tickets), ...(landedOnly ? { justLanded: true } : {}) });
+    }
   }
   for (const item of workItems) {
     if (readyMarked(item) && !held(item) && !planning.has(item.id) && !leads.has(item.id)) {

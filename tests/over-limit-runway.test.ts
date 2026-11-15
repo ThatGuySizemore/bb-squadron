@@ -79,3 +79,51 @@ test("expanded runway paints every real plane and beacon, with no clipped pixels
     assert.equal(pixelsOf(s, inks.beacon), 344, "the last plane has all 216 pixels and 128 bracket pixels");
   }
 });
+
+test("fractional measured widths do not add overflow UI unless the runway actually expands", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement, act } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { JSDOM } = await import("jsdom");
+  const { BoardView } = await import("../board/Board.js");
+  const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
+  const browser = dom.window;
+  browser.matchMedia = (() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) as unknown as typeof browser.matchMedia;
+  browser.HTMLCanvasElement.prototype.getContext = (() => null) as typeof browser.HTMLCanvasElement.prototype.getContext;
+  let width = 560;
+  browser.HTMLElement.prototype.getBoundingClientRect = () => ({ top: 0, bottom: 140, left: 0, right: width, width, height: 140, x: 0, y: 0, toJSON() {} });
+  const globals = { window: browser, document: browser.document, HTMLElement: browser.HTMLElement, Element: browser.Element,
+    ResizeObserver: class { observe() {} disconnect() {} }, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = Object.fromEntries(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, globals);
+  try {
+    for (width of [560, 560.25, 560.5, 560.75, 900.5]) for (const count of [1, 3, 10, 11, 24]) {
+      const board: Board = { tick: 0, laneCapacity: count, workersPerLane: 2, autoStart: false, lanes: [], ready: [], shaping: [], openIssues: [] };
+      const root = createRoot(browser.document.getElementById("root")!);
+      try {
+        await act(async () => root.render(createElement(BoardView, { board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined, placement: "panel" })));
+        const region = browser.document.querySelector<HTMLElement>(".sq-runway")!;
+        const hint = browser.document.querySelector(".sq-runway-scroll-hint");
+        const where = `${width}px, ${count} stands`;
+        assert.equal(region.dataset.stands, String(count));
+        // Eleven stands fit at 900.5px without expanding; 24 still need scrolling.
+        if (count <= 10 || (count === 11 && width === 900.5)) {
+          assert.equal(region.dataset.overflow, undefined, `${where}: pixel rounding is not overflow`);
+          assert.equal(region.getAttribute("role"), null, `${where}: no extra scroll region`);
+          assert.equal(region.getAttribute("tabindex"), null, `${where}: no extra tab stop`);
+          assert.equal(hint, null, `${where}: no misleading hint`);
+        } else {
+          assert.equal(region.dataset.overflow, "true", `${where}: real expansion remains accessible`);
+          assert.equal(region.getAttribute("role"), "region");
+          assert.equal(region.getAttribute("tabindex"), "0");
+          assert.equal(hint?.textContent, `Scroll the runway to see all ${count} stands.`);
+        }
+      } finally { await act(async () => root.unmount()); }
+    }
+  } finally {
+    browser.close();
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});

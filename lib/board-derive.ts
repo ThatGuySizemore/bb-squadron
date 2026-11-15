@@ -12,7 +12,7 @@ import { trackerName } from "./tracker-detection.js";
 import type { LaneProgress } from "./lane-progress.js";
 import { escapeRegExp } from "./issue-text.js";
 import type { ProviderModels } from "./model-capabilities.js";
-import { chooseFinalReviewer, type LaneLaunch, type LaneTicket } from "./final-reviewer.js";
+import { chooseFinalReviewer, leadRouteFromRecord, type LaneLaunch, type LaneTicket } from "./final-reviewer.js";
 
 /** An unarchived planning thread for one tracker issue, including finished planning. */
 export interface PlanningThread { issueId: string; threadId: string; done?: boolean }
@@ -242,7 +242,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       const launches = lead.launches ?? workers.map((worker) =>
         ({ threadId: worker.id, createdAt: worker.createdAt, providerId: worker.providerId ?? null, record: worker.record ?? null }));
       const laneTickets = finalReviewTickets(spec, laneSnapshot, settings!, workItem);
-      const choice = chooseFinalReviewer(settings!, { lead: lead.route, tickets: laneTickets, launches: [...self, ...launches], projectRoutes: true, catalog: input.providerCatalog });
+      const own = lead.record ? leadRouteFromRecord(lead.record.requested) : null;
+      const choice = chooseFinalReviewer(settings!, { lead: own ?? lead.route, tickets: laneTickets, launches: [...self, ...launches], projectRoutes: true, catalog: input.providerCatalog });
       return { ...(choice.route ? { reviewer: choice.route } : {}), finalReview: choice.statement };
     }
     return {

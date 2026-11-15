@@ -119,19 +119,41 @@ test("before anything is integrated, the board projects from launched builders a
   assert.deepEqual([pastUnrecorded.counts, pastUnrecorded.unknown], [{ claude: 1, gpt: 0 }, ["FIX-3"]], "an unrecorded thread may have built FIX-3");
 });
 
-test("Final review same keeps the reviewer in the Lead's family, whoever built the branch", () => {
+test("Final review same keeps the Lead's own provider, model and effort, never a different review row", () => {
   const same = settingsOf(shared.replace(/## Final review\s+other/, "## Final review\n\nsame"));
-  const choice = chooseFinalReviewer(same, { lead: SOL_LEAD, tickets: [ticket("FIX-2")], launches: [launched("thr_a", "claude-code", ["FIX-2"])] });
-  assert.deepEqual(choice.route, CLAUDE_BUILT_REVIEW, "a GPT Lead gets a GPT reviewer from the GPT review row");
-  assert.equal(choice.basis, "same");
-  assert.deepEqual(choice.independentOf, ["FIX-2"]);
-  assert.match(choice.statement, /Final review is set to same, so a GPT reviewer, in the Lead's family, reviews\. Independent of FIX-2\./);
-  // Legacy family tables: a Claude Lead's own family row, as before.
+  // The House rules review row for this family is Opus high; the Lead runs Sonnet high, and same keeps Sonnet high.
+  const claudeLead = chooseFinalReviewer(same, { lead: SONNET_LEAD, tickets: [ticket("FIX-2")], launches: [launched("thr_a", "claude-code", ["FIX-2"])] });
+  assert.deepEqual(claudeLead.route, SONNET_LEAD);
+  assert.equal(claudeLead.role, "Review of claude-code", "recorded as a review of the Claude-built branch");
+  assert.equal(claudeLead.basis, "same");
+  assert.deepEqual([claudeLead.independentOf, claudeLead.sameFamily], [[], ["FIX-2"]]);
+  assert.equal(claudeLead.statement, "Final review: claude-code claude-sonnet-5-5, high effort, default tier. Final review is set to same, so it runs on the Lead's own route. "
+    + "Not independent of FIX-2: its builder is in the reviewer's family.");
+  // A GPT Lead on Sol medium keeps medium, though the GPT review row is high; Claude builders make it independent.
+  const gptLead = chooseFinalReviewer(same, { lead: SOL_LEAD, tickets: [ticket("FIX-2")], launches: [launched("thr_a", "claude-code", ["FIX-2"])] });
+  assert.deepEqual(gptLead.route, SOL_LEAD);
+  assert.equal(gptLead.role, "Review of claude-code");
+  assert.deepEqual(gptLead.independentOf, ["FIX-2"]);
+  // With no recorded builder yet, the review is recorded against the Lead's own family.
+  assert.equal(chooseFinalReviewer(same, { lead: SOL_LEAD, tickets: [ticket("FIX-2")], launches: [] }).role, "Review of codex");
+  // Legacy family tables: the Lead's exact route, as reviewerFor returned.
   const legacySame = settingsOf(repo.replace(/## Final review\s+other/, "## Final review\n\nsame"), null);
-  assert.deepEqual(chooseFinalReviewer(legacySame, { lead: { family: "claude", model: "claude-opus-5-5", effort: "high" }, tickets: [ticket("FIX-2")],
-    launches: [launched("thr_a", "codex", ["FIX-2"])] }).route, { family: "claude", model: "claude-opus-5-5", effort: "high" });
-  assert.match(chooseFinalReviewer(same, { lead: { family: "unknown", providerId: "pi", model: "m", effort: "high" }, tickets: [ticket("FIX-2")], launches: [] }).problem ?? "",
-    /no known family/);
+  const legacyLead = { family: "gpt" as const, model: "gpt-6.1-sol", effort: "medium" };
+  assert.deepEqual(chooseFinalReviewer(legacySame, { lead: legacyLead, tickets: [ticket("FIX-2")], launches: [launched("thr_a", "codex", ["FIX-2"])] }).route, legacyLead);
+});
+
+test("Final review same refuses, never substitutes, when the Lead's route is unknown or breaks the low-effort policy", () => {
+  const same = settingsOf(shared.replace(/## Final review\s+other/, "## Final review\n\nsame"));
+  const lane = { tickets: [ticket("FIX-2")], launches: [launched("thr_a", "claude-code", ["FIX-2"])] };
+  for (const lead of [{ family: "unknown" as const, providerId: "pi", model: "m", effort: "high" }, { family: "claude" as const, model: "Unknown model", effort: "default" }]) {
+    const choice = chooseFinalReviewer(same, { ...lane, lead });
+    assert.equal(choice.route, null, JSON.stringify(lead));
+    assert.match(choice.problem ?? "", /Lead's own route/);
+  }
+  // The fixture's House rules policy allows low effort for Mechanical only: a low Lead route is refused for review, not swapped for the review row.
+  const low = chooseFinalReviewer(same, { ...lane, lead: { ...SONNET_LEAD, effort: "low" } });
+  assert.equal(low.route, null);
+  assert.equal(low.problem, "Low effort is mechanical only, so the Review of claude-code route (low effort) is refused. Name a higher effort.");
 });
 
 test("unknown provider families never review: their tickets count for no one and stay unknown", () => {
@@ -165,4 +187,27 @@ test("a legacy repo without an other-family row is refused by name, never given 
   const choice = chooseFinalReviewer(claudeOnly, { lead: SONNET_LEAD, tickets: [ticket("FIX-2")], launches: [launched("thr_a", "claude-code", ["FIX-2"])] });
   assert.equal(choice.route, null);
   assert.match(choice.problem ?? "", /Review of claude-code row/);
+});
+
+test("the board's reviewer chip says which work the reviewer is independent of, and says so in words when none is chosen", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { JSDOM } = await import("jsdom");
+  const { BoardView } = await import("../board/Board.js");
+  const statement = "Final review: codex gpt-6.1-sol, high effort, default tier. Claude built 1 of 1 integrated ticket, so the Review of claude-code route reviews. Independent of FIX-6.";
+  const lane = (extra: Partial<import("../lib/board-model.js").Lane>): import("../lib/board-model.js").Lane => ({ specId: "FIX-5", title: "Doctor checks", state: "spec-review",
+    minutes: 3, lead: SONNET_LEAD, leadThreadId: "thr_1", branch: "spec/fix-5", acceptOwner: false,
+    tickets: [{ id: "FIX-6", title: "Settings parser", blockedBy: [], state: "branch", minutes: 2, route: { family: "claude", model: "claude-sonnet-5-5", effort: "medium" } }], ...extra });
+  const render = (row: import("../lib/board-model.js").Lane) => new JSDOM(renderToStaticMarkup(createElement(BoardView, {
+    board: { tick: 0, laneCapacity: 2, workersPerLane: 2, autoStart: false, lanes: [row], ready: [], shaping: [], openIssues: [] },
+    placement: "page", demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }))).window.document;
+  const chosen = [...render(lane({ reviewer: CLAUDE_BUILT_REVIEW as import("../lib/board-model.js").Route, finalReview: statement })).querySelectorAll(".sq-ai")]
+    .find((chip) => chip.textContent?.includes("Reviewer"))!;
+  assert.match(chosen.textContent!, /Reviewer · gpt-6\.1-sol high/);
+  assert.ok(chosen.getAttribute("title")!.includes(statement), chosen.getAttribute("title")!);
+  const refused = "Final review: no reviewer chosen. No ticket has a recorded builder, and 2 threads in this lane have no launch record. Choose the reviewer from the builders you observed and say which work it is independent of.";
+  const none = [...render(lane({ finalReview: refused })).querySelectorAll(".sq-ai")].find((chip) => chip.textContent?.includes("Reviewer"))!;
+  assert.equal(none.textContent, "Reviewer · not chosen", "a live lane never shows a placeholder model");
+  assert.equal(none.getAttribute("title"), refused);
 });

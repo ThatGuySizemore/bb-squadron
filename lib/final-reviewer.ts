@@ -3,7 +3,7 @@
 // Lead's family or the order of route rows. One resolver serves the board, the
 // Lead and work-item briefs, and `bb squadron launch final-review`.
 import type { Family, Route } from "./board-model.js";
-import { resolveLaunch, routeText, requestedRoute, type LaunchRecord } from "./launch-record.js";
+import { lowEffortProblem, resolveLaunch, routeText, requestedRoute, type LaunchRecord, type LaunchRoute } from "./launch-record.js";
 import type { ProviderModels } from "./model-capabilities.js";
 import { familyForProvider, resolveRoute, type ModelRole, type SquadronSettings } from "./squadron-settings.js";
 
@@ -43,7 +43,7 @@ export interface FinalReviewer {
   /**
    * integrated: only tickets in the integration branch decide, by their accepted builder.
    * lane: nothing is integrated yet, so every ticket decides, by its accepted builder or its own route.
-   * same: Final review is same, so the reviewer is in the Lead's family, as before.
+   * same: Final review is same, so the reviewer runs on the Lead's own route, as before.
    */
   basis: "integrated" | "lane" | "same";
   /** Tickets counted for each builder family. */
@@ -71,6 +71,15 @@ interface TicketEvidence {
   others: Family[];
 }
 
+/** What lead-threads reports when BB names no model. */
+const UNKNOWN_MODEL = "Unknown model";
+
+/** The Lead's own route from its launch record's request, for Final review same. Null when the record leaves BB to choose. */
+export function leadRouteFromRecord(requested: LaunchRoute): Route | null {
+  if (!requested.providerId || !requested.model) return null;
+  return { family: familyForProvider(requested.providerId), providerId: requested.providerId, model: requested.model, effort: requested.effort };
+}
+
 const familyOf = (launch: LaneLaunch): Family => familyForProvider(launch.providerId ?? launch.record?.requested.providerId ?? "");
 
 /**
@@ -90,7 +99,7 @@ function evidenceFor(ticket: LaneTicket, launches: readonly LaneLaunch[], projec
 }
 
 export function chooseFinalReviewer(settings: SquadronSettings, lane: {
-  /** The Lead's route as BB reports it; only its family counts, and only when Final review is same. */
+  /** The Lead's own route: its launch record's request, else what BB reports. Used only when Final review is same. */
   lead: Route;
   tickets: readonly LaneTicket[];
   launches: readonly LaneLaunch[];
@@ -115,14 +124,19 @@ export function chooseFinalReviewer(settings: SquadronSettings, lane: {
   let problem: string | undefined;
   let chosenBy = "";
   if (settings.finalReviewFamily === "same") {
-    // The review row whose reviewer is in the Lead's family, so it launches and is recorded like any review.
-    const family = lane.lead.family;
-    if (family === "unknown") problem = "Final review is set to same, but the Lead runs on a provider with no known family, so no review route matches it.";
-    else {
-      role = REVIEW_ROLE[family === "claude" ? "gpt" : "claude"];
-      try { route = resolveLaunch(settings, { role }, lane.catalog).route; }
-      catch (error) { problem = error instanceof Error ? error.message : String(error); role = null; }
-      chosenBy = `Final review is set to same, so a ${BUILT_BY[family]} reviewer, in the Lead's family, reviews.`;
+    // Exactly the Lead's provider, model and effort, as before; never a review row's model. Recorded as a
+    // review of the family that built most tickets, or of the Lead's own family before any is recorded.
+    const { family, model, effort } = lane.lead;
+    if (family === "unknown" || model === UNKNOWN_MODEL) {
+      problem = "Final review is set to same, but the Lead's own route isn't known on a Claude Code or Codex model, so it can't be repeated for the review.";
+    } else {
+      const lead: Route = { family, ...(lane.lead.providerId ? { providerId: lane.lead.providerId } : {}), model, effort };
+      const built = FAMILIES.filter((known) => counts[known] > 0).sort((a, b) => counts[b] - counts[a]);
+      const reviewRole = REVIEW_ROLE[built[0] ?? family];
+      const unsafe = lowEffortProblem(settings, reviewRole, lead, lane.catalog);
+      if (unsafe) problem = unsafe;
+      else { route = lead; role = reviewRole; }
+      chosenBy = "Final review is set to same, so it runs on the Lead's own route.";
     }
   } else {
     const built = FAMILIES.filter((family) => counts[family] > 0).sort((a, b) => counts[b] - counts[a]);

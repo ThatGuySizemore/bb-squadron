@@ -12,7 +12,7 @@ const LAUNCH = "`bb squadron launch final-review --base-branch <branch> --prompt
 /** A Lead's line: the same for every spec, so Autopilot and the owner send one first message. */
 export function leadFinalReviewLine(settings: SquadronSettings): string {
   const chosen = settings.finalReviewFamily === "same"
-    ? "Final review is same, so it runs on the review route in your own family"
+    ? "Final review is same, so it runs on your own route"
     : "It runs on the Review of <provider> route above for the family that built the most integrated tickets, never your own family by default";
   return `Final review: once every ticket is integrated, launch it once with ${LAUNCH}. ${chosen}, and it prints which work the reviewer is independent of.`;
 }

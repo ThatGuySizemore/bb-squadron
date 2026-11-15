@@ -443,6 +443,23 @@ test("final-review: a GPT Lead with a Claude worker still launches the GPT revie
   assert.equal(spawnArgs(2).pluginMetadata.launch.role, "Review of claude-code");
 });
 
+test("final-review with Final review same launches on the Lead's own Sonnet high route, not the Opus review row", async (t) => {
+  const { harness, spawnArgs, launch } = await setup(t, shared.replace(/## Final review\s+other/, "## Final review\n\nsame"));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  assert.equal((await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"])).exitCode, 0);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes[0].reviewer, { family: "claude", providerId: "claude-code", model: "claude-sonnet-5-5", effort: "high" });
+  const reviewed = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review."]);
+  assert.equal(reviewed.exitCode, 0, reviewed.stderr);
+  assert.match(reviewed.stdout, /Launched Review FIX-5 on claude-code claude-sonnet-5-5, high effort, default tier @thread:thr_3/);
+  assert.ok(reviewed.stdout.includes("Final review is set to same, so it runs on the Lead's own route. Not independent of FIX-6: its builder is in the reviewer's family."), reviewed.stdout);
+  const args = spawnArgs(2);
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["claude-code", "claude-sonnet-5-5", "high", "default"]);
+  const record = args.pluginMetadata.launch;
+  assert.deepEqual([record.role, record.requested, record.tickets], ["Review of claude-code",
+    { providerId: "claude-code", model: "claude-sonnet-5-5", effort: "high", serviceTier: "default" }, []]);
+});
+
 test("final-review: a legacy GPT-built lane launches the Claude row its Family table names, checked against BB's catalogue", async (t) => {
   const { harness, spawnArgs, launch } = await setup(t, legacySettings, null);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });

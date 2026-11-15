@@ -8,8 +8,8 @@ import { DEFAULT_EFFORT_UNPROVED, effectiveEffort, routeProblem } from "./model-
 import type { ModelRole } from "./squadron-settings.js";
 import type { TrackerReader } from "./tracker-contract.js";
 import { finalReviewTickets } from "./board-derive.js";
-import { chooseFinalReviewer, type FinalReviewer, type LaneLaunch } from "./final-reviewer.js";
-import { readLaneLaunches, threadRoute } from "./lead-threads.js";
+import { chooseFinalReviewer, leadRouteFromRecord, type FinalReviewer, type LaneLaunch } from "./final-reviewer.js";
+import { readLaneLaunches, reportedThreadRoute, threadRoute } from "./lead-threads.js";
 import { compareEffort, LAUNCH_METADATA_KEY, readLaunchMetadata, reportedRoute, requestedRoute, resolveLaunch, routeMismatch,
   routeText, spawnRoute, type LaunchRecord } from "./launch-record.js";
 
@@ -60,7 +60,10 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
       const own = readLaunchMetadata(callerMetadata);
       // A work item's own thread is its builder; a spec Lead only coordinates.
       const self: LaneLaunch[] = own && own.role !== "Lead" ? [{ threadId: callerThreadId, createdAt: caller.createdAt, providerId: caller.providerId ?? null, record: own }] : [];
-      finalReview = chooseFinalReviewer(settings, { lead: threadRoute(caller.providerId ?? null, null),
+      // Final review same repeats the Lead's own route: its record's request, else what BB reports it runs.
+      const reported = await reportedRoute(bb, { id: callerThreadId, providerId: caller.providerId ?? null });
+      const lead = (own ? leadRouteFromRecord(own.requested) : null) ?? (reported ? reportedThreadRoute(reported) : threadRoute(caller.providerId ?? null, null));
+      finalReview = chooseFinalReviewer(settings, { lead,
         tickets: finalReviewTickets(spec, snapshot, settings, callerMetadata.kind === "work-item"),
         launches: [...self, ...await readLaneLaunches(bb, projectId, callerThreadId)], catalog: checkout.providerCatalog });
       if (!finalReview.route || !finalReview.role) return fail(finalReview.statement);
@@ -72,7 +75,10 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
         && (issue.parentId === specId || issue.id === specId));
       if (!ticket) return fail(`${input.ticket} isn't an open ticket of ${specName}. Read the tickets again.`);
     } else if (NEEDS_TICKET.includes(role)) return fail(`Name the ticket a ${role} builds with --ticket.`);
-    const resolved = (() => {
+    const resolved = finalReview?.route ? {
+      // The reviewer's route as chosen: a review row, or with Final review same the Lead's own route.
+      role, category: null, policyResolved: checkout.settings.settings.routeDefaults === "house-rules", overrideNote: null, route: finalReview.route,
+    } : (() => {
       try { return resolveLaunch(checkout.settings.settings, { role, labels: ticket?.labels.map((label) => label.name) ?? [] }, checkout.providerCatalog); }
       catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
     })();

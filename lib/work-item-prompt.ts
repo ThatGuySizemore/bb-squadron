@@ -10,7 +10,7 @@ export function workItemPrompt(input: {
   const launchReview = "`bb squadron launch final-review --base-branch <this branch> --prompt-stdin`";
   // This thread builds the work item, so its own family decides the reviewer.
   const reviewer = settings.finalReviewFamily === "same"
-    ? `The configured final-review family is same, your own: use a fresh subagent where the harness allows, otherwise launch one with ${launchReview}.`
+    ? `The configured final review is same, on your own route: use a fresh subagent where the harness allows, otherwise launch one with ${launchReview}.`
     : input.finalReview ?? `Launch it with ${launchReview}; it chooses the review route from this lane's recorded builders.`;
   const stopTarget = `'${input.identifier.replaceAll("'", "'\\''")}'`;
   return [

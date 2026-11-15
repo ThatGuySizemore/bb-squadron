@@ -10,7 +10,7 @@ The lane gets one fresh, independent, high-effort `code-review` of the whole int
 
    Brief it with the spec, rule pointers, the branch and your check evidence. The reviewer is read-only.
 
-   The command reads every recorded launch in the lane, archived ones included. Each integrated ticket's builder is its accepted attempt: the latest Worker or Worker (hard) launch for it that no later launch replaced. Final review `other` picks the `Review of <provider>` route of the family that built the most integrated tickets; `same` picks the review route in your own family. It prints a boundary statement and adds it to the reviewer's brief.
+   The command reads every recorded launch in the lane, archived ones included. Each integrated ticket's builder is its accepted attempt: the latest Worker or Worker (hard) launch for it that no later launch replaced. Final review `other` picks the `Review of <provider>` route of the family that built the most integrated tickets; `same` runs on your own route. It prints a boundary statement and adds it to the reviewer's brief.
 
 2. Copy the boundary statement into the PR body under Evidence. It names the tickets the reviewer is independent of, the ones the same family built, and the ones whose independence is unknown.
 

@@ -7,7 +7,7 @@ import { LIVE_STEP_MS } from "../lib/live-step.js";
 import type { ReactNode, Ref } from "react";
 import { experimental_FileLink as FileLink, experimental_ProviderIcon as ProviderIcon, experimental_useProviders as useProviders, useBbContext, useBbNavigate, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
-import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
+import type { Board, Lane, LaunchView, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
 import { canMerge, dependencyColumns, formatMinutes, LANDING_MS, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
 import { FLYPAST_MS, nextFlyPast, type FlyPast } from "../lib/fly-past.js";
 import type { boardContract, PickerProjects } from "../lib/board-contract.js";
@@ -142,24 +142,44 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
 
 // ---------- small parts ----------
 
-/** The agent's family icon, model and effort. A compact chip with a prefix shows only the icon and prefix; the model stays in its hover title. */
-function AiChip({ route, prefix, compact = false }: { route: Route; prefix?: string; compact?: boolean }) {
+/** The agent's family icon, model and effort. A compact chip with a prefix shows only the icon and prefix; the model stays in its hover title.
+ * With a launch record, the hover adds the service tier and any escalation reason, and a substitution BB reports is said in words. */
+function AiChip({ route, prefix, compact = false, launch }: { route: Route; prefix?: string; compact?: boolean; launch?: LaunchView }) {
   const { providers } = useProviders();
   const id = route.providerId ?? (route.family === "claude" ? "claude-code" : "codex");
   const provider = providers.find((p) => p.id === id) ?? { id };
-  const title = `${route.providerId ?? (route.family === "claude" ? "Claude Code" : "Codex")} · ${route.model} · ${route.effort} effort`;
+  const tier = route.serviceTier ?? launch?.reported?.serviceTier ?? undefined;
+  const substituted = launch?.verification === "mismatch";
+  const title = [
+    `${route.providerId ?? (route.family === "claude" ? "Claude Code" : "Codex")} · ${route.model} · ${route.effort} effort${tier ? ` · ${tier} tier` : ""}`,
+    substituted ? `BB runs this instead of the requested ${launchRouteText(launch.requested)}.` : null,
+    launch?.escalation ? `${launch.escalation.kind === "effort" ? "Effort raised" : "Moved to a stronger model"}: ${launch.escalation.reason}` : null,
+  ].filter(Boolean).join("\n");
   return (
-    <span className="sq-ai" title={compact && prefix ? `${prefix}: ${title}` : title}>
+    <span className="sq-ai" title={compact && prefix ? `${prefix}: ${title}` : title} data-substituted={substituted || undefined}>
       <ProviderIcon providerKind="agent" provider={provider} />
       {compact && prefix ? <span>{prefix}</span> : (
         <span>
           {prefix ? `${prefix} · ` : ""}
           {route.model}
           <span className="sq-ai-effort"> {route.effort === "medium" ? "med" : route.effort}</span>
+          {tier && tier !== "default" ? <span className="sq-ai-effort"> · {tier}</span> : null}
         </span>
       )}
+      {substituted ? <span className="sq-ai-swap">substituted</span> : null}
     </span>
   );
+}
+
+/** A worker's chip shows what BB reports it runs, keeping the planned route's family for its icon when BB names no provider. */
+function launchedRoute(reported: NonNullable<LaunchView["reported"]>, planned: Route): Route {
+  return { family: reported.providerId === "claude-code" ? "claude" : reported.providerId === "codex" ? "gpt" : reported.providerId ? "unknown" : planned.family,
+    ...(reported.providerId ? { providerId: reported.providerId } : {}), model: reported.model ?? planned.model, effort: reported.effort ?? planned.effort,
+    ...(reported.serviceTier ? { serviceTier: reported.serviceTier } : {}) };
+}
+
+function launchRouteText(route: LaunchView["requested"]): string {
+  return route.model ? `${route.model}, ${route.effort} effort, ${route.serviceTier} tier` : `default model, ${route.serviceTier} tier`;
 }
 
 function Btn({ children, onClick, tone = "plain", disabled, title }: { children: ReactNode; onClick?: () => void; tone?: "plain" | "primary" | "amber" | "danger"; disabled?: boolean; title?: string }) {
@@ -374,7 +394,8 @@ function Peg({ ticket, lane }: { ticket: Ticket; lane: Lane }) {
       {lane.state === "flying" && isActiveTicket(state) ? <LiveStepLine activity={ticket.liveStep} /> : null}
       {size === "full" ? (
         <span className="sq-peg-foot">
-          <AiChip route={state === "review" ? reviewer : ticket.route} />
+          {state === "review" ? <AiChip route={reviewer} />
+            : <AiChip route={ticket.launch?.reported ? launchedRoute(ticket.launch.reported, ticket.route) : ticket.route} launch={ticket.launch} />}
           {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
         </span>
       ) : null}
@@ -448,7 +469,7 @@ function LeadButton({ lane, compact = false }: { lane: Lane; compact?: boolean }
   const open = useOpen();
   return (
     <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, lane.outside ? `the thread flying ${lane.specId}` : `the Lead thread for ${lane.specId}`)}>
-      <AiChip route={lane.lead} prefix="Lead" compact={compact} />
+      <AiChip route={lane.lead} prefix="Lead" compact={compact} launch={lane.launch} />
       {lane.waitingOn?.length ? <span className="sq-live-step">Waiting on {lane.waitingOn.join(", ")}</span>
         : lane.state === "flying" ? <LiveStepLine activity={lane.liveStep} /> : null}
     </button>

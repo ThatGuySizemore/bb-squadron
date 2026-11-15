@@ -188,11 +188,16 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
 
 /** Matching labels keep file order and ignore case; the default is used only when none match. */
 export function resolveRoute(settings: SquadronSettings, labels: readonly string[]): Route {
+  return routeValue(matchRoute(settings, labels));
+}
+
+/** The route row a ticket's labels select, keeping its label: null for the default (Worker) row. */
+export function matchRoute(settings: SquadronSettings, labels: readonly string[]): SquadronRoute {
   const names = new Set(labels.map((label) => label.toLowerCase()));
   const row = settings.routes.find((route) => route.label !== null && route.role === undefined && route.label.toLowerCase() !== "lead" && names.has(route.label.toLowerCase()))
     ?? settings.routes.find((route) => route.label === null);
   if (!row) throw new Error("Add a default route to docs/agents/squadron.md.");
-  return routeValue(row);
+  return row;
 }
 
 /** An explicit Lead row overrides spec labels; older settings keep their label-based routing. */

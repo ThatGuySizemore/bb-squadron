@@ -12,6 +12,7 @@ import { readPullRequests } from "./lib/pull-requests.js";
 import { registerTracker } from "./lib/tracker-service.js";
 import { createOutsideLaneReader } from "./lib/outside-lanes.js";
 import { registerSquadronCli } from "./lib/squadron-cli.js";
+import { registerLaunch } from "./lib/launch-cli.js";
 import { registerHelperNotifier } from "./lib/helper-notifier.js";
 import { registerHelperSummary } from "./lib/helper-summary.js";
 import { registerHelper } from "./lib/helper.js";
@@ -37,6 +38,6 @@ export default async function plugin(bb: BbPluginApi) {
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   summary.register(board.read);
   const planning = registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
-  registerSquadronCli(bb, board, lanes, helper, autopilot, planning);
+  registerSquadronCli(bb, board, lanes, helper, autopilot, planning, registerLaunch(bb, tracker));
   bb.log.info("loaded");
 }

@@ -181,6 +181,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
           byId.get(issue.id)?.state.type !== "completed" && !localLanded ? "branch" : ticketState(issue),
         minutes: worker ? Math.max(0, Math.floor((input.now - worker.createdAt) / 60_000)) : 0,
         ...(worker ? { threadId: worker.id } : {}),
+        ...(worker?.launch ? { launch: worker.launch } : {}),
       };
     });
     const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
@@ -217,6 +218,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     return {
       ...(workItem ? { kind: "work-item" as const } : {}),
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
+      ...(lead.launch ? { launch: lead.launch } : {}),
       totalTicketCount: Math.max(totalTicketsOf(spec), issues.length),
       branch,
       state: landedAt !== undefined ? "landed" : inReview ?? (stopped && !outside ? "stopped" : "flying"),

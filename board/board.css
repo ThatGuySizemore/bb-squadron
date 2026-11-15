@@ -610,7 +610,7 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 6px;
-  padding: 11px 12px 18px;
+  padding: 11px 12px 26px;
   background: var(--sq-band);
   border-top: 2px solid var(--sq-rule);
 }
@@ -874,6 +874,20 @@
   height: 2px;
   margin-top: -1px;
   background: var(--sq-pixel-rule);
+}
+/* The contrail: the lane's progress in a 16px strip along the bottom of the
+   compact row and the wide tail card, inset to the card's padding. */
+.sq-contrail {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 4px;
+  height: 16px;
+  pointer-events: none;
+}
+.sq-tail .sq-contrail {
+  left: 12px;
+  right: 12px;
 }
 .sq-air {
   position: absolute;
@@ -1300,12 +1314,12 @@ button.sq-peg:hover {
   padding: 10px 0;
 }
 /* One compact row per lane: band fill, a 2px top edge in the lane's state ink,
-   and the pace line along the bottom edge. */
+   and the contrail along the bottom edge. */
 .sq-lane-row {
   position: relative;
   display: grid;
   gap: 5px;
-  padding: 8px 10px 16px;
+  padding: 8px 10px 26px;
   background: var(--sq-band);
   border-top: 2px solid var(--sq-rule);
 }
@@ -1384,14 +1398,12 @@ button.sq-peg:hover {
 .sq-lane-row .sq-readonly {
   margin: 0;
 }
-/* The pace line: the airstream in an 8px strip on the row's bottom edge. */
-.sq-pace-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 8px;
-  pointer-events: none;
+/* The lane's count in words, beside the Lead; the contrail below draws it. */
+.sq-lane-count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sq-muted);
 }
 .sq-active {
   display: grid;

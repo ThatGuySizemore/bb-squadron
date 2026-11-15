@@ -3,9 +3,14 @@
 // move at the same speed for it, so the page's weather never disagrees.
 import type { Lane } from "./board-model.js";
 
-/** Running Lead and worker threads across the lanes still flying; stopped and landed lanes add none. */
+/** Whether a lane is in the wind: still flying, not stopped and not landed. */
+export function inWind(lane: Lane): boolean {
+  return lane.state !== "landed" && lane.state !== "stopped" && !lane.stopped;
+}
+
+/** Running Lead and worker threads across the lanes in the wind; stopped and landed lanes add none. */
 export function workingAgents(lanes: readonly Lane[]): number {
-  return lanes.reduce((n, lane) => lane.state === "landed" || lane.state === "stopped" || lane.stopped ? n : n + (lane.workingThreads ?? 0), 0);
+  return lanes.reduce((n, lane) => inWind(lane) ? n + (lane.workingThreads ?? 0) : n, 0);
 }
 
 /** Agents beyond this many don't blow any harder. */

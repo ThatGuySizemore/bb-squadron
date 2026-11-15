@@ -16,10 +16,10 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { workingAgents } from "../lib/working-agents.js";
 import { runwayLayout, runwayLoading, runwayState, type RunwayLayout, type RunwayState } from "../lib/runway.js";
 import { PixelText } from "./PixelText.js";
 import { DitherCanvas } from "./DitherCanvas.js";
+import { inWind, workingAgents } from "../lib/working-agents.js";
 import { DoctorPanel } from "./Doctor.js";
 import { Term } from "./Term.js";
 import { HowItWorks } from "./HowItWorks.js";
@@ -175,6 +175,8 @@ const PlacementContext = createContext<Placement>("page");
 /** How the board lays out: wide, or narrow with one compact row per lane. */
 export type BoardLayout = "wide" | "narrow";
 const LayoutContext = createContext<BoardLayout>("wide");
+/** The board's wind: how many agents work across its lanes. The banner's clouds and every lane's wind read this one count. */
+const WindContext = createContext(0);
 
 /** The widest board, in CSS pixels, that still takes the narrow layout. */
 export const NARROW_MAX = 900;
@@ -469,7 +471,7 @@ function SpecTitle({ lane }: { lane: Lane }) {
  * The narrow layout's lane: one compact row in place of the tail card. The
  * tail number, title and time on top; the Lead and its step, the PR, the lane
  * state (never "Flying", which the section already says) and the actions
- * below; the airstream as a thin pace line along its bottom edge. The branch
+ * below; the contrail along its bottom edge. The branch
  * is the row's hover title and sits in the lane's ticket list.
  */
 function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting: LaneAction | null }) {
@@ -483,6 +485,7 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
       <div className="sq-lane-row-foot">
         <WorkKindTag kind={lane.kind} ticketCount={lane.totalTicketCount ?? lane.tickets.length} />
         <LeadButton lane={lane} compact />
+        {lane.tickets.length ? <span className="sq-lane-count sq-num">{inBranch(lane)}/{lane.tickets.length} in branch</span> : null}
         <div className="sq-lane-row-end">
           {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}><Term text={LANE_LABEL[lane.state]} /></span> : null}
           {lane.state === "spec-review" ? <AiChip route={laneReviewer(lane)} prefix="Reviewer" compact /> : null}
@@ -492,29 +495,47 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
         </div>
       </div>
       {lane.outside ? <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} /> : null}
-      <PaceLine lane={lane} landing={landing} />
+      <Contrail lane={lane} landing={landing} />
     </div>
   );
 }
 
-/** The same thin pace line in a narrow lane row and a wide tail card. */
-function PaceLine({ lane, landing }: { lane: Lane; landing: boolean }) {
-  const working = lane.workingThreads ?? 0;
-  return <span className="sq-pace-line" data-pace={working} aria-hidden="true">
-    {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />}
+/** Tickets in the integration branch or done: the "N/M in branch" count. */
+function inBranch(lane: Lane): number {
+  return lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
+}
+
+/** A stopped or landed lane is out of the wind: its contrail draws still. */
+function laneWind(lane: Lane, wind: number): number {
+  return inWind(lane) ? wind : 0;
+}
+
+/**
+ * The lane's progress as a contrail along the bottom of the compact row and
+ * the wide tail card: filled to its tickets in the branch, a small plane at
+ * its head, blowing right to left in the board's wind. A landing plays its
+ * burst here instead.
+ */
+function Contrail({ lane, landing }: { lane: Lane; landing: boolean }) {
+  const done = inBranch(lane), total = lane.tickets.length;
+  const wind = laneWind(lane, useContext(WindContext));
+  return <span className="sq-contrail" data-done={done} data-total={total} data-wind={wind} aria-hidden="true">
+    {landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" />
+      : <DitherCanvas fx={{ kind: "contrail", done, total, wind, tone: lane.state === "stopped" ? "red" : "sky" }} className="sq-air" />}
   </span>;
 }
 
 function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: Lane; dispatch: (a: BoardAction) => void; landing: boolean; demo: boolean; acting?: LaneAction | null }) {
   const open = useOpen();
   const columns = useMemo(() => dependencyColumns(lane.tickets), [lane.tickets]);
-  const done = lane.tickets.filter((t) => t.state === "branch" || t.state === "done").length;
-  // The airstream's pace: the lane's working threads. A lane with none working is still.
+  const done = inBranch(lane);
+  // The words say this lane's working threads; the airstream blows in the board's one wind.
   const working = lane.workingThreads ?? 0;
+  const wind = laneWind(lane, useContext(WindContext));
   const [railRef, overflow] = useOverflow<HTMLDivElement>();
   // In a narrow layout the lane is one compact row, then slim active tickets, with every ticket behind a disclosure.
   const narrow = useContext(LayoutContext) === "narrow";
-  const air = landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", pace: working }} className="sq-air" />;
+  const air = landing ? <DitherCanvas fx={{ kind: "burst" }} className="sq-air" /> : <DitherCanvas fx={{ kind: "airstream", wind }} className="sq-air" />;
   const others = lane.unmatchedThreads?.length ? (
     <div className="sq-threads">
       <span className="sq-threads-label">Other threads</span>
@@ -583,7 +604,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
         {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
         <span className="sq-branch">{lane.branch}</span>
         <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} />
-        <PaceLine lane={lane} landing={landing} />
+        <Contrail lane={lane} landing={landing} />
       </div>
       <div className="sq-track">
         {progress}
@@ -1115,7 +1136,8 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   const onLine = board.lanes.filter((l) => l.state !== "landed" || phase.landing(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !phase.landing(l));
   // The board's one working-agent count paces the banner's clouds, as it paces each lane's wind.
-  const runway = useRunway(board, lanesKnown, layout === "narrow", workingAgents(board.lanes), loading);
+  const wind = workingAgents(board.lanes);
+  const runway = useRunway(board, lanesKnown, layout === "narrow", wind, loading);
   const startable = board.ready.find((spec) => (spec.startReason !== undefined ? spec.startReason : canStart(board, spec)) === null);
   const sections = useRef<Partial<Record<Station, HTMLElement | null>>>({});
   const jump = (station: Station) => sections.current[station]?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
@@ -1145,6 +1167,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   return (
     <PlacementContext.Provider value={placement}>
     <LayoutContext.Provider value={layout}>
+    <WindContext.Provider value={wind}>
     <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout} aria-busy={loading || undefined}>
       <header className="sq-head">
         <RunwayBanner runway={runway} />
@@ -1273,6 +1296,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         {footer}
       </div>
     </div>
+    </WindContext.Provider>
     </LayoutContext.Provider>
     </PlacementContext.Provider>
   );

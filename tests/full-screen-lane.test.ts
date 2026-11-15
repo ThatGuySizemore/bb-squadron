@@ -1,5 +1,5 @@
 // SQD-218: the wide sortie line keeps its tail card and dependency rail,
-// sharing live steps and the pace line with narrow lanes.
+// sharing live steps and the contrail with narrow lanes.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Board, Lane, Route, Ticket } from "../lib/board-model.js";
@@ -34,17 +34,18 @@ const one = (root: Element, name: string) => {
   return found[0]!;
 };
 
-test("wide lanes keep their tail cards and dependency rails, with a pace line inside each tail", async () => {
+test("wide lanes keep their tail cards and dependency rails, with a contrail inside each tail", async () => {
   const root = await view([lane("FIX-1", { workingThreads: 3 }), lane("FIX-2", { workingThreads: 0 })]);
   const lines = byClass(root, "sq-line");
   assert.equal(lines.length, 2);
   assert.equal(byClass(root, "sq-lane-row").length, 0, "the wide board keeps its tail cards");
   for (const [index, line] of lines.entries()) {
     const tail = one(line, "sq-tail");
-    const pace = one(tail, "sq-pace-line");
-    assert.equal(pace.attrs["data-pace"], index === 0 ? "3" : "0");
-    assert.equal(pace.attrs["aria-hidden"], "true");
-    assert.equal(elements(pace).filter((element) => element.tag === "canvas").length, 1);
+    const trail = one(tail, "sq-contrail");
+    assert.equal(trail.attrs["data-wind"], "3", "every lane blows in the board's one wind: three working agents");
+    assert.deepEqual([trail.attrs["data-done"], trail.attrs["data-total"]], ["0", "1"], `${index}: no ticket in the branch yet`);
+    assert.equal(trail.attrs["aria-hidden"], "true");
+    assert.equal(elements(trail).filter((element) => element.tag === "canvas").length, 1);
     assert.equal(one(tail, "sq-lead").tag, "button");
     assert.match(visibleText(one(tail, "sq-lead")), /Waiting on worker/);
     assert.match(visibleText(one(line, "sq-rail")), /Running npm test/);

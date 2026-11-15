@@ -25,8 +25,8 @@ type Native = {
   fallbacks: Map<string, string>;
 };
 
-async function setup(t: import("node:test").TestContext, settings = shared, policy: string | null = house) {
-  const linear = workspace();
+async function setup(t: import("node:test").TestContext, settings = shared, policy: string | null = house, linearOptions: Parameters<typeof workspace>[0] = {}) {
+  const linear = workspace(linearOptions);
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
   const native: Native = { count: 0, threads: new Map(), metadata: new Map(), routes: new Map(), fallbacks: new Map() };
   const { bb, harness } = createFakePluginHost({
@@ -98,7 +98,7 @@ async function setup(t: import("node:test").TestContext, settings = shared, poli
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   const spawnArgs = (index: number) => harness.inspection.sdk.callsTo("threads.spawn")[index][0] as Record<string, unknown> & { pluginMetadata: { launch: LaunchRecord } };
   const launch = (args: string[]) => harness.behavior.runCli(["launch", ...args], { threadId: "thr_1", projectId: "proj-one" });
-  return { harness, native, bb, spawnArgs, launch };
+  return { harness, native, bb, spawnArgs, launch, linear };
 }
 
 test("Start records the Lead's route as passed to BB, and Doctor, the Start brief and the board read the same resolver", async (t) => {
@@ -239,6 +239,33 @@ test("stronger-model escalation launches Worker (hard) and keeps the reason; upf
   assert.equal((await launch(["worker-hard", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"])).exitCode, 0);
   assert.equal(spawnArgs(3).pluginMetadata.launch.escalation, null);
   assert.equal(spawnArgs(3).pluginMetadata.launch.role, "Worker (hard)");
+});
+
+// SQD-268: a worker's route reads the ticket's labels from the tracker at launch, never from the saved board.
+test("a worker launch resolves its route from the ticket's live labels, not the saved snapshot's", async (t) => {
+  const ui = { id: "label-ui", name: "ui", color: "#0000aa" };
+  const end = { hasNextPage: false, endCursor: null };
+  const { harness, spawnArgs, launch, linear } = await setup(t, shared, house, {
+    ticketLabels: (id) => Response.json({ data: { issue: { labels: { nodes: id === "fix-6" ? [ui] : [], pageInfo: end } } } }),
+  });
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  // The saved snapshot has no label on FIX-6 (the plain default route); the live tracker has "ui".
+  const result = await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"]);
+  assert.equal(result.exitCode, 0, result.stderr);
+  const record = spawnArgs(1).pluginMetadata.launch;
+  assert.equal(record.category, "ui");
+  assert.deepEqual(record.requested, { providerId: "claude-code", model: "claude-opus-5-5", effort: "high", serviceTier: "default" });
+  assert.deepEqual(record.labels, ["ui"], "the record notes the labels it resolved from");
+  assert.ok(linear.operations.includes("SquadronIssueLabels"));
+});
+
+test("a worker launch refuses when the ticket's live labels can't be read, never using stale ones", async (t) => {
+  const { harness, native, launch } = await setup(t, shared, house, { ticketLabels: () => new Response("down", { status: 503 }) });
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const result = await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"]);
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr ?? "", /Couldn't read FIX-6's current labels, so its route can't be resolved/);
+  assert.equal(native.count, 1, "nothing was spawned beyond the Lead");
 });
 
 test("review, mechanical and planning launches record their own roles and routes", async (t) => {

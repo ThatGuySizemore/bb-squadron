@@ -194,6 +194,10 @@ test("a failed or partial gh read preserves the last complete snapshot and the r
     }
     clock += 30_000; mode = "complete";
     assert.equal((await reader.getSnapshot("project")).error, null);
+    // SQD-268: an uncached read inside the 30 seconds sees the failure instead of the cached labels.
+    mode = "failed";
+    assert.equal((await reader.getSnapshot("project")).error, null, "the cached reading is still served");
+    assert.match((await reader.refresh!("project")).error ?? "", /Couldn't read GitHub/);
   } finally { await harness.lifecycle.dispose(); await host.experimental_dispose(); }
 });
 

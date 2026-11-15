@@ -18,6 +18,8 @@ export const launchRecordSchema = z.object({
   role: z.enum(MODEL_ROLES),
   /** The ticket label exception that chose the route; null for the role's own row. */
   category: z.string().nullable(),
+  /** The ticket labels the route was resolved from, read from the tracker at launch. Absent on launches that resolve no ticket route. */
+  labels: z.array(z.string()).optional(),
   /** House rules Model routes resolved this launch. The earliest such launch opens a project's policy cohort. */
   policyResolved: z.boolean(),
   /** An approved repo exception's note, verbatim. It records a claim and grants nothing. */

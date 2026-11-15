@@ -75,11 +75,18 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
         && (issue.parentId === specId || issue.id === specId));
       if (!ticket) return fail(`${input.ticket} isn't an open ticket of ${specName}. Read the tickets again.`);
     } else if (NEEDS_TICKET.includes(role)) return fail(`Name the ticket a ${role} builds with --ticket.`);
+    // A route follows the ticket's labels as the tracker holds them now. The saved board can be minutes behind a label just added,
+    // so a failed read refuses the launch rather than falling back to it.
+    let labels = ticket?.labels.map((label) => label.name) ?? [];
+    if (ticket && !finalReview?.route) {
+      try { if (tracker.readTicketLabels) labels = (await tracker.readTicketLabels(projectId, ticket)).map((label) => label.name); }
+      catch (error) { return fail(`Couldn't read ${ticket.identifier}'s current labels, so its route can't be resolved: ${error instanceof Error ? error.message : String(error)} Launch again once the tracker answers.`); }
+    }
     const resolved = finalReview?.route ? {
       // The reviewer's route as chosen: a review row, or with Final review same the Lead's own route.
       role, category: null, policyResolved: checkout.settings.settings.routeDefaults === "house-rules", overrideNote: null, route: finalReview.route,
     } : (() => {
-      try { return resolveLaunch(checkout.settings.settings, { role, labels: ticket?.labels.map((label) => label.name) ?? [] }, checkout.providerCatalog); }
+      try { return resolveLaunch(checkout.settings.settings, { role, labels }, checkout.providerCatalog); }
       catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
     })();
     const routed = requestedRoute(resolved.route);
@@ -134,7 +141,7 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
     const name = ticket?.identifier ?? spec?.identifier ?? "";
     const title = input.title ?? `${role.startsWith("Review") ? "Review" : role} ${name}`.trim();
     if (ticket && !title.includes(ticket.identifier)) return fail(`Put ${ticket.identifier} in the title so the board can show this thread on its ticket.`);
-    const record: LaunchRecord = { version: 1, role, category: resolved.category, policyResolved: resolved.policyResolved,
+    const record: LaunchRecord = { version: 1, role, category: resolved.category, ...(ticket && !finalReview?.route ? { labels } : {}), policyResolved: resolved.policyResolved,
       overrideNote: resolved.overrideNote, specId, tickets, leadThreadId: callerThreadId, launchedBy: "lead", launchedAt: Date.now(),
       requested, replacesThreadId: input.replaces ?? null, escalation };
     const thread = await bb.sdk.threads.spawn({

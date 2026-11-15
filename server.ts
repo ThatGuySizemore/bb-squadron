@@ -28,7 +28,7 @@ export default async function plugin(bb: BbPluginApi) {
     laneSpecIds: async (projectId) => (await readLeadThreads(bb, projectId)).map((lead) => lead.specId) });
   const connection = (projectId: string) => linear.getConnection(mirror.getSnapshot(projectId).syncedAt);
   const doctor = registerDoctor(bb, connection, (projectId) => mirror.scopeProblem(projectId));
-  const tracker = registerTracker(bb, mirror);
+  const tracker = registerTracker(bb, mirror, linear);
   const outside = createOutsideLaneReader(bb);
   const helper = registerHelper(bb);
   const notifier = registerHelperNotifier(bb, helper);

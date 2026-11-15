@@ -15,6 +15,13 @@ export function cachedTrackerReader(bb: BbPluginApi, options: {
   bb.onDispose(() => { lifetime.abort(); listeners.clear(); });
   return {
     onChange(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    /** An uncached read: any reading in flight finishes first, then the files or issues are read again. */
+    async refresh(bbProjectId) {
+      await cache.get(bbProjectId)?.pending?.catch(() => undefined);
+      const entry = cache.get(bbProjectId);
+      if (entry) entry.at = -Infinity;
+      return this.getSnapshot(bbProjectId);
+    },
     async getSnapshot(bbProjectId) {
       const empty: TrackerSnapshot = { kind: options.kind, bbProjectId, project: null,
         issues: [], relations: [], labels: [], states: [], syncedAt: null, error: null };

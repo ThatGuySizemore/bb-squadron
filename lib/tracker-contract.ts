@@ -31,6 +31,7 @@ export const trackerSnapshotSchema = z.object({
   labels: z.array(trackerLabelSchema), states: z.array(trackerStateSchema),
   syncedAt: z.number().nullable(), error: z.string().nullable(),
 });
+export type TrackerLabel = z.infer<typeof trackerLabelSchema>;
 export type TrackerIssue = z.infer<typeof trackerIssueSchema>;
 export type TrackerSnapshot = z.infer<typeof trackerSnapshotSchema>;
 export type TrackerRelation = z.infer<typeof trackerRelationSchema>;
@@ -44,5 +45,8 @@ export interface TrackerReader {
    * picker's counts or a board that starts showing a project. Readers that
    * read on every getSnapshot don't need it. */
   refresh?(bbProjectId: string): Promise<TrackerSnapshot>;
+  /** One ticket's labels as the tracker holds them now, never a saved reading. Absent when getSnapshot already reads fresh.
+   * Rejects when the read fails. */
+  readTicketLabels?(bbProjectId: string, ticket: { id: string; identifier: string }): Promise<TrackerLabel[]>;
   onChange(listener: (bbProjectId: string) => void): () => void;
 }

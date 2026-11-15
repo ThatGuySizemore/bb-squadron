@@ -1,7 +1,11 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import type { MirrorSnapshot } from "./linear-mirror-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import type { TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
+import { z } from "zod";
+import { LINEAR_QUERIES } from "./linear-queries.js";
+import { mirrorLabelSchema } from "./linear-mirror-contract.js";
+import { LinearRequestError, type LinearAuth } from "./linear-auth.js";
+import type { TrackerLabel, TrackerReader, TrackerSnapshot } from "./tracker-contract.js";
 import { registerGithubReader } from "./github-reader.js";
 import { linearTrackerSnapshot } from "./tracker-snapshot.js";
 import { registerLocalMarkdownReader } from "./local-markdown-reader.js";
@@ -13,7 +17,7 @@ export function registerTracker(bb: BbPluginApi, mirror: {
   load?(bbProjectId: string): Promise<void>;
   sync?(bbProjectId: string): Promise<MirrorSnapshot>;
   onChange(listener: (bbProjectId: string) => void): () => void;
-}): TrackerReader & Required<Pick<TrackerReader, "refresh">> {
+}, linear?: Pick<LinearAuth, "graphql">): TrackerReader & Required<Pick<TrackerReader, "refresh">> {
   const github = registerGithubReader(bb);
   const local = registerLocalMarkdownReader(bb);
   async function detect(bbProjectId: string) {
@@ -60,7 +64,34 @@ export function registerTracker(bb: BbPluginApi, mirror: {
     attemptedAt.set(bbProjectId, Date.now());
     await mirror.sync!(bbProjectId).catch(() => undefined); // The snapshot carries the safe error.
   }
-  return { getSnapshot, cachedSnapshot, refresh, onChange(listener) {
+  const labelsPage = z.object({ issue: z.object({ labels: z.object({
+    nodes: z.array(mirrorLabelSchema), pageInfo: z.object({ hasNextPage: z.boolean(), endCursor: z.string().nullable() }) }) }) });
+  /** A Linear ticket's labels, read by ID. GitHub and local readers read fresh on every getSnapshot, so they have no separate read. */
+  async function readTicketLabels(bbProjectId: string, ticket: { id: string }): Promise<TrackerLabel[]> {
+    const found = await detect(bbProjectId);
+    if (found.kind !== "linear") {
+      // GitHub and local readers keep a 30 s reading and hold the old issues when a read fails: read again, and reject on any error.
+      const reader = found.kind === "github" ? github : local;
+      const snapshot = await (reader.refresh?.(bbProjectId) ?? reader.getSnapshot(bbProjectId));
+      if (snapshot.error) throw new Error(snapshot.error);
+      const issue = snapshot.issues.find((item) => item.id === ticket.id);
+      if (!issue) throw new Error("The tracker no longer lists it.");
+      return issue.labels;
+    }
+    if (!linear) throw new LinearRequestError("not_connected");
+    const labels: TrackerLabel[] = [];
+    const cursors = new Set<string>();
+    let after: string | null = null;
+    while (true) {
+      const page: z.infer<typeof labelsPage> = labelsPage.parse(await linear.graphql(LINEAR_QUERIES.issueLabels, { id: ticket.id, after }));
+      labels.push(...page.issue.labels.nodes);
+      const cursor: string | null = page.issue.labels.pageInfo.endCursor;
+      if (!page.issue.labels.pageInfo.hasNextPage) return labels;
+      if (!cursor || cursors.has(cursor)) throw new LinearRequestError("invalid_response");
+      cursors.add(cursor); after = cursor;
+    }
+  }
+  return { getSnapshot, cachedSnapshot, refresh, readTicketLabels, onChange(listener) {
     const unsubscribes = [mirror.onChange(listener), github.onChange(listener), local.onChange(listener)];
     return () => { for (const unsubscribe of unsubscribes) unsubscribe(); };
   } };

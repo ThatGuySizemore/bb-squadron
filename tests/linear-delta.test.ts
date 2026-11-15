@@ -12,7 +12,7 @@ const epoch = Date.parse("2026-11-14T12:00:00Z");
 const settle = async () => { for (let i = 0; i < 40; i++) await setImmediate(); };
 type Node = Omit<typeof specIssue, "parent" | "relations" | "inverseRelations"> & {
   parent: { id: string } | null;
-  childSummary?: { totalCount: number };
+  childSummary?: { nodes: { id: string }[]; pageInfo: { hasNextPage: boolean } };
   relations: { nodes: unknown[]; pageInfo: typeof end };
   inverseRelations: { nodes: unknown[]; pageInfo: typeof end };
 };
@@ -267,14 +267,14 @@ test("a board action's reset survives an unchanged delta already in flight", asy
 
 test("delta reads retain and refresh total child counts alongside label removal", async (t) => {
   const f = await fixture(t);
-  const spec: Node = { ...specIssue, childSummary: { totalCount: 3 },
+  const spec: Node = { ...specIssue, childSummary: { nodes: [{ id: "child-1" }, { id: "child-2" }, { id: "child-3" }], pageInfo: { hasNextPage: false } },
     updatedAt: new Date(epoch + 1_000).toISOString() };
   f.setNodes([spec]);
   await f.reader.sync("one");
   assert.equal(f.reader.getSnapshot("one").issues[0]?.childCount, 3);
   await f.reader.sync("one");
   assert.equal(f.reader.getSnapshot("one").issues[0]?.childCount, 3, "quiet deltas retain all children, including closed ones");
-  f.setNodes([{ ...spec, childSummary: { totalCount: 0 }, labels: { nodes: [], pageInfo: end },
+  f.setNodes([{ ...spec, childSummary: { nodes: [], pageInfo: { hasNextPage: false } }, labels: { nodes: [], pageInfo: end },
     updatedAt: new Date(epoch + 2_000).toISOString() }]);
   await f.reader.sync("one");
   const issue = f.reader.getSnapshot("one").issues[0];

@@ -18,6 +18,7 @@ import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fak
 import type { BoardAction } from "../lib/fake-board.js";
 import { runwayLayout, runwayState, type RunwayLayout, type RunwayMoments, type RunwayStand, type RunwayState } from "../lib/runway.js";
 import { PixelText } from "./PixelText.js";
+import { FlipCount } from "./FlipCount.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { inWind, workingAgents } from "../lib/working-agents.js";
 import { DoctorPanel } from "./Doctor.js";
@@ -1070,12 +1071,17 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
     <nav className="sq-path" aria-label="The path">
       {STATIONS.map(([key, label]) => {
         const n = counts[key];
+        const cell = layout === "narrow" ? 2 : 3;
+        // The Landed count flips digit by digit as each lane arrives in Landed.
+        const count = n === null ? "–"
+          : key === "landed" ? <FlipCount value={n} digit={(d) => <PixelText text={d} cell={cell} gap={0} decorative />} />
+          : <PixelText text={String(n)} cell={cell} gap={0} />;
         return (
           <button key={key} type="button" className="sq-station" data-zero={!n} data-hot={key === "flying" && !!n} onClick={() => onJump(key)}>
             <span className="sq-station-label">
               {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : <Term text={label} nested />}
             </span>
-            <span className="sq-station-count sq-num">{n === null ? "–" : <PixelText text={String(n)} cell={layout === "narrow" ? 2 : 3} gap={0} />}</span>
+            <span className="sq-station-count sq-num">{count}</span>
             {key !== "landed" ? <Chevron className="sq-station-chev" /> : null}
           </button>
         );

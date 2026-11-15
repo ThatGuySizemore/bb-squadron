@@ -305,6 +305,31 @@
 .sq-station[data-hot="true"] .sq-station-count {
   color: var(--sq-sky-ink);
 }
+/* The Landed count: each digit sits in its own window, one pixel cell apart as
+   in the whole-number lettering, and a changed digit drops in from above, from
+   the units up. The number itself is read once, from the count's text copy. */
+.sq-flip {
+  display: inline-flex;
+  gap: 3px;
+  vertical-align: top;
+}
+.sq[data-layout="narrow"] .sq-flip {
+  gap: 2px;
+}
+.sq-flip-digit {
+  display: inline-block;
+  overflow: hidden;
+}
+.sq-flip-digit > * {
+  display: block;
+}
+.sq-flip-digit[data-flip="true"] > * {
+  animation: sq-flip 460ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+@keyframes sq-flip {
+  from { transform: translateY(-105%); }
+  to { transform: none; }
+}
 .sq-station-chev {
   position: absolute;
   right: 10px;

@@ -19,9 +19,10 @@ export function FlipCount({ value, digit, className }: { value: number; digit: (
           const place = digits.length - 1 - i;
           const was = before === null ? d : before[before.length - 1 - place];
           const flip = was !== d;
-          // A changed digit gets a new key, so React mounts a new face and its flip plays.
+          // Keyed by place and digit: a changed digit gets a new key, so React mounts
+          // a new face and its flip plays; an unchanged digit keeps its node.
           return (
-            <span key={`${place}:${flip ? `${d}:${before}` : d}`} className="sq-flip-digit" data-flip={flip}
+            <span key={`${place}:${d}`} className="sq-flip-digit" data-flip={flip}
               style={flip ? { animationDelay: `${place * STAGGER_MS}ms` } : undefined}>{digit(d)}</span>
           );
         })}

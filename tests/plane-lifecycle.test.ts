@@ -363,3 +363,20 @@ test("the Landed count flips digit by digit when it changes, never on first show
     }
   }
 });
+
+test("in the view, the path's Landed count flips when a lane arrives in Landed, and reads its number once", async () => {
+  const landedLane = (specId: string) => lane({ specId, state: "landed", workingThreads: 0 });
+  const view = await mount([boardOf([landedLane("A-1")])]);
+  const station = () => [...view.doc.querySelectorAll<HTMLElement>(".sq-station")].at(-1)!;
+  const digits = () => [...station().querySelectorAll<HTMLElement>(".sq-flip-digit")];
+  try {
+    assert.equal(station().querySelector(".sq-station-count .sq-sr")?.textContent, "1", "the whole count is read once");
+    assert.equal(station().querySelectorAll(".sq-station-count .sq-sr").length, 1, "one copy of the count, none per digit");
+    assert.deepEqual(digits().map((d) => d.dataset.flip), ["false"], "a count already landed when the board opens doesn't flip");
+    assert.ok(digits()[0]!.querySelector("svg.sq-pixeltext"), "each digit is pixel lettering");
+    // A lane this view never saw flying arrives already Landed: no burst plays, so the count changes in this update.
+    await view.show(boardOf([landedLane("A-1"), landedLane("B-1")]));
+    assert.equal(station().querySelector(".sq-station-count .sq-sr")?.textContent, "2");
+    assert.deepEqual(digits().map((d) => d.dataset.flip), ["true"], "the changed digit flips");
+  } finally { await view.close(); }
+});

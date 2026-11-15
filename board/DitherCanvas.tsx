@@ -6,6 +6,7 @@ import { windSpeed } from "../lib/working-agents.js";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
 import { airstream, burst, BURST_SECONDS, contrail, createSurface, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
 import { runway, runwayMotion, type RunwayState } from "../lib/runway.js";
+import { readingMotion, readingRow } from "../lib/reading.js";
 
 /** What a canvas draws. Inks are read from the board's CSS, so they follow the theme. */
 export type Fx =
@@ -18,7 +19,9 @@ export type Fx =
   | { kind: "section-rule" }
   | { kind: "runway"; narrow: boolean; label: string; state: RunwayState }
   /** `since`: when the landing started, in Date.now() milliseconds, shared with the banner's glide. */
-  | { kind: "burst"; since?: number };
+  | { kind: "burst"; since?: number }
+  /** A placeholder row before the board's first read; `delay` staggers a section's rows. */
+  | { kind: "reading"; delay: number; shape?: "row" | "bar" };
 
 type Inks = (name: string) => number;
 
@@ -37,6 +40,7 @@ function painterFor(fx: Fx, ink: Inks): Painter {
       stand: ink("--sq-stand"), plane: ink("--sq-sky"), trail: ink("--sq-sky"), beacon: ink("--sq-amber"), holding: ink("--sq-red"),
     } });
     case "burst": return burst({ ink: ink("--sq-green") });
+    case "reading": return readingRow({ ink: ink("--sq-cloud"), delay: fx.delay, shape: fx.shape });
     case "peg":
       switch (fx.state) {
         case "working": return pegFill({ ink: ink("--sq-sky"), base: 0.07, amp: 0.3, speed: 9, edge: ink("--sq-sky") });
@@ -57,6 +61,7 @@ function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until">
     case "needs-you": return { animated: true, stillAt: 0.9 };
     case "runway": return runwayMotion(fx.state);
     case "burst": return { animated: true, stillAt: BURST_SECONDS, until: BURST_SECONDS };
+    case "reading": return readingMotion;
     case "peg": return { animated: fx.state === "working", stillAt: 1.2 };
     case "plate":
     case "section-rule": return { animated: false, stillAt: 0 };

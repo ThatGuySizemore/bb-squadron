@@ -17,7 +17,7 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { planeBox, runwayLayout, runwayState, type RunwayLayout, type RunwayMoments, type RunwayStand, type RunwayState } from "../lib/runway.js";
+import { planeBox, runwayLayout, runwayLoading, runwayState, type RunwayLayout, type RunwayMoments, type RunwayStand, type RunwayState } from "../lib/runway.js";
 import { PixelText } from "./PixelText.js";
 import { FlipCount } from "./FlipCount.js";
 import { DitherCanvas } from "./DitherCanvas.js";
@@ -63,9 +63,13 @@ function FlyingLabel({ count, box }: { count: ReturnType<typeof flyingCount>; bo
 interface Runway {
   ref: { current: HTMLDivElement | null };
   narrow: boolean;
+  /** The board's first read is in flight: planes taxi on their stands. */
+  loading: boolean;
   state: RunwayState;
   /** Null until the live board's first read, so the banner never counts lanes it hasn't read. */
   count: ReturnType<typeof flyingCount> | null;
+  /** The label text the tarmac makes room for: none in the narrow layout. */
+  label: string;
   layout: RunwayLayout;
   overflow: boolean;
 }
@@ -76,15 +80,17 @@ interface Runway {
  * board update (its Needs you rows and its takeoffs and landings), so each
  * plane matches its lane row.
  */
-function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: number, moments: RunwayMoments): Runway {
+function useRunway(board: Board, lanesKnown: boolean, loading: boolean, narrow: boolean, working: number, moments: RunwayMoments): Runway {
   const ref = useRef<HTMLDivElement | null>(null);
   const width = useWidth(ref);
   const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
-  const state: RunwayState = lanesKnown ? runwayState(board.lanes, board.laneCapacity, working, moments) : { stands: [], working: 0 };
-  const count = lanesKnown ? flyingCount(flying, board.laneCapacity) : null;
+  const state: RunwayState = loading ? runwayLoading() : lanesKnown ? runwayState(board.lanes, board.laneCapacity, working, moments) : { stands: [], working: 0 };
+  const count = lanesKnown && !loading ? flyingCount(flying, board.laneCapacity) : null;
   const viewport = Math.max(1, Math.round(width ?? (narrow ? 560 : 1200)));
-  const layout = runwayLayout(viewport, narrow, state.stands.length, count?.text ?? "");
-  return { ref, narrow, state, count, layout, overflow: layout.width > viewport };
+  // In the narrow layout the lane label always sits in the controls row, so whether it fits the tarmac never moves the page.
+  const label = narrow ? "" : count?.text ?? "";
+  const layout = runwayLayout(viewport, narrow, state.stands.length, label);
+  return { ref, narrow, loading, state, count, label, layout, overflow: layout.width > viewport };
 }
 
 /**
@@ -108,7 +114,7 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
   const { layout: g, state, count, narrow, overflow } = runway;
   const scene = (
     <>
-      <DitherCanvas fx={{ kind: "runway", narrow, label: count?.text ?? "", state }} className="sq-runway-art" />
+      <DitherCanvas fx={{ kind: "runway", narrow, label: runway.label, state }} className="sq-runway-art" />
       <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined}>
         {g.title ? <PixelText text="Squadron" cell={g.title.cell} gap={g.title.gap} /> : <span className="sq-sr">Squadron</span>}
       </h1>
@@ -128,7 +134,7 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
   );
   return (
     <>
-      <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length}
+      <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length} data-loading={runway.loading || undefined}
         data-fly-past={state.flyPast?.since} data-overflow={overflow ? "true" : undefined}
         role={overflow ? "region" : undefined} tabIndex={overflow ? 0 : undefined}
         aria-label={overflow ? `Runway, ${state.stands.length} stands. Scroll horizontally to see every plane.` : undefined}
@@ -936,6 +942,24 @@ function EmptySection({ text, action }: { text: string; action?: ReactNode }) {
   );
 }
 
+/**
+ * A section's placeholder rows before the board's first read: a row's shape in
+ * neutral dither, shimmering right to left with the banner's wind, each row a
+ * beat after the one above. Hidden from assistive tech; the reading line says
+ * what is happening.
+ */
+function ReadingRows({ rows }: { rows: 1 | 2 }) {
+  return (
+    <div className="sq-reading" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="sq-reading-row">
+          <DitherCanvas fx={{ kind: "reading", delay: i * 0.35 }} className="sq-reading-art" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function OpenIssueRow({ issue, onPlan, opening }: { issue: OpenIssue; onPlan: Plan; opening: boolean }) {
   const meta = issue.kind || issue.priority || issue.labels.length || issue.under || opening || issue.planningThreadId;
   return (
@@ -1126,6 +1150,13 @@ function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerI
   );
 }
 
+/** Before the first read, the one plain line saying what is being read, in the tracker line's place. */
+function ReadingLine({ tracker }: { tracker?: TrackerInfo }) {
+  const kind = tracker?.kind;
+  const source = kind === "local-markdown" ? ".scratch/" : kind ? trackerName(kind) : "the board";
+  return <p className="sq-trackerline sq-reading-line" role="status">Reading {source}…</p>;
+}
+
 /** Plan an issue (or Resume its planning), Plan a spec's tickets, or with no issue start a New spec. */
 type Plan = (issueId?: string, step?: "tickets") => void;
 
@@ -1150,7 +1181,7 @@ type Station = "open" | "shaping" | "ready" | "flying" | "landed";
 const STATIONS: [Station, string][] = [["open", "Open issues"], ["shaping", "Shaping"], ["ready", "Ready"], ["flying", "Flying"], ["landed", "Landed"]];
 
 /** The path in one strip: each station's count, in path order, jumping to its section. */
-function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>; onJump: (station: Station) => void }) {
+function PathStrip({ counts, onJump, loading = false }: { counts: Record<Station, number | null>; onJump: (station: Station) => void; loading?: boolean }) {
   const layout = useContext(LayoutContext);
   return (
     <nav className="sq-path" aria-label="The path">
@@ -1158,7 +1189,11 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
         const n = counts[key];
         const cell = layout === "narrow" ? 2 : 3;
         // The Landed count flips digit by digit as each lane arrives in Landed.
-        const count = n === null ? "–"
+        // Before the first read every count is a pixel dash, Landed's in its flip window so the count lands in place;
+        // a count the board can't show is a text dash.
+        const dash = <PixelText text="-" cell={cell} gap={0} alt="Not read yet" />;
+        const count = n === null ? (!loading ? "–" : key === "landed" ? <span><span className="sq-flip" aria-hidden="true"><span className="sq-flip-digit">
+          <PixelText text="-" cell={cell} gap={0} decorative /></span></span><span className="sq-sr">Not read yet</span></span> : dash)
           : key === "landed" ? <FlipCount value={n} digit={(d) => <PixelText text={d} cell={cell} gap={0} decorative />} />
           : <PixelText text={String(n)} cell={cell} gap={0} />;
         return (
@@ -1217,6 +1252,8 @@ interface BoardViewProps {
   tracker?: TrackerInfo;
   /** False until the live board's first read, so the banner never counts lanes it hasn't read. */
   lanesKnown?: boolean;
+  /** The live board's first read is in flight: the board shows its loading state, never an empty state or a zero. */
+  loading?: boolean;
   autopilotSaving?: boolean;
   onAutopilotChange?: (patch: AutopilotChange) => void;
   onAutopilotResume?: () => void;
@@ -1225,8 +1262,11 @@ interface BoardViewProps {
   placement?: Placement;
 }
 
+/** What Autopilot's held place is sized for before the first read: the live board always reads Autopilot. */
+const AUTOPILOT_PLACE: NonNullable<Board["autopilot"]> = { status: "off", laneLimit: 3, consecutiveStops: 0, pauseReason: null };
+
 /** The board page, fed by the live reader or by the synthetic simulation. */
-export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, autopilotSaving = false, onAutopilotChange, onAutopilotResume, footer, placement = "page" }: BoardViewProps) {
+export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, planning = null, starting = null, acting = null, onSetUp, settingUp = false, notice, diagnostic = null, projectButton, projectList, projectId, tracker, lanesKnown = true, loading = false, autopilotSaving = false, onAutopilotChange, onAutopilotResume, footer, placement = "page" }: BoardViewProps) {
   const [doctorOpen, setDoctorOpen] = useState(false);
   const doctorId = useId();
   const [howOpen, setHowOpen] = useState(false);
@@ -1250,7 +1290,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   // The board's one working-agent count paces the banner's clouds, as it paces each lane's wind.
   const wind = workingAgents(board.lanes);
   // The banner reads this update's Needs you rows and moments, the same ones the rows below read.
-  const runway = useRunway(board, lanesKnown, layout === "narrow", wind, { needs: items, landings: phase.landings, now: phase.now, flyPast: phase.flyPast });
+  const runway = useRunway(board, lanesKnown, loading, layout === "narrow", wind, { needs: items, landings: phase.landings, now: phase.now, flyPast: phase.flyPast });
   const titles = useMemo(() => new Map(board.lanes.map((lane) => [lane.specId, lane.title])), [board.lanes]);
   // A beacon goes to its Needs you row, ready to answer; any other plane goes to its lane.
   const goToPlane = (stand: PlaneStand) => {
@@ -1283,25 +1323,27 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   ) : null;
   // While the board can't show Ready, Shaping and Open issues, their stations show a dash, not a false zero.
   const counts: Record<Station, number | null> = {
-    open: notice ? null : board.openIssues.length, shaping: notice ? null : board.shaping.length, ready: notice ? null : board.ready.length,
-    flying: flying.length, landed: landed.length,
+    open: notice || loading ? null : board.openIssues.length, shaping: notice || loading ? null : board.shaping.length, ready: notice || loading ? null : board.ready.length,
+    flying: loading ? null : flying.length, landed: loading ? null : landed.length,
   };
 
   return (
     <PlacementContext.Provider value={placement}>
     <LayoutContext.Provider value={layout}>
     <WindContext.Provider value={wind}>
-    <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout}>
+    <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout} aria-busy={loading || undefined}>
       <header className="sq-head">
         <RunwayBanner runway={runway} titles={titles} onPlane={goToPlane} />
         <div className="sq-controls">
-          {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
-          {runway.count && !runway.layout.label ? <FlyingLabel count={runway.count} /> : null}
-          {demo ? (
-            <span className="sq-tag" data-tone="amber">
-              Synthetic data
-            </span>
-          ) : null}
+          <div className="sq-controls-lead">
+            {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
+            {runway.count && !runway.layout.label ? <FlyingLabel count={runway.count} /> : null}
+            {demo ? (
+              <span className="sq-tag" data-tone="amber">
+                Synthetic data
+              </span>
+            ) : null}
+          </div>
           <div className="sq-head-actions">
             {demo ? (
               <button
@@ -1323,31 +1365,37 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
             <button type="button" className="sq-doctor" data-status={doctor?.tone ?? "unknown"} aria-expanded={doctorOpen} aria-controls={doctorId}
               title={doctor ? `Doctor: ${doctor.text}` : "Check this repo's setup"} onClick={() => setDoctorOpen((open) => !open)}>
               Doctor{doctor ? <span className="sq-sr">: </span> : null}
-              {doctor ? <span className="sq-doctor-word">{doctor.text}</span> : null}
+              {doctor ? <span className="sq-doctor-word">{doctor.text}</span>
+                : loading ? <span className="sq-doctor-word" aria-hidden="true"><DitherCanvas fx={{ kind: "reading", delay: 0.2, shape: "bar" }} className="sq-reading-bar" /></span> : null}
             </button>
             {!demo ? <HelperControl projectId={projectId ?? null} openThread={(id) => openThread(navigate, placement, id)} /> : null}
             {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
             {newSpec("primary")}
-            {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
+            {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} />
+              : loading ? <Autopilot state={AUTOPILOT_PLACE} reserve /> : null}
           </div>
-          {!demo && board.autopilot ? <AutopilotNote /> : null}
+          {!demo && board.autopilot ? <AutopilotNote state={board.autopilot} saving={autopilotSaving} />
+            : loading ? <AutopilotNote reserve /> : null}
         </div>
       </header>
       <div className="sq-page">
         {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
-        <TrackerLine board={board} tracker={tracker} now={Date.now()} />
+        {/* The live board holds the tracker line's place even when it has nothing to say, so the page never moves under it. */}
+        <div className={demo ? undefined : "sq-trackerslot"}>
+          {loading ? <ReadingLine tracker={tracker} /> : <TrackerLine board={board} tracker={tracker} now={Date.now()} />}
+        </div>
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
-        <PathStrip counts={counts} onJump={jump} />
+        <PathStrip counts={counts} onJump={jump} loading={loading} />
 
         <section className="sq-section" aria-labelledby="sq-needs-h">
           <SectionHead id="sq-needs-h" title="Needs you" count={items.length} amber />
-          <NeedsYouStrip items={items} dispatch={dispatch} setUp={setUpButton} demo={demo} acting={acting} onAutopilotResume={onAutopilotResume} autopilotSaving={autopilotSaving} />
+          {loading ? <ReadingRows rows={1} /> : <NeedsYouStrip items={items} dispatch={dispatch} setUp={setUpButton} demo={demo} acting={acting} onAutopilotResume={onAutopilotResume} autopilotSaving={autopilotSaving} />}
           <DoctorPanel open={doctorOpen} id={doctorId} projectId={projectId} />
         </section>
 
         <section className="sq-section" aria-labelledby="sq-flying-h" ref={(el) => { sections.current.flying = el; }}>
           <SectionHead id="sq-flying-h" title="Flying" count={flying.length} />
-          {onLine.length === 0 ? (
+          {loading ? <ReadingRows rows={2} /> : onLine.length === 0 ? (
             // The quiet hangar: one plain line pointing to New spec, with Start beside it when a Ready spec can go.
             <EmptySection text="Nothing is flying. Plan the next spec with New spec." action={<>
               {newSpec()}
@@ -1368,7 +1416,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section" aria-labelledby="sq-ready-h" ref={(el) => { sections.current.ready = el; }}>
           <SectionHead id="sq-ready-h" title="Ready" count={notice ? 0 : board.ready.length} />
-          {notice ? (
+          {loading ? <ReadingRows rows={2} /> : notice ? (
             <p className="sq-clear">{notice}</p>
           ) : board.ready.length === 0 ? (
             <EmptySection text="Nothing is Ready. Specs need the ready-for-agent label and a ticket that can start. Work items need the label and no hold."
@@ -1384,7 +1432,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section" aria-labelledby="sq-shaping-h" ref={(el) => { sections.current.shaping = el; }}>
           <SectionHead id="sq-shaping-h" title="Shaping" count={notice ? 0 : board.shaping.length} />
-          {notice ? null : board.shaping.length === 0 ? (
+          {loading ? <ReadingRows rows={1} /> : notice ? null : board.shaping.length === 0 ? (
             <EmptySection text="No spec is being shaped. Plan an open issue, or start a new spec from nothing." action={newSpec()} />
           ) : (
             <ul className="sq-list">
@@ -1397,7 +1445,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section sq-open" aria-labelledby="sq-open-issues-h" ref={(el) => { sections.current.open = el; }}>
           <SectionHead id="sq-open-issues-h" title="Open issues" count={notice ? 0 : board.openIssues.length} />
-          {notice ? null : board.openIssues.length === 0 ? (
+          {loading ? <ReadingRows rows={2} /> : notice ? null : board.openIssues.length === 0 ? (
             <EmptySection text="No open issues. Issues that need planning wait here for Plan." action={newSpec()} />
           ) : (
             <ul className="sq-list">
@@ -1410,7 +1458,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
 
         <section className="sq-section sq-landed" aria-labelledby="sq-landed-h" ref={(el) => { sections.current.landed = el; }}>
           <SectionHead id="sq-landed-h" title="Landed" count={landed.length} />
-          {landed.length === 0 ? (
+          {loading ? <ReadingRows rows={1} /> : landed.length === 0 ? (
             <EmptySection text="Nothing has landed yet. A lane lands when its PR merges or, in a repo with no remote, when its integration branch merges into main." />
           ) : (
             <ul className="sq-list">
@@ -1724,7 +1772,9 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", escape); };
   }, [pickerOpen]);
-  const notice = liveNotice({ projectId, board, failed });
+  // Until the shown project's first read returns, the board shows its loading state; a failed read shows the error.
+  const loading = projectId !== null && board === null && !failed;
+  const notice = loading ? null : liveNotice({ projectId, board, failed });
   const projectName = listed?.projects.find((item) => item.id === projectId)?.name ?? null;
   const row = counts?.projects.find((item) => item.id === projectId);
   const trackerKind = board?.tracker?.kind !== undefined ? board.tracker.kind : row?.tracker;
@@ -1737,6 +1787,7 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
       projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(trackerKind, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
       projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} onCounts={setCounts} /> : null}
       lanesKnown={board !== null}
+      loading={loading}
       onSetUp={() => void setUp()}
       settingUp={settingUp}
       autopilotSaving={autopilotSaving}

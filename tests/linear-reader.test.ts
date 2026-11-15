@@ -23,6 +23,10 @@ function linear(handler: Handler = () => undefined) {
     requests.push(request);
     const answer = await handler(request);
     if (answer) return remember(seen, answer);
+    if (request.operation === "SquadronDelta") {
+      const changes = await handler({ ...request, operation: "SquadronIssues" });
+      if (changes) return remember(seen, changes);
+    }
     switch (request.operation) {
       case "SquadronScope": return Response.json(scopeResponse);
       case "SquadronScopeMembers": return scopeMembers(seen, variables);
@@ -221,7 +225,7 @@ test("an incomplete later page retains the last complete snapshot and reports a 
   assert.ok(!JSON.stringify(snapshot).includes("fake-private-provider-detail"));
 });
 
-test("polling reads the projects a board has read every 30 seconds, and each service start catches up in full", async (t) => {
+test("quiet polling backs off, and each service start catches up in full", async (t) => {
   const { bb, harness } = createFakePluginHost({ settings: { linearApiKey: "fake-key" } });
   t.after(() => harness.lifecycle.dispose());
   let now = 1_000_000;
@@ -244,9 +248,9 @@ test("polling reads the projects a board has read every 30 seconds, and each ser
   const run = harness.behavior.runService("linear-reader");
   stop = () => run.controller.abort();
   await run.done;
-  assert.deepEqual(delays, [30_000, 30_000, 30_000, 30_000]);
-  assert.deepEqual(mirror.getSnapshot("proj-one").issues, []);
-  assert.equal(mirror.getSnapshot("proj-one").syncedAt, 1_090_000);
+  assert.deepEqual(delays, [30_000, 60_000, 120_000, 180_000]);
+  assert.equal(mirror.getSnapshot("proj-one").issues[0].identifier, "FIX-1", "deletions wait for a full reconciliation");
+  assert.equal(mirror.getSnapshot("proj-one").syncedAt, 1_210_000);
   hasIssue = true;
   const restarted = harness.behavior.runService("linear-reader");
   stop = () => restarted.controller.abort();

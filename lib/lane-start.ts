@@ -18,6 +18,7 @@ import type { TrackerSnapshot } from "./tracker-contract.js";
 
 export function registerLaneStart(bb: BbPluginApi, sources: {
   tracker: TrackerReader;
+  onAction?(projectId: string): void;
   doctor(projectId: string): Promise<DoctorReport>;
   /** Lanes started outside Squadron: Start, Stop, Resume and Merge all refuse them. */
   outside?: OutsideLaneReader;
@@ -97,6 +98,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   }
   /** Squash-merge the Lead's PR, read afresh, only while it is open with passing checks. */
   async function merge(projectId: string, specId: string) {
+    sources.onAction?.(projectId);
     const lead = await leadOf(projectId, specId, "merge");
     const environmentId = lead.thread.environmentId;
     const snapshot = await sources.tracker.getSnapshot(projectId);
@@ -126,6 +128,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   }
   /** Both owner and Autopilot use this path, including the in-flight dedupe and first message. */
   function startLane(projectId: string, specId: string, startedBy: "owner" | "autopilot", allowed?: () => Promise<boolean>) {
+    sources.onAction?.(projectId);
     const key = JSON.stringify([projectId, specId]);
     let running = starting.get(key);
     if (!running) {

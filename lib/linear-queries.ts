@@ -31,6 +31,12 @@ export const LINEAR_QUERIES = {
   issues: `query SquadronIssues($filter: IssueFilter!, $after: String) {
     issues(first: ${PAGE.issues}, after: $after, filter: $filter) { nodes { ${graphFields} } ${pageInfo} }
   }`,
+  /** Probe without labels or relations: a quiet poll is one small request. */
+  delta: `query SquadronDelta($filter: IssueFilter!, $after: String) {
+    issues(first: ${PAGE.followUp}, after: $after, filter: $filter, includeArchived: true) {
+      nodes { id updatedAt parent { id } } ${pageInfo}
+    }
+  }`,
   /** A View scope: the view's own saved filter and scope, narrowed by the other keys through `filter`. */
   viewIssues: `query SquadronViewIssues($view: String!, $filter: IssueFilter!, $after: String) {
     customView(id: $view) { issues(first: ${PAGE.issues}, after: $after, filter: $filter) { nodes { ${graphFields} } ${pageInfo} } }

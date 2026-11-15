@@ -28,14 +28,14 @@ export default async function plugin(bb: BbPluginApi) {
   const helper = registerHelper(bb);
   const notifier = registerHelperNotifier(bb, helper);
   const summary = registerHelperSummary(bb, helper);
-  const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside });
+  const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside, onAction: mirror.resetCadence });
   const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection: () => linear.getConnection(),
     observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); },
     tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   summary.register(board.read);
-  registerPlanning(bb, { tracker, doctor: doctor.read });
+  registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
   registerSquadronCli(bb, board, lanes, helper, autopilot);
   bb.log.info("loaded");
 }

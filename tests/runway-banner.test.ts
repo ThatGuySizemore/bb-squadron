@@ -75,6 +75,7 @@ test("more stands than the widest planes allow shrink the planes before they eve
 
 const INKS: RunwayInks = {
   cloud: 0xff111111, tarmac: 0xff222222, line: 0xff333333, rule: 0xff444444, stand: 0xff555555, plane: 0xff0000ff,
+  trail: 0xff00ff00, beacon: 0xff00aaff, holding: 0xffff0000,
 };
 const empty = (n: number): RunwayState["stands"] => Array.from({ length: n }, () => ({ kind: "empty" as const }));
 
@@ -113,7 +114,7 @@ test("clouds drift right to left on the lanes' wind, and stay put when nobody wo
 
 test("clouds stay in the sky: the tarmac under the stencil and the label is flat, with no moving dither", () => {
   const label = "1 of 3 lanes flying";
-  const state = { stands: [{ kind: "flying" as const, laneId: "SQD-1" }, ...empty(2)], working: 4 };
+  const state = { stands: [{ kind: "flying" as const, laneId: "SQD-1", beacon: null }, ...empty(2)], working: 4 };
   const g = runwayLayout(1200, false, 3, label);
   assert.ok(g.label && g.title);
   const texts: Array<[string, Box]> = [["stencil", g.title], ["label", g.label]];
@@ -127,7 +128,7 @@ test("clouds stay in the sky: the tarmac under the stencil and the label is flat
 });
 
 test("empty stands are dotted outlines; a flying lane lights its plane over its stand", () => {
-  const state: RunwayState = { stands: [{ kind: "flying", laneId: "SQD-1" }, { kind: "empty" }, { kind: "flying", laneId: "SQD-2" }, { kind: "empty" }], working: 0 };
+  const state: RunwayState = { stands: [{ kind: "flying", laneId: "SQD-1", beacon: null }, { kind: "empty" }, { kind: "flying", laneId: "SQD-2", beacon: null }, { kind: "empty" }], working: 0 };
   const g = runwayLayout(1200, false, 4, "");
   const s = paint(state, 0.8);
   const solid = 4 * 4 * RUNWAY_PLANE.join("").split("").filter((c) => c === "#").length;
@@ -149,9 +150,9 @@ test("the banner's state comes from the lanes: one stand per slot in the lane li
   const lane = (specId: string, state: "flying" | "stopped" | "pr-open" | "landed") => ({ specId, state });
   const lanes = [lane("A-1", "flying"), lane("A-2", "landed"), lane("A-3", "stopped"), lane("A-4", "pr-open")];
   assert.deepEqual(runwayState(lanes, 5, 3), {
-    stands: [{ kind: "flying", laneId: "A-1" }, { kind: "flying", laneId: "A-3" }, { kind: "flying", laneId: "A-4" }, { kind: "empty" }, { kind: "empty" }],
+    stands: [{ kind: "flying", laneId: "A-1", beacon: null }, { kind: "holding", laneId: "A-3", beacon: null }, { kind: "flying", laneId: "A-4", beacon: null }, { kind: "empty" }, { kind: "empty" }],
     working: 3,
-  }, "a Landed lane takes no stand; the board's working-agent count paces the clouds");
+  }, "a Landed lane takes no stand, a stopped one holds; the board's working-agent count paces the clouds");
   assert.equal(runwayState([], 0, 0).stands.length, 1, "with no lane limit and nothing flying, one empty stand");
   assert.equal(runwayState(lanes, 2, 0).stands.length, 3, "lanes started over the limit add stands");
 });
@@ -159,7 +160,7 @@ test("the banner's state comes from the lanes: one stand per slot in the lane li
 test("the banner moves only while something flies or works, and draws one still frame under reduced motion", () => {
   assert.equal(runwayMotion({ stands: empty(3), working: 0 }).animated, false);
   assert.equal(runwayMotion({ stands: empty(3), working: 2 }).animated, true);
-  assert.equal(runwayMotion({ stands: [{ kind: "flying", laneId: "A-1" }], working: 0 }).animated, true);
+  assert.equal(runwayMotion({ stands: [{ kind: "flying", laneId: "A-1", beacon: null }], working: 0 }).animated, true);
 
   let now = 0;
   const frames: Array<(t: number) => void> = [];
@@ -167,7 +168,7 @@ test("the banner moves only while something flies or works, and draws one still 
     now: () => now, requestFrame: (cb) => frames.push(cb), cancelFrame: () => undefined,
     isHidden: () => false, onVisibilityChange: () => undefined, prefersReducedMotion: () => true, onReducedMotionChange: () => undefined,
   };
-  const state = { stands: [{ kind: "flying" as const, laneId: "A-1" }, ...empty(2)], working: 3 };
+  const state = { stands: [{ kind: "flying" as const, laneId: "A-1", beacon: null }, ...empty(2)], working: 3 };
   const drawn: Surface[] = [];
   const painter = runway({ state, narrow: false, label: "", inks: INKS });
   createDitherRenderer(env).add({ ...runwayMotion(state), visible: true, draw: (t) => { const s = createSurface(1200, 164, 1); painter(s, t); drawn.push(s); } });

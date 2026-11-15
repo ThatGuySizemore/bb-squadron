@@ -17,7 +17,8 @@ export type Fx =
   | { kind: "plate" }
   | { kind: "section-rule" }
   | { kind: "runway"; narrow: boolean; label: string; state: RunwayState }
-  | { kind: "burst" };
+  /** `since`: when the landing started, in Date.now() milliseconds, shared with the banner's glide. */
+  | { kind: "burst"; since?: number };
 
 type Inks = (name: string) => number;
 
@@ -33,7 +34,7 @@ function painterFor(fx: Fx, ink: Inks): Painter {
     case "section-rule": return sectionRule({ ink: ink("--sq-rule-ink") });
     case "runway": return runway({ state: fx.state, narrow: fx.narrow, label: fx.label, inks: {
       cloud: ink("--sq-cloud"), tarmac: ink("--sq-tarmac"), line: ink("--sq-tarmac-line"), rule: ink("--sq-tarmac-rule"),
-      stand: ink("--sq-stand"), plane: ink("--sq-sky"),
+      stand: ink("--sq-stand"), plane: ink("--sq-sky"), trail: ink("--sq-sky"), beacon: ink("--sq-amber"), holding: ink("--sq-red"),
     } });
     case "burst": return burst({ ink: ink("--sq-green") });
     case "peg":
@@ -60,6 +61,18 @@ function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until">
     case "plate":
     case "section-rule": return { animated: false, stillAt: 0 };
   }
+}
+
+/** When an art's second 0 was, in Date.now() milliseconds: a landing's burst and the banner's moments. */
+function bornOf(fx: Fx): number | undefined {
+  return fx.kind === "burst" ? fx.since : fx.kind === "runway" ? fx.state.at : undefined;
+}
+
+/** The frame clock's reading at Date.now() zero, read once so every canvas converts a start the same way. */
+let epochOnFrames: number | null = null;
+function onFrames(epochMs: number): number {
+  epochOnFrames ??= performance.now() - Date.now();
+  return epochMs + epochOnFrames;
 }
 
 let shared: DitherRenderer | null = null;
@@ -148,8 +161,10 @@ export function DitherCanvas({ fx, className, onDone, label, title, style }: {
       return true;
     };
     fit();
+    const born = bornOf(parsed);
     const target: DitherTarget = {
       ...motionFor(parsed),
+      ...(born !== undefined ? { born: onFrames(born) } : {}),
       visible: true,
       draw(seconds) {
         if (!surface || !image) return;
@@ -177,7 +192,8 @@ export function DitherCanvas({ fx, className, onDone, label, title, style }: {
       theme.disconnect();
     };
   }, [key]);
+  const data = { "data-fx": fx.kind, "data-born": bornOf(fx) };
   return label
-    ? <canvas ref={ref} className={className} style={style} role="img" aria-label={label} title={title} />
-    : <canvas ref={ref} className={className} style={style} aria-hidden="true" />;
+    ? <canvas ref={ref} className={className} style={style} role="img" aria-label={label} title={title} {...data} />
+    : <canvas ref={ref} className={className} style={style} aria-hidden="true" {...data} />;
 }

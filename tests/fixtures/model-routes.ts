@@ -29,4 +29,3 @@ export const house = `# House rules
 |---|---|---|---|
 | Lead | ignored | prose-only | low |
 `;
-

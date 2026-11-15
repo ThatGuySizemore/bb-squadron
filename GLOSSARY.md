@@ -104,6 +104,10 @@ _Avoid_: Lane state, Ticket state as separate entries → States
 
 **Launch record**: The role, ticket, provider, model, effort and service tier a thread was launched with, plus any escalation reason. Squadron seeds it into the thread's own metadata at launch and never rewrites it; the board and reports set it beside what BB reports the thread runs.
 
+**Run report**: `bb squadron report`, which derives how each ticket went from launch records, BB usage and the ticket's `squadron-result` block, on demand. Nothing is stored.
+
+**Checkpoint**: An optional House rules setting. At that many completed routine tickets since a project's first verified policy-resolved Worker launch, Squadron sends the project's Helper one plain notice. It never pauses launches.
+
 **Identity**: Who an agent appears as in Linear and in Git. It is set for each family, and Squadron never holds the credential.
 
 **Two strikes**: Work reported done that then fails its quick check or review, or a worker that is truly stuck, is a strike. After two strikes on one ticket the Lead stops the lane and asks the owner.

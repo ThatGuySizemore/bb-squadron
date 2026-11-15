@@ -7,11 +7,20 @@ import type { AutopilotControls } from "./autopilot.js";
 import type { registerPlanning } from "./planning.js";
 import type { registerLaunch } from "./launch-cli.js";
 import { oneLine, openNeeds, needLine, boardLink, unreadableProject as unreadable } from "./project-observation.js";
+import { formatRunReport, readRunReport, type ReportSources } from "./run-report.js";
+
+/** A --since value: a UTC calendar date, or an ISO date-time with its timezone. */
+export function parseSince(value: string): number {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value) ? Date.parse(`${value}T00:00:00Z`)
+    : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(value) ? Date.parse(value) : Number.NaN;
+  if (Number.isNaN(date)) throw new PluginCliError("Use --since YYYY-MM-DD (UTC) or an ISO date-time with a timezone.");
+  return date;
+}
 
 const incomplete = (board: Board | null) => !board || board.tracker?.state !== "current";
 
 /** Board reads, shared lane and Autopilot controls, and Helper selection. */
-export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>, autopilot: AutopilotControls, planning: ReturnType<typeof registerPlanning>, launch: ReturnType<typeof registerLaunch>) {
+export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>, autopilot: AutopilotControls, planning: ReturnType<typeof registerPlanning>, launch: ReturnType<typeof registerLaunch>, report: ReportSources) {
   const options = {
     project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
     all: { type: "boolean", description: "Show every project." },
@@ -119,6 +128,27 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
       stop: actionCommand("stop", "Ask a spec's Lead to wind down."),
       resume: actionCommand("resume", "Ask a spec's Lead to carry on."),
       merge: actionCommand("merge", "Merge where the board offers Merge. Only the owner's own words approve."),
+      report: cliCommand({
+        summary: "Show how each ticket went: routes, checks, strikes, escalations and token usage, from existing records.",
+        options: {
+          project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
+          since: { type: "string", description: "Only tickets completed on or after this UTC date (YYYY-MM-DD) or ISO date-time." },
+          json: { type: "boolean", description: "Print the report as JSON." },
+        },
+        async run({ options }, context) {
+          try {
+            const since = options.since === undefined ? null : parseSince(options.since);
+            const selected = options.project ?? context.projectId;
+            if (selected === undefined) throw new PluginCliError("Choose a project with --project.");
+            const [project] = await projects(selected);
+            if (!project) throw new PluginCliError(`No project matches "${selected}".`);
+            const value = await readRunReport(bb, report, project, { since });
+            return { exitCode: 0, stdout: options.json ? `${JSON.stringify(value, null, 2)}\n` : formatRunReport(value) };
+          } catch (error) {
+            return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
+          }
+        },
+      }),
       needs: cliCommand({
         summary: "Show what needs you, with links.",
         options,

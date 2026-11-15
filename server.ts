@@ -16,6 +16,9 @@ import { registerLaunch } from "./lib/launch-cli.js";
 import { registerHelperNotifier } from "./lib/helper-notifier.js";
 import { registerHelperSummary } from "./lib/helper-summary.js";
 import { registerHelper } from "./lib/helper.js";
+import { createTicketHistoryReader } from "./lib/ticket-history.js";
+import { registerCheckpoint } from "./lib/checkpoint.js";
+import { readProjectCheckout } from "./lib/project-checkout.js";
 
 export default async function plugin(bb: BbPluginApi) {
   const autopilot = await registerAutopilot(bb);
@@ -30,14 +33,21 @@ export default async function plugin(bb: BbPluginApi) {
   const helper = registerHelper(bb);
   const notifier = registerHelperNotifier(bb, helper);
   const summary = registerHelperSummary(bb, helper);
+  const history = createTicketHistoryReader(linear, tracker);
+  // The House rules Checkpoint as Doctor and Start resolve it; unreadable settings leave it unknown.
+  const checkpointSetting = async (projectId: string, signal?: AbortSignal) => {
+    const settings = (await readProjectCheckout(bb, projectId, signal))?.settings;
+    return settings?.ok ? settings.settings.policy.checkpoint : "unknown" as const;
+  };
+  const checkpoint = registerCheckpoint(bb, { notifier, history, checkpoint: checkpointSetting });
   const lanes = registerLaneStart(bb, { tracker, doctor: doctor.read, outside, onAction: mirror.resetCadence });
   const board = registerBoard(bb, { autopilot, startLane: lanes.startAutomatic, connection,
-    observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); },
+    observed: async (...args) => { await notifier.observe(...args); await summary.observe(...args); checkpoint.observe(args[0], args[1]); },
     tracker, doctor: doctor.read, leads: (projectId) => readLeadThreads(bb, projectId),
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   summary.register(board.read);
   const planning = registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
-  registerSquadronCli(bb, board, lanes, helper, autopilot, planning, registerLaunch(bb, tracker));
+  registerSquadronCli(bb, board, lanes, helper, autopilot, planning, registerLaunch(bb, tracker), { history, checkpoint: checkpointSetting });
   bb.log.info("loaded");
 }

@@ -56,6 +56,12 @@ export const LINEAR_QUERIES = {
       children(first: ${PAGE.children}, after: $after, filter: { state: { type: { eq: "completed" } } }) { nodes { ${issueFields} } ${pageInfo} }
     }
   }`,
+  /** One ticket's completion and, for the run report, its comments. Read by ID, never as a board walk. */
+  ticketHistory: `query SquadronTicketHistory($id: String!, $after: String, $withComments: Boolean!) {
+    issue(id: $id) { id identifier title url completedAt state { type }
+      comments(first: ${PAGE.followUp}, after: $after) @include(if: $withComments) { nodes { id body createdAt } ${pageInfo} }
+    }
+  }`,
   /** Which of up to PAGE.members issues match the scope's filter. */
   scopeMembers: `query SquadronScopeMembers($filter: IssueFilter!) {
     issues(first: ${PAGE.members}, filter: $filter) { nodes { id } }

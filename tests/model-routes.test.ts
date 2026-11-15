@@ -137,3 +137,16 @@ test("legacy Family columns used as shared exceptions still validate their exact
   assert.equal(report.ready, false);
   assert.match(report.checks.find((check) => check.id === "settings")!.message, /Route ui:.*absent-model/);
 });
+
+test("Doctor validates legacy Family aliases without changing valid route selection", () => {
+  const parsed = parseSquadronSettings(repo);
+  assert.ok(parsed.ok);
+  assert.deepEqual(resolveRoute(parsed.settings, []), { family: "gpt", model: "gpt-6.1-sol", effort: "high" });
+  const valid = doctor({ ...ready, settingsMarkdown: repo, providerCatalog: catalog });
+  assert.equal(valid.ready, true);
+  const invalid = doctor({ ...ready, settingsMarkdown: repo.replace("gpt-6.1-sol", "bogus-legacy-model"), providerCatalog: catalog });
+  assert.equal(invalid.ready, false);
+  const problem = invalid.checks.find((check) => check.id === "settings")!;
+  assert.equal(problem.status, "fix");
+  assert.match(problem.message, /Route data:.*bogus-legacy-model.*codex/);
+});

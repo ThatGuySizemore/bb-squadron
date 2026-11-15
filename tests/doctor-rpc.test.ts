@@ -1,3 +1,5 @@
+import { fixtureProviderCatalog } from "./fixtures/provider-catalog.js";
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -22,6 +24,7 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
   return createFakePluginHost({
     experimental_hostEntry: true,
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async () => ({
         id: "project", name: "Demo", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId: "project", hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
@@ -153,6 +156,7 @@ test("an unavailable selected environment does not borrow the project's default 
   const { bb, harness } = createFakePluginHost({
     experimental_hostEntry: true,
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async () => ({
         id: "project", name: "Demo", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId: "project", hostId: "default-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],
@@ -207,7 +211,7 @@ test("nothing the Doctor RPC returns uses a retired word", async () => {
 test("the Doctor's settings fixes for a Linear repo use owner words", async () => {
   const { retiredTerms } = await import("./fixtures/owner-text.js");
   const { doctor } = await import("../lib/doctor.js");
-  const base = { skills: {}, setupFiles: [], issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8"), linearConnected: true, ghAuthenticated: true, configurationFiles: [] };
+  const base = { providerCatalog: fixtureProviderCatalog, skills: {}, setupFiles: [], issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8"), linearConnected: true, ghAuthenticated: true, configurationFiles: [] };
   const noMapping = fixture.replace(/## Status mapping[\s\S]*/, "");
   const badMapping = fixture.replace(/## Status mapping[\s\S]*/, "## Status mapping\n\n| State | Linear status |\n|---|---|\n| Ready | Todo |\n");
   for (const settingsMarkdown of [null, fixture, noMapping, badMapping]) {

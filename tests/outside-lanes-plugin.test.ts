@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 // SIZE-957: lanes started outside Squadron show on the board, read-only.
 // The fixture is shaped like bb-bot: a hand-started thread that names its local
 // markdown spec, and a no-remote integration branch whose Status lines differ from main.
@@ -63,6 +64,7 @@ async function fixture(t: TestContext) {
     return row;
   };
   const { bb, harness } = createFakePluginHost({ pluginId: "squadron", experimental_hostEntry: true, sdk: {
+      providers: fixtureProviders,
     projects: { list: async () => [{ id: "project", name: "bb-bot", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }],
       get: async () => ({ id: "project", name: "bb-bot", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId: "project", hostId: "repo-host", path: root, isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },

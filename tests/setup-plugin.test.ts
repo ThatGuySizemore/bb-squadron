@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 // SIZE-953: Set up, and seeing a board before starting. The real server.ts on
 // the SDK's fake plugin host, with recorded Linear responses.
 import { test, mock } from "node:test";
@@ -24,6 +25,7 @@ function host(options: { setupFiles: string[]; timeout?: boolean }) {
     pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-setup-key" },
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async ({ projectId }) => ({
         id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId, hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],

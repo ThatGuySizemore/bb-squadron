@@ -1,3 +1,4 @@
+import { fixtureProviderCatalog } from "./fixtures/provider-catalog.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
@@ -7,6 +8,7 @@ import { SCOPE_MISSING } from "../lib/squadron-settings.js";
 const settingsMarkdown = readFileSync("tests/fixtures/squadron.md", "utf8");
 const names = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
 const readyInput = {
+  providerCatalog: fixtureProviderCatalog,
   issueTrackerMarkdown: readFileSync("tests/fixtures/trackers/bb-squadron.md", "utf8"),
   skills: { claude: names, gpt: names }, settingsMarkdown,
   setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],

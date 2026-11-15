@@ -11,6 +11,7 @@ import plugin from "../server.js";
 import { needsYou, type Board } from "../lib/board-model.js";
 import { STOP_MESSAGE, RESUME_MESSAGE } from "../lib/lane-contract.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import { withoutLaunch } from "./fixtures/launch.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
@@ -26,6 +27,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
     pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-start-key" },
     sdk: {
+      providers: fixtureProviders,
       projects: {
         list: async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }],
         get: async ({ projectId }) => ({
@@ -1508,4 +1510,48 @@ test("Doctor's host reads only Model routes from House rules, falling back only 
   await writeFile(join(folder, "house-rules.md"), house.replace("claude-sonnet-5-5", "fixture-preferred-model"));
   const preferred = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null };
   assert.ok(preferred.markdown?.includes("fixture-preferred-model"));
+});
+
+test("legacy Family routes discover BB capabilities before Doctor and Start without changing launch selection", async (t) => {
+  const { fixtureProviders } = await import("./fixtures/provider-catalog.js");
+  const { harness } = await setup(t);
+  harness.sdk.stub("providers.list", fixtureProviders.list);
+  harness.sdk.stub("providers.models", fixtureProviders.models);
+  const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+  assert.equal(report.ready, true, JSON.stringify(report.checks));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["codex", "gpt-6.1-sol", "high", "default"]);
+});
+
+test("legacy Family rows fail Doctor and both Start controls by row without spawning a fallback", async (t) => {
+  const cases = [
+    { name: "worker model", row: "data", value: "bogus-legacy-model", settings: settingsFile.replace("| `data` | GPT | gpt-6.1-sol |", "| `data` | GPT | bogus-legacy-model |") },
+    { name: "Lead model", row: "Lead", value: "bogus-lead-model", settings: settingsFile.replace("| `ui` |", "| Lead | GPT | bogus-lead-model | high |\n| `ui` |") },
+    { name: "review model", row: "Review of codex", value: "bogus-review-model", settings: settingsFile.replace("| `ui` |", "| Review of codex | Claude | bogus-review-model | high |\n| `ui` |") },
+    { name: "unsupported worker effort", row: "data", value: "medium", settings: settingsFile },
+    { name: "missing provider", row: "ui", value: "claude-code", settings: settingsFile },
+    { name: "unavailable catalogue", row: "ui", value: "claude-code", settings: settingsFile },
+  ];
+  for (const sample of cases) await t.test(sample.name, async (t) => {
+    const { harness } = await setup(t, undefined, undefined, sample.settings);
+    if (sample.name === "unsupported worker effort") harness.sdk.stub("providers.models", async (args?: { providerId?: string }) => {
+      const result = await fixtureProviders.models(args);
+      return { ...result, models: result.models.map((model) => ({ ...model,
+        supportedReasoningEfforts: [{ reasoningEffort: "high" }],
+      })) };
+    });
+    if (sample.name === "missing provider") harness.sdk.stub("providers.list", async () => []);
+    if (sample.name === "unavailable catalogue") harness.sdk.stub("providers.models", async () => { throw new Error("fixture catalogue unavailable"); });
+    const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+    assert.equal(report.ready, false);
+    const fix = report.checks.find((check) => check.id === "settings")!;
+    assert.equal(fix.status, "fix");
+    assert.ok(fix.message.includes(`Route ${sample.row}:`) && fix.message.includes(sample.value), fix.message);
+    await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { message: fix.message });
+    const cli = await harness.behavior.runCli(["start", "FIX-5"], { projectId: "proj-one" });
+    assert.equal(cli.exitCode, 1);
+    assert.equal(cli.stderr.trim(), fix.message);
+    assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+  });
 });

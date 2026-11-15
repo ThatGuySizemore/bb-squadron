@@ -4,8 +4,9 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { windSpeed } from "../lib/working-agents.js";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
-import { airstream, burst, BURST_SECONDS, contrail, createSurface, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
+import { airstream, burst, BURST_SECONDS, contrail, createSurface, needsYou, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
 import { runway, runwayMotion, type RunwayState } from "../lib/runway.js";
+import { inksOf, onThemeChange, type Inks } from "./inks.js";
 import { readingMotion, readingRow } from "../lib/reading.js";
 
 /** What a canvas draws. Inks are read from the board's CSS, so they follow the theme. */
@@ -23,7 +24,6 @@ export type Fx =
   /** A placeholder row before the board's first read; `delay` staggers a section's rows. */
   | { kind: "reading"; delay: number; shape?: "row" | "bar" };
 
-type Inks = (name: string) => number;
 
 function painterFor(fx: Fx, ink: Inks): Painter {
   switch (fx.kind) {
@@ -96,40 +96,6 @@ function renderer(): DitherRenderer {
   return shared;
 }
 
-/** Resolves a CSS colour, such as a custom property's value, to a packed pixel. */
-function inksOf(el: Element): Inks {
-  const probe = document.createElement("canvas");
-  probe.width = probe.height = 1;
-  const ctx = probe.getContext("2d", { willReadFrequently: true })!;
-  const style = getComputedStyle(el);
-  const cache = new Map<string, number>();
-  // A mixed ink, such as the runway's color-mix() neutrals, resolves through the
-  // style engine first, so the canvas gets a plain colour it can always parse.
-  const plain = (css: string) => {
-    if (!/color-mix\(|var\(/.test(css)) return css;
-    const span = document.createElement("span");
-    span.style.display = "none";
-    span.style.color = css;
-    (el.parentElement ?? document.body).appendChild(span);
-    const resolved = getComputedStyle(span).color;
-    span.remove();
-    return resolved || css;
-  };
-  return (name) => {
-    const css = plain(style.getPropertyValue(name).trim() || "#888");
-    const known = cache.get(css);
-    if (known !== undefined) return known;
-    ctx.clearRect(0, 0, 1, 1);
-    ctx.fillStyle = "#000";
-    ctx.fillStyle = css;
-    ctx.fillRect(0, 0, 1, 1);
-    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-    const packed = packInk(r!, g!, b!, a!);
-    cache.set(css, packed);
-    return packed;
-  };
-}
-
 export function DitherCanvas({ fx, className, onDone, label, title, style }: {
   fx: Fx;
   className?: string;
@@ -188,13 +154,12 @@ export function DitherCanvas({ fx, className, onDone, label, title, style }: {
     }, { rootMargin: "64px" });
     onScreen.observe(canvas);
     // A theme change re-reads the inks.
-    const theme = new MutationObserver(() => { painter = painterFor(parsed, inksOf(canvas)); loop.redraw(target); });
-    theme.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+    const stopTheme = onThemeChange(() => { painter = painterFor(parsed, inksOf(canvas)); loop.redraw(target); });
     return () => {
       loop.remove(target);
       resize.disconnect();
       onScreen.disconnect();
-      theme.disconnect();
+      stopTheme();
     };
   }, [key]);
   const data = { "data-fx": fx.kind, "data-born": bornOf(fx) };

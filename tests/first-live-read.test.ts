@@ -9,6 +9,7 @@ test("deferred first LiveBoard read and reload seed existing lanes; later starts
   const { createElement, act } = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { LiveBoard } = await import("../board/Board.js");
+  const { forgetBoards } = await import("../board/board-memory.js");
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
   const browser = dom.window;
   browser.matchMedia = (() => ({ matches: false, addEventListener() {}, removeEventListener() {} })) as unknown as typeof browser.matchMedia;
@@ -44,6 +45,7 @@ test("deferred first LiveBoard read and reload seed existing lanes; later starts
         await act(async () => root.unmount());
         root = createRoot(browser.document.getElementById("root")!);
         delivered = false;
+        forgetBoards(); // a reload starts with no board remembered
         firstRead = new Promise<Board>((resolve) => { fulfill = resolve; });
       }
       await act(async () => root.render(createElement(LiveBoard, { modeSwitch: null, context: "proj-one" })));

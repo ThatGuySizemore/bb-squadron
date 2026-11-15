@@ -205,6 +205,7 @@ test("while the first read is in flight, the banner's planes taxi on their stand
 
 async function liveHarness(answer: (call: number) => Promise<Board>, options: { context?: string | null; projects?: () => Promise<unknown> } = {}) {
   await import("./fixtures/app-runtime.js");
+  (await import("../board/board-memory.js")).forgetBoards(); // each harness is a fresh page
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
   const browser = dom.window;
   Object.defineProperty(browser.document, "visibilityState", { get: () => "visible" });

@@ -9,6 +9,7 @@ import { experimental_FileLink as FileLink, experimental_ProviderIcon as Provide
 import { toast } from "sonner";
 import type { Board, Lane, LaneState, NeedsYouItem, PullRequest, ReadySpec, Route, ShapingSpec, Ticket, TicketState, OpenIssue } from "../lib/board-model.js";
 import { canMerge, dependencyColumns, formatMinutes, LANDING_MS, needsYou, nextLandings, reviewerFor, type Landings } from "../lib/board-model.js";
+import { FLYPAST_MS, nextFlyPast, type FlyPast } from "../lib/fly-past.js";
 import type { boardContract, PickerProjects } from "../lib/board-contract.js";
 import { boardChanged, linearConnectionChanged } from "../lib/realtime-contract.js";
 import { useSquadronSignal } from "../hooks/use-squadron-signal.js";
@@ -104,7 +105,8 @@ function planeName(stand: PlaneStand, title: string | undefined): string {
 function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: ReadonlyMap<string, string>; onPlane: (stand: PlaneStand) => void }) {
   const { layout: g, state, count, narrow } = runway;
   return (
-    <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length} style={{ height: g.height }}>
+    <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length}
+      data-fly-past={state.flyPast?.since} style={{ height: g.height }}>
       <DitherCanvas fx={{ kind: "runway", narrow, label: count?.text ?? "", state }} className="sq-runway-art" />
       <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined}>
         {g.title ? <PixelText text="Squadron" cell={g.title.cell} gap={g.title.gap} /> : <span className="sq-sr">Squadron</span>}
@@ -961,6 +963,8 @@ interface LandingPhase {
   landings: Landings;
   /** The time this update's moments are judged at, in Date.now() milliseconds. */
   now: number;
+  /** When this view's latest fly-past starts, or null: the banner reads it with the landings. */
+  flyPast: number | null;
   /** The burst is playing on the lane's sortie line. */
   landing(lane: Lane): boolean;
   /** When the lane's landing started, while it plays: the burst and the banner's glide share it. */
@@ -971,19 +975,27 @@ interface LandingPhase {
   fresh(lane: Lane): boolean;
 }
 
-/** Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed. */
-function useLandings(lanes: Lane[]): LandingPhase {
+/**
+ * Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed.
+ * The fly-past is decided in the same read: `ready` is how many Ready rows show, or null while Ready is unread.
+ */
+function useLandings(lanes: Lane[], ready: number | null): LandingPhase {
   const seen = useRef<Landings | null>(null);
+  const flown = useRef<FlyPast | null>(null);
   // Folded in as each board arrives, so a lane never flashes into Landed before its burst.
   const read = useMemo(() => {
     const at = Date.now();
-    return { landings: (seen.current = nextLandings(seen.current, lanes, at)), at };
-  }, [lanes]);
+    const before = seen.current;
+    const landings = (seen.current = nextLandings(before, lanes, at));
+    const fly = (flown.current = nextFlyPast(flown.current, { before, landings, lanes, ready }));
+    return { landings, flyPast: fly.since, at };
+  }, [lanes, ready]);
   const landings = read.landings;
   const [tick, setNow] = useState(() => Date.now());
   // Never older than the board update itself, so a moment that starts in this update is judged from it.
   const now = Math.max(tick, read.at);
-  const marks = Object.values(landings.until).flatMap((until) => [until - LEAVE_MS, until, until + ARRIVE_MS]).filter((at) => at > now);
+  const pass = read.flyPast === null ? [] : [read.flyPast, read.flyPast + FLYPAST_MS];
+  const marks = [...Object.values(landings.until).flatMap((until) => [until - LEAVE_MS, until, until + ARRIVE_MS]), ...pass].filter((at) => at > now);
   useEffect(() => {
     if (marks.length === 0) return;
     const t = window.setTimeout(() => setNow(Date.now()), Math.max(0, Math.min(...marks) - Date.now()) + 20);
@@ -991,7 +1003,7 @@ function useLandings(lanes: Lane[]): LandingPhase {
   });
   const until = (lane: Lane) => (lane.state === "landed" ? landings.until[lane.specId] ?? 0 : 0);
   return {
-    landings, now,
+    landings, now, flyPast: read.flyPast,
     landing: (lane) => until(lane) > now,
     since: (lane) => (until(lane) > now ? until(lane) - LANDING_MS : null),
     leaving: (lane) => until(lane) > now && now >= until(lane) - LEAVE_MS,
@@ -1158,14 +1170,15 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
     else if (rootRef) rootRef.current = el;
   }, [rootRef]);
   const items = needsYou(board);
-  const phase = useLandings(board.lanes);
+  // The fly-past needs a read Ready: while it's unread (a notice, or before the first read), no landing counts as the last.
+  const phase = useLandings(board.lanes, notice || !lanesKnown ? null : board.ready.length);
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || phase.landing(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !phase.landing(l));
   // The board's one working-agent count paces the banner's clouds, as it paces each lane's wind.
   const wind = workingAgents(board.lanes);
   // The banner reads this update's Needs you rows and moments, the same ones the rows below read.
-  const runway = useRunway(board, lanesKnown, layout === "narrow", wind, { needs: items, landings: phase.landings, now: phase.now });
+  const runway = useRunway(board, lanesKnown, layout === "narrow", wind, { needs: items, landings: phase.landings, now: phase.now, flyPast: phase.flyPast });
   const titles = useMemo(() => new Map(board.lanes.map((lane) => [lane.specId, lane.title])), [board.lanes]);
   // A beacon goes to its Needs you row, ready to answer; any other plane goes to its lane.
   const goToPlane = (stand: PlaneStand) => {
@@ -1263,11 +1276,15 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         <section className="sq-section" aria-labelledby="sq-flying-h" ref={(el) => { sections.current.flying = el; }}>
           <SectionHead id="sq-flying-h" title="Flying" count={flying.length} />
           {onLine.length === 0 ? (
-            <EmptySection text="Nothing is flying. Start a Ready spec or work item to launch its lane." action={startable ? (
-              <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
-                {starting === startable.id ? "Opening…" : `Start ${startable.id}`}
-              </Btn>
-            ) : newSpec()} />
+            // The quiet hangar: one plain line pointing to New spec, with Start beside it when a Ready spec can go.
+            <EmptySection text="Nothing is flying. Plan the next spec with New spec." action={<>
+              {newSpec()}
+              {startable ? (
+                <Btn tone="primary" disabled={starting !== null} onClick={() => dispatch({ type: "start", specId: startable.id })}>
+                  {starting === startable.id ? "Opening…" : `Start ${startable.id}`}
+                </Btn>
+              ) : null}
+            </>} />
           ) : (
             onLine.map((lane) => (
               <div key={lane.specId} data-live-lane={lane.state === "flying" ? lane.specId : undefined} data-lane-row={lane.specId} className="sq-line-wrap" data-leaving={phase.leaving(lane)}>

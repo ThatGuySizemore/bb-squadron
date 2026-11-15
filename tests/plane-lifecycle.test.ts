@@ -113,9 +113,9 @@ function update(previous: Landings | null, board: Board, now: number) {
 
 test("one lane through start, needs you, stop, resume and land: its plane's state matches the lane after each step", () => {
   let now = 1_000_000;
-  // The board opens with nothing flying.
+  // The board opens with nothing flying: the quiet hangar, its plane parked.
   let step = update(null, boardOf([]), now);
-  assert.equal(step.plane.kind, "empty");
+  assert.equal(step.plane.kind, "parked");
 
   // Start: the lane appears, so its plane takes off from its stand, starting in this update.
   now += 5_000;
@@ -158,10 +158,10 @@ test("one lane through start, needs you, stop, resume and land: its plane's stat
   assert.deepEqual(step.plane, { kind: "landing", laneId: "A-1", since: now, workKind: "spec" });
   assert.equal(step.moments.until["A-1"]! - LANDING_MS, now, "the lane's burst starts in this same update");
 
-  // After the landing, the stand is free again.
+  // After the landing, nothing flies: the plane is parked on its stand.
   now += LANDING_MS + 1;
   step = update(step.moments, landed, now);
-  assert.equal(step.plane.kind, "empty");
+  assert.equal(step.plane.kind, "parked");
 });
 
 test("a lane already flying when the board opens doesn't replay its takeoff, and a landed one doesn't land again", () => {

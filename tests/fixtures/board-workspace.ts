@@ -75,6 +75,7 @@ export function workspace(options: {
       } });
       case "SquadronScope": return Response.json(scopeResponse);
       case "SquadronScopeMembers": return scopeMembers(seen, variables);
+      case "SquadronDelta":
       case "SquadronIssues": return options.issues ? options.issues() : Response.json(workspaceIssues);
       case "SquadronLaneSpec": {
         const id = String(variables?.id);

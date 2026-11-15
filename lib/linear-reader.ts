@@ -45,7 +45,15 @@ class ScopeError extends Error {}
 export type ScopeSource = { ok: true; scope: LinearScope } | { ok: false; message: string };
 
 /** Resolved names and ids are reused this long; a rename or deletion shows on the next resolve. */
-const RESOLVE_MS = 5 * 60_000;
+const RESOLVE_MS = 20 * 60_000;
+const OVERLAP_MS = 5_000;
+interface ReadState {
+  key: string;
+  fullAt: number;
+  newest: number;
+  versions: Map<string, string>;
+  laneIds: Set<string>;
+}
 
 async function walk<T>(load: (after: string | null) => Promise<{ nodes: T[]; pageInfo: z.infer<typeof pageInfo> }>,
   initial?: { nodes: T[]; pageInfo: z.infer<typeof pageInfo> }): Promise<T[]> {
@@ -68,7 +76,7 @@ const empty = (scope: MirrorSnapshot["scope"] = null, error: string | null = nul
 export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "graphql">, options: {
   /** Linear ids of the specs Squadron's Leads fly, read from BB thread metadata. */
   laneSpecIds?: (bbProjectId: string) => Promise<string[]>;
-  /** Open boards poll every 30 seconds; other discovered projects every five minutes. */
+  /** Open boards start at 30 seconds and back off; background projects read every five minutes. */
   shouldPoll?: (bbProjectId: string) => boolean;
   /** The project's Scope. Default: the Scope section of its checkout's docs/agents/squadron.md. */
   scope?: (bbProjectId: string, signal: AbortSignal) => Promise<ScopeSource>;
@@ -81,6 +89,12 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   const running = new Set<Promise<unknown>>();
   const inFlight = new Map<string, { key: string; task: Promise<MirrorSnapshot> }>();
   const polls = new Map<string, number>();
+  const cadences = new Map<string, number>();
+  const reads = new Map<string, ReadState>();
+  function resetCadence(bbProjectId: string) {
+    cadences.set(bbProjectId, 30_000);
+    polls.set(bbProjectId, now() + 30_000);
+  }
   const lastReads = new Map<string, number>();
   const budgetRetries = new Map<string, number>();
   let budgetAt = 0;
@@ -155,15 +169,35 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   async function syncOnce(bbProjectId: string, source: ScopeSource, key: string, turn: number, signal: AbortSignal): Promise<MirrorSnapshot> {
     const superseded = () => latest.get(bbProjectId) !== turn;
     // A missing or invalid Scope shows no issues: data read for another scope would mislead.
-    if (!source.ok) return commit(bbProjectId, key, empty(null, source.message));
+    if (!source.ok) {
+      if (superseded()) return getSnapshot(bbProjectId);
+      reads.delete(bbProjectId);
+      resetCadence(bbProjectId);
+      return commit(bbProjectId, key, empty(null, source.message));
+    }
     try {
       const scope = await resolve(bbProjectId, source.scope, key, signal);
-      const snapshot = await readSnapshot(bbProjectId, scope, signal);
+      const previous = reads.get(bbProjectId);
+      const full = !previous || previous.key !== key || now() - previous.fullAt >= RESOLVE_MS;
+      const result = await readSnapshot(bbProjectId, scope, signal, full ? undefined : previous);
       budgetRetries.delete(bbProjectId);
-      return superseded() ? getSnapshot(bbProjectId) : commit(bbProjectId, key, snapshot);
+      if (superseded()) return getSnapshot(bbProjectId);
+      reads.set(bbProjectId, { ...result.state, key });
+      const before = getSnapshot(bbProjectId);
+      const contentChanged = JSON.stringify([before.issues, before.relations, before.labels, before.states, before.error]) !==
+        JSON.stringify([result.snapshot.issues, result.snapshot.relations, result.snapshot.labels, result.snapshot.states, result.snapshot.error]);
+      const cadence = full || contentChanged ? 30_000 : Math.min(180_000, (cadences.get(bbProjectId) ?? 15_000) * 2);
+      cadences.set(bbProjectId, cadence);
+      polls.set(bbProjectId, now() + cadence);
+      return commit(bbProjectId, key, result.snapshot);
     } catch (error) {
-      if (error instanceof ScopeError) resolved.delete(bbProjectId);
-      if (error instanceof ScopeError) return superseded() ? getSnapshot(bbProjectId) : commit(bbProjectId, key, empty(null, error.message));
+      if (error instanceof ScopeError) {
+        if (superseded()) return getSnapshot(bbProjectId);
+        resolved.delete(bbProjectId);
+        reads.delete(bbProjectId);
+        resetCadence(bbProjectId);
+        return commit(bbProjectId, key, empty(null, error.message));
+      }
       if (!(error instanceof LinearRequestError)) bb.log.warn(`linear read failed: ${error instanceof Error ? error.name : "unknown"}`);
       const safe = error instanceof LinearRequestError ? error : new LinearRequestError("invalid_response");
       if (safe.code === "rate_limited") {
@@ -205,26 +239,60 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     return result.scope;
   }
 
-  async function readSnapshot(bbProjectId: string, scope: ResolvedScope, signal: AbortSignal): Promise<MirrorSnapshot> {
+  async function readSnapshot(bbProjectId: string, scope: ResolvedScope, signal: AbortSignal, previous?: ReadState) {
+    const startedAt = now();
+    const base = previous ? getSnapshot(bbProjectId) : empty();
+    let laneSpecIds: string[] = [];
+    try { laneSpecIds = await options.laneSpecIds?.(bbProjectId) ?? []; }
+    catch (error) { bb.log.warn(`lane spec ids unavailable: ${error instanceof Error ? error.name : "unknown"}`); }
+    const laneIds = new Set(laneSpecIds);
+    const versions = new Map(previous?.versions);
+    let newest = previous?.newest ?? 0;
+    let delta: { id: string; updatedAt: string; parent: { id: string } | null }[] = [];
+
     async function graphql(query: string, variables?: Record<string, unknown>): Promise<unknown> {
       if (signal.aborted) throw new LinearRequestError("unavailable");
       const result = await linear.graphql<unknown>(query, variables, signal);
       if (signal.aborted) throw new LinearRequestError("unavailable");
       return result;
     }
-    const issues = new Map<string, MirrorIssue>();
-    const relations = new Map<string, MirrorRelation>();
-    /** The open walk returns every open issue in scope; only closed ones need asking. */
-    const walked = new Set<string>();
-    function putIssue(node: z.infer<typeof reference>, labels: MirrorIssue["labels"] = []) {
+    if (previous) {
+      // Cached ids catch moves out of Scope, closed issues and external blockers.
+      // Views cannot be expressed as IssueFilter, so probe workspace changes and
+      // let the view membership query check only the changed candidates.
+      const candidates = scope.view ? {} : { or: [scopeIssueFilter(scope),
+        { id: { in: base.issues.map((issue) => issue.id) } },
+        ...(laneIds.size ? [{ parent: { id: { in: [...laneIds] } } }, { id: { in: [...laneIds] } }] : [])] };
+      const found = await walk(async (after) => z.object({ issues: connection(z.object({
+        id: z.string(), updatedAt: z.string().datetime(), parent: self.nullable(),
+      })) }).parse(await graphql(LINEAR_QUERIES.delta, { after,
+        filter: { ...candidates, updatedAt: { gt: new Date(previous.newest - OVERLAP_MS).toISOString() } },
+      })).issues);
+      for (const node of found) newest = Math.max(newest, Date.parse(node.updatedAt));
+      delta = found.filter((node) => versions.get(node.id) !== node.updatedAt);
+    }
+    const changedIds = new Set(delta.map((node) => node.id));
+    const issues = new Map<string, MirrorIssue>(base.issues.map((issue) => [issue.id, issue]));
+    const relations = new Map<string, MirrorRelation>(base.relations
+      .filter((relation) => !changedIds.has(relation.issueId) && !changedIds.has(relation.relatedIssueId))
+      .map((relation) => [relation.id, relation]));
+    for (const id of changedIds) issues.delete(id);
+    const refreshed = new Set<string>();
+    /** The full open walk establishes membership without another request. */
+    const walked = new Set(base.issues.filter((issue) => issue.inProject && isOpenIssue(issue) && !changedIds.has(issue.id)).map((issue) => issue.id));
+    function putIssue(node: z.infer<typeof reference>, labels?: MirrorIssue["labels"]) {
       const existing = issues.get(node.id);
+      if (existing && labels === undefined && Date.parse(existing.updatedAt) > Date.parse(node.updatedAt)) return;
+      refreshed.add(node.id);
+      newest = Math.max(newest, Date.parse(node.updatedAt));
+      versions.set(node.id, node.updatedAt);
       issues.set(node.id, {
         id: node.id, identifier: node.identifier, title: node.title, description: node.description, url: node.url,
         ...(node.sortOrder !== undefined ? { sortOrder: node.sortOrder } : {}),
         ...(node.priority !== undefined ? { priority: node.priority } : {}),
         ...(node.createdAt !== undefined ? { createdAt: node.createdAt } : {}),
         updatedAt: node.updatedAt, teamId: node.team.id, projectId: node.project?.id ?? null, parentId: node.parent?.id ?? null,
-        state: node.state, labels: labels.length ? labels : existing?.labels ?? [],
+        state: node.state, labels: labels ?? existing?.labels ?? [],
         assignees: node.assignee === undefined ? existing?.assignees ?? [] : node.assignee ? [node.assignee] : [],
         inProject: walked.has(node.id),
       });
@@ -252,14 +320,24 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     }
 
     const filter = { ...scopeIssueFilter(scope), state: { type: { nin: [...CLOSED_ISSUE_STATE_TYPES] } } };
-    const nodes = await walk(async (after) => {
-      if (!scope.view) return z.object({ issues: issuesPage }).parse(await graphql(LINEAR_QUERIES.issues, { filter, after })).issues;
-      const view = z.object({ customView: z.object({ issues: issuesPage }).nullable() }).parse(
-        await graphql(LINEAR_QUERIES.viewIssues, { view: scope.view.id, filter, after })).customView;
-      if (!view) throw new ScopeError(`Scope View "${scope.view.name}" is no longer readable in Linear. Fix it in docs/agents/squadron.md.`);
-      return view.issues;
-    });
-    for (const node of nodes) walked.add(node.id);
+    const nodes: z.infer<typeof graphNode>[] = [];
+    if (previous) {
+      const ids = [...changedIds];
+      for (let start = 0; start < ids.length; start += PAGE.issues) {
+        nodes.push(...await walk(async (after) => z.object({ issues: issuesPage }).parse(
+          await graphql(LINEAR_QUERIES.issues, { filter: { id: { in: ids.slice(start, start + PAGE.issues) } }, after })).issues));
+      }
+      for (const node of delta) versions.set(node.id, node.updatedAt);
+    } else {
+      nodes.push(...await walk(async (after) => {
+        if (!scope.view) return z.object({ issues: issuesPage }).parse(await graphql(LINEAR_QUERIES.issues, { filter, after })).issues;
+        const view = z.object({ customView: z.object({ issues: issuesPage }).nullable() }).parse(
+          await graphql(LINEAR_QUERIES.viewIssues, { view: scope.view.id, filter, after })).customView;
+        if (!view) throw new ScopeError(`Scope View "${scope.view.name}" is no longer readable in Linear. Fix it in docs/agents/squadron.md.`);
+        return view.issues;
+      }));
+    }
+    if (!previous) for (const node of nodes) walked.add(node.id);
     for (const node of nodes) {
       putIssue(node, await allLabels(node));
       for (const relation of node.relations.nodes) putRelation(relation, relation.relatedIssue);
@@ -270,10 +348,9 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
 
     // The open walk misses a lane's done tickets and a spec its Lead closed after the merge.
     // Read each Lead's spec and its completed sub-issues so the lane can land and stay Landed.
-    let laneSpecIds: string[] = [];
-    try { laneSpecIds = await options.laneSpecIds?.(bbProjectId) ?? []; }
-    catch (error) { bb.log.warn(`lane spec ids unavailable: ${error instanceof Error ? error.name : "unknown"}`); }
-    for (const id of new Set(laneSpecIds)) {
+    for (const id of laneIds) {
+      if (previous && previous.laneIds.has(id) && !changedIds.has(id) &&
+        !delta.some((node) => node.parent?.id === id || base.issues.find((issue) => issue.id === node.id)?.parentId === id)) continue;
       try {
         await walk(async (after) => {
           const issue = laneSpecResponse.parse(await graphql(LINEAR_QUERIES.laneSpec, { id, after })).issue;
@@ -290,7 +367,9 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
     }
 
     // Closed relation endpoints and lane tickets are in scope only if Linear says they match it.
-    const unknown = [...issues.values()].filter((issue) => !walked.has(issue.id) && !isOpenIssue(issue)).map((issue) => issue.id);
+    const unknown = [...issues.values()].filter((issue) => previous
+      ? refreshed.has(issue.id) && !walked.has(issue.id)
+      : !walked.has(issue.id) && !isOpenIssue(issue)).map((issue) => issue.id);
     for (let start = 0; start < unknown.length; start += PAGE.members) {
       const batch = { ...scopeIssueFilter(scope), id: { in: unknown.slice(start, start + PAGE.members) } };
       const members = scope.view
@@ -308,7 +387,7 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
       ...[...issues.values()].filter((issue) => issue.inProject).map((issue) => issue.teamId)])];
     const teamStates: MirrorSnapshot["states"] = [];
     const teamLabels: MirrorSnapshot["labels"] = [];
-    if (teamIds.length) {
+    if (teamIds.length && (!previous || delta.length)) {
       const stateCursors = new Set<string>();
       const labelCursors = new Set<string>();
       let statesAfter: string | null = null;
@@ -340,15 +419,25 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
         }
       } while (!statesDone || !labelsDone);
     }
+    if (previous) {
+      const endpoints = new Set([...relations.values()].flatMap((relation) => [relation.issueId, relation.relatedIssueId]));
+      for (const [id, issue] of issues) {
+        if (!(issue.inProject && isOpenIssue(issue)) && !laneIds.has(id) &&
+          !(issue.parentId && laneIds.has(issue.parentId)) && !endpoints.has(id)) issues.delete(id);
+      }
+    }
     const allIssues = [...issues.values()];
-    return { scope: { name: scope.name }, issues: allIssues, relations: [...relations.values()],
-      labels: [...new Map([...allIssues.flatMap((issue) => issue.labels), ...teamLabels].map((label) => [label.id, label])).values()],
-      states: [...new Map([...allIssues.map((issue) => issue.state), ...teamStates].map((state) => [state.id, state])).values()],
+    const snapshot: MirrorSnapshot = { scope: { name: scope.name }, issues: allIssues, relations: [...relations.values()],
+      labels: [...new Map([...allIssues.flatMap((issue) => issue.labels), ...base.labels, ...teamLabels].map((label) => [label.id, label])).values()],
+      states: [...new Map([...allIssues.map((issue) => issue.state), ...base.states, ...teamStates].map((state) => [state.id, state])).values()],
       syncedAt: now(), error: null };
+    return { snapshot, state: { fullAt: previous?.fullAt ?? startedAt,
+      newest: newest || startedAt, versions, laneIds } };
   }
 
   bb.background.service("linear-reader", { start: async (signal) => {
-    polls.clear(); // Open boards catch up on restart; background reads keep their cadence.
+    polls.clear(); // Catch up in full when the service restarts.
+    reads.clear();
     while (!signal.aborted && !lifetime.signal.aborted) {
       const ids = [...known].sort();
       const due = (id: string) => budgetRetries.get(id) ?? (options.shouldPoll?.(id) === false
@@ -360,7 +449,6 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
         try {
           await sync(id, signal);
           budgetRetries.delete(id);
-          polls.set(id, now() + 30_000);
         } catch (error) {
           if (signal.aborted || lifetime.signal.aborted) return;
           const retry = error instanceof LinearRequestError && error.code === "rate_limited" ? error.retryAfterMs ?? 60_000 : 30_000;
@@ -383,5 +471,5 @@ export function registerLinearReader(bb: BbPluginApi, linear: Pick<LinearAuth, "
   bb.rpc.register(linearMirrorContract, {
     "linear.snapshot": ({ bbProjectId }) => getSnapshot(bbProjectId),
   });
-  return { getSnapshot, sync, onChange, scopeProblem };
+  return { getSnapshot, sync, onChange, scopeProblem, resetCadence };
 }

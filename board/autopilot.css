@@ -1,11 +1,9 @@
-/* The board's existing switch and quiet controls, on one wrapping line. */
+/* The board's existing switch and quiet controls, as one group in the controls row. */
 .sq-autopilot {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
+  gap: 8px 12px;
 }
 .sq-autopilot-limit {
   display: flex;

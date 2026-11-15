@@ -1,4 +1,4 @@
-import { Autopilot, type AutopilotChange } from "./Autopilot.js";
+import { Autopilot, AutopilotNote, type AutopilotChange } from "./Autopilot.js";
 import { autopilotContract } from "../lib/autopilot-contract.js";
 import { Fragment, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { isActiveTicket } from "../lib/ticket-activity.js";
@@ -16,7 +16,8 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { formationSize, FORMATION_SIZE } from "../lib/dither.js";
+import { workingAgents } from "../lib/working-agents.js";
+import { runwayLayout, runwayState, type RunwayLayout, type RunwayState } from "../lib/runway.js";
 import { layoutPixels } from "../lib/pixels.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
@@ -62,16 +63,61 @@ function Chevron({ className }: { className: string }) {
 }
 
 /**
- * The header's formation mark: one plane slot per lane in this project's lane
- * limit, lit as lanes fly. Before a project has a lane limit, the slots are
- * the lanes flying, with one slot shown when none are.
+ * The banner's lane count: lanes on the Flying line against the stands drawn,
+ * one per lane in the lane limit. Before a project has a lane limit, the stands
+ * are the lanes flying, with one shown when none are.
  */
-function FormationMark({ limit, flying }: { limit: number; flying: number }) {
+function flyingCount(flying: number, limit: number) {
   const slots = Math.max(1, limit, flying);
-  const label = `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying${limit > 0 && flying > limit ? ` (limit ${limit})` : ""}`;
-  const { height } = formationSize(slots, flying);
-  return <DitherCanvas fx={{ kind: "formation", slots, lit: flying }} className="sq-formation" label={label} title={label}
-    style={height > FORMATION_SIZE.height ? { height, margin: 0 } : undefined} />;
+  const over = limit > 0 && flying > limit ? ` (limit ${limit})` : "";
+  return { flying, slots, over, text: `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying${over}` };
+}
+
+function FlyingLabel({ count, box }: { count: ReturnType<typeof flyingCount>; box?: { x: number; y: number; w: number } }) {
+  return (
+    <p className="sq-runway-label" style={box ? { left: box.x, top: box.y, width: box.w } : undefined}>
+      <b className="sq-num">{count.flying}</b> of {count.slots} {count.slots === 1 ? "lane" : "lanes"} flying{count.over}
+    </p>
+  );
+}
+
+interface Runway {
+  ref: { current: HTMLDivElement | null };
+  narrow: boolean;
+  state: RunwayState;
+  /** Null until the live board's first read, so the banner never counts lanes it hasn't read. */
+  count: ReturnType<typeof flyingCount> | null;
+  layout: RunwayLayout;
+}
+
+/** The banner's state and geometry, measured from the banner's own width so the DOM text and the painted art agree. */
+function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: number): Runway {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const width = useWidth(ref);
+  const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
+  const state: RunwayState = lanesKnown ? runwayState(board.lanes, board.laneCapacity, working) : { stands: [], working: 0 };
+  const count = lanesKnown ? flyingCount(flying, board.laneCapacity) : null;
+  const layout = runwayLayout(width ?? (narrow ? 560 : 1200), narrow, state.stands.length, count?.text ?? "");
+  return { ref, narrow, state, count, layout };
+}
+
+/**
+ * The runway banner: full width, light clouds drifting right to left over a
+ * tarmac strip with SQUADRON stencilled on it, one stand per lane in the lane
+ * limit. The stencil and the lane label are DOM text placed on plain tarmac by
+ * the same geometry the painter uses, so neither ever sits on moving dither.
+ */
+function RunwayBanner({ runway }: { runway: Runway }) {
+  const { layout: g, state, count, narrow } = runway;
+  return (
+    <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length} style={{ height: g.height }}>
+      <DitherCanvas fx={{ kind: "runway", narrow, label: count?.text ?? "", state }} className="sq-runway-art" />
+      <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined} data-stencil={g.title ? undefined : "none"}>
+        {g.title ? <PixelText text="Squadron" cell={g.title.cell} gap={g.title.gap} /> : <span className="sq-sr">Squadron</span>}
+      </h1>
+      {count && g.label ? <FlyingLabel count={count} box={g.label} /> : null}
+    </div>
+  );
 }
 
 // ---------- small parts ----------
@@ -1023,7 +1069,7 @@ interface BoardViewProps {
   projectId?: string | null;
   /** The shown project's tracker, for the tracker line; undefined while unknown. */
   tracker?: TrackerInfo;
-  /** False until the live board's first read, so the formation mark never counts lanes it hasn't read. */
+  /** False until the live board's first read, so the banner never counts lanes it hasn't read. */
   lanesKnown?: boolean;
   autopilotSaving?: boolean;
   onAutopilotChange?: (patch: AutopilotChange) => void;
@@ -1054,6 +1100,8 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || phase.landing(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !phase.landing(l));
+  // The board's one working-agent count paces the banner's clouds, as it paces each lane's wind.
+  const runway = useRunway(board, lanesKnown, layout === "narrow", workingAgents(board.lanes));
   const startable = board.ready.find((spec) => (spec.startReason !== undefined ? spec.startReason : canStart(board, spec)) === null);
   const sections = useRef<Partial<Record<Station, HTMLElement | null>>>({});
   const jump = (station: Station) => sections.current[station]?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
@@ -1082,13 +1130,11 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
     <PlacementContext.Provider value={placement}>
     <LayoutContext.Provider value={layout}>
     <div ref={setRoot} className="sq" data-reduced={reduced} data-layout={layout}>
-      <div className="sq-page">
-        <header className="sq-head">
-          <div className="sq-brand">
-            {lanesKnown ? <FormationMark limit={board.laneCapacity} flying={flying.length} /> : null}
-            <h1>Squadron</h1>
-          </div>
+      <header className="sq-head">
+        <RunwayBanner runway={runway} />
+        <div className="sq-controls">
           {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
+          {runway.count && !runway.layout.label ? <FlyingLabel count={runway.count} /> : null}
           {demo ? (
             <span className="sq-tag" data-tone="amber">
               Synthetic data
@@ -1110,8 +1156,6 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
               </button>
             ) : null}
             {modeSwitch}
-            {!demo ? <HelperControl projectId={projectId ?? null} openThread={(id) => openThread(navigate, placement, id)} /> : null}
-            {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
             <button type="button" ref={howButton} className="sq-btn sq-how-open" aria-expanded={howOpen} aria-controls={howOpen ? howId : undefined}
               title="See how an idea becomes a merged pull request, and where you step in" onClick={() => setHowOpen((open) => !open)}>How it works</button>
             <button type="button" className="sq-doctor" data-status={doctor?.tone ?? "unknown"} aria-expanded={doctorOpen} aria-controls={doctorId}
@@ -1119,12 +1163,17 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
               Doctor{doctor ? <span className="sq-sr">: </span> : null}
               {doctor ? <span className="sq-doctor-word">{doctor.text}</span> : null}
             </button>
+            {!demo ? <HelperControl projectId={projectId ?? null} openThread={(id) => openThread(navigate, placement, id)} /> : null}
+            {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
             {newSpec("primary")}
+            {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
           </div>
-        </header>
+          {!demo && board.autopilot ? <AutopilotNote /> : null}
+        </div>
+      </header>
+      <div className="sq-page">
         {howOpen ? <HowItWorks id={howId} onClose={() => { setHowOpen(false); howButton.current?.focus(); }} /> : null}
         <TrackerLine board={board} tracker={tracker} now={Date.now()} />
-        {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
         {diagnostic ? <p className="sq-signal" role="status">{diagnostic}</p> : null}
         <PathStrip counts={counts} onJump={jump} />
 

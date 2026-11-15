@@ -11,12 +11,12 @@ import { trackerName } from "./tracker-detection.js";
 import type { LaneProgress } from "./lane-progress.js";
 import { escapeRegExp } from "./issue-text.js";
 
-/** A planning thread open in BB for one tracker issue, read from its plugin metadata. */
-export interface PlanningThread { issueId: string; threadId: string }
+/** An unarchived planning thread for one tracker issue, including finished planning. */
+export interface PlanningThread { issueId: string; threadId: string; done?: boolean }
 
 export interface BoardInput extends LaneProgress {
   snapshot: TrackerSnapshot;
-  /** Open (not archived) planning threads in this BB project. */
+  /** Unarchived planning threads in this BB project; only unfinished ones block readiness. */
   planning?: PlanningThread[];
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
@@ -101,7 +101,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
   const labels = labelNames;
   const held = heldBy(settings?.holdLabels ?? DEFAULT_HOLD_LABELS);
-  const planning = new Map((input.planning ?? []).map((thread) => [thread.issueId, thread.threadId]));
+  const finishedPlanning = new Map((input.planning ?? []).filter((thread) => thread.done).map((thread) => [thread.issueId, thread.threadId]));
+  const planning = new Map((input.planning ?? []).filter((thread) => !thread.done).map((thread) => [thread.issueId, thread.threadId]));
+  const planningLink = (issueId: string) => finishedPlanning.has(issueId) ? { planningThreadId: finishedPlanning.get(issueId)! } : {};
   const ticketsOf = (spec: TrackerIssue) => open.filter((issue) => issue.parentId === spec.id);
   const totalTicketsOf = (spec: TrackerIssue) => Math.max(spec.childCount ?? 0,
     snapshot.issues.filter((issue) => issue.parentId === spec.id).length);
@@ -252,7 +254,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const marked = readyMarked(spec);
     const heldTickets = tickets.filter(held);
     const ticketBlockers = tickets.filter((ticket) => !held(ticket)).map(openBlockers);
-    const row = { id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length, totalTicketCount: totalTicketsOf(spec) };
+    const row = { id: spec.identifier, title: spec.title, url: spec.url, ticketCount: tickets.length, totalTicketCount: totalTicketsOf(spec), ...planningLink(spec.id) };
     // An open planning thread keeps a spec Shaping; Ready needs an open, unblocked ticket.
     if (planning.has(spec.id)) {
       shaping.push({ ...row, missing: "Planning is still open in its thread.", action: "resume", threadId: planning.get(spec.id)! });
@@ -304,6 +306,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     }
     return {
       id: spec.identifier, title: spec.title, url: spec.url, kind, ticketCount: open.length,
+      ...planningLink(spec.id),
       totalTicketCount: totalTicketsOf(spec),
       routes: settings ? uniqueRoutes((kind === "work-item" ? [spec] : tickets).map((ticket) => resolveRoute(settings, labels(ticket)))) : [],
       blockedBy: blockers.map((blocker) => blocker.id), blockers, startReason,
@@ -331,7 +334,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       !ready.some((row) => row.id === issue.identifier) && !leads.has(issue.id))
     .map((issue) => {
       const parent = under(issue);
-      return { id: issue.identifier, title: issue.title, url: issue.url, labels: labels(issue),
+      return { id: issue.identifier, title: issue.title, url: issue.url, labels: labels(issue), ...planningLink(issue.id),
         ...(workItemIds.has(issue.id) ? { kind: "work-item" as const } : {}), ...(parent ? { under: parent } : {}) };
     });
   let status: TrackerStatus["state"];

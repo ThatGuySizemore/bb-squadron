@@ -35,7 +35,7 @@ export default async function plugin(bb: BbPluginApi) {
     planning: (projectId) => readPlanningThreads(bb, projectId),
     pullRequests: (environmentIds, signal) => readPullRequests(bb, environmentIds, signal), outside });
   summary.register(board.read);
-  registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
-  registerSquadronCli(bb, board, lanes, helper, autopilot);
+  const planning = registerPlanning(bb, { tracker, doctor: doctor.read, onAction: mirror.resetCadence });
+  registerSquadronCli(bb, board, lanes, helper, autopilot, planning);
   bb.log.info("loaded");
 }

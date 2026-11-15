@@ -1239,6 +1239,8 @@ test("work-item Start shares CLI and board dedupe, uses its labels over Lead, an
     assert.ok(prompt.includes(text), `prompt includes ${text}`);
   }
   assert.match(prompt, /accept:owner.*wait/i);
+  assert.match(prompt, /Treat the test approach named in the issue's acceptance criteria as the confirmed seam for tdd\./);
+  assert.match(prompt, /Ask the owner about test seams only when the issue names none\./);
   const { harness: reloaded } = await harness.lifecycle.reload(plugin);
   t.after(() => reloaded.lifecycle.dispose());
   await assert.rejects(reloaded.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" }),

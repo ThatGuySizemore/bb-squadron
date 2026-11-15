@@ -28,3 +28,8 @@
   line-height: 1.45;
 }
 .sq-autopilot :disabled { opacity: .42; cursor: not-allowed; }
+/* On, Off and Paused take one width, so the row never shifts when the state arrives or changes. */
+.sq-autopilot-status {
+  display: inline-block;
+  min-width: 3.6em;
+}

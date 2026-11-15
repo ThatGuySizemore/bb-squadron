@@ -16,7 +16,7 @@ import type { PlanningStarted, planningContract, setupContract } from "../lib/pl
 import type { laneContract } from "../lib/lane-contract.js";
 import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fake-board.js";
 import type { BoardAction } from "../lib/fake-board.js";
-import { runwayLayout, runwayLoading, runwayState, type RunwayLayout, type RunwayState } from "../lib/runway.js";
+import { LOADING_STANDS, runwayLayout, runwayLoading, runwayState, type RunwayLayout, type RunwayState } from "../lib/runway.js";
 import { PixelText } from "./PixelText.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { inWind, workingAgents } from "../lib/working-agents.js";
@@ -50,9 +50,9 @@ function flyingCount(flying: number, limit: number) {
   return { flying, slots, over, text: `${flying} of ${slots} ${slots === 1 ? "lane" : "lanes"} flying${over}` };
 }
 
-function FlyingLabel({ count, box }: { count: ReturnType<typeof flyingCount>; box?: { x: number; y: number; w: number } }) {
+function FlyingLabel({ count, box, reserved = false }: { count: ReturnType<typeof flyingCount>; box?: { x: number; y: number; w: number }; reserved?: boolean }) {
   return (
-    <p className="sq-runway-label" style={box ? { left: box.x, top: box.y, width: box.w } : undefined}>
+    <p className={reserved ? "sq-runway-label sq-reserve" : "sq-runway-label"} aria-hidden={reserved || undefined} style={box ? { left: box.x, top: box.y, width: box.w } : undefined}>
       <b className="sq-num">{count.flying}</b> of {count.slots} {count.slots === 1 ? "lane" : "lanes"} flying{count.over}
     </p>
   );
@@ -67,6 +67,11 @@ interface Runway {
   layout: RunwayLayout;
   /** The first read is in flight: the planes taxi on their stands. */
   loading: boolean;
+  /**
+   * While loading, the label's stand-in for the default lane limit, held invisible in the controls row
+   * when the banner has no room for it, so the real label lands there without moving the row.
+   */
+  reserve: ReturnType<typeof flyingCount> | null;
 }
 
 /** The banner's state and geometry, measured from the banner's own width so the DOM text and the painted art agree. */
@@ -76,8 +81,10 @@ function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: 
   const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
   const state: RunwayState = loading ? runwayLoading() : lanesKnown ? runwayState(board.lanes, board.laneCapacity, working) : { stands: [], working: 0 };
   const count = lanesKnown && !loading ? flyingCount(flying, board.laneCapacity) : null;
-  const layout = runwayLayout(width ?? (narrow ? 560 : 1200), narrow, state.stands.length, count?.text ?? "");
-  return { ref, narrow, state, count, layout, loading };
+  // Loading lays the banner out for the default lane limit's label, so its stands and the label's place match what arrives.
+  const standIn = loading ? flyingCount(0, LOADING_STANDS) : null;
+  const layout = runwayLayout(width ?? (narrow ? 560 : 1200), narrow, state.stands.length, (count ?? standIn)?.text ?? "");
+  return { ref, narrow, state, count, layout, loading, reserve: standIn && !layout.label ? standIn : null };
 }
 
 /**
@@ -817,6 +824,9 @@ function ShapingRow({ spec, onPlan, opening }: { spec: ShapingSpec; onPlan: Plan
   );
 }
 
+/** Autopilot's place in the controls row before the first read: the defaults, drawn invisible and inert. */
+const RESERVED_AUTOPILOT = { status: "off", laneLimit: LOADING_STANDS, consecutiveStops: 0, pauseReason: null } as const;
+
 /** An empty section: how work gets into it, and the button that does it. */
 function EmptySection({ text, action }: { text: string; action?: ReactNode }) {
   return (
@@ -1173,7 +1183,8 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         <RunwayBanner runway={runway} />
         <div className="sq-controls">
           {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
-          {runway.count && !runway.layout.label ? <FlyingLabel count={runway.count} /> : null}
+          {runway.count && !runway.layout.label ? <FlyingLabel count={runway.count} />
+            : runway.reserve ? <FlyingLabel count={runway.reserve} reserved /> : null}
           {demo ? (
             <span className="sq-tag" data-tone="amber">
               Synthetic data
@@ -1205,9 +1216,10 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
             {!demo ? <HelperControl projectId={projectId ?? null} openThread={(id) => openThread(navigate, placement, id)} /> : null}
             {planning === "" ? <span className="sq-why" role="status">Starting a planning thread</span> : null}
             {newSpec("primary")}
-            {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} /> : null}
+            {!demo && board.autopilot ? <Autopilot state={board.autopilot} saving={autopilotSaving} onChange={onAutopilotChange} />
+              : !demo && loading ? <Autopilot state={RESERVED_AUTOPILOT} reserved /> : null}
           </div>
-          {!demo && board.autopilot ? <AutopilotNote /> : null}
+          {!demo && board.autopilot ? <AutopilotNote /> : !demo && loading ? <AutopilotNote reserved /> : null}
         </div>
       </header>
       <div className="sq-page">

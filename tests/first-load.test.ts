@@ -3,6 +3,8 @@
 // at the pixel level, then view tests through the existing renders.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { JSDOM } from "jsdom";
 import { createDitherRenderer, type RendererEnv } from "../lib/dither-renderer.js";
 import { createSurface, pixelsOf, type Painter, type Surface } from "../lib/dither.js";
@@ -186,7 +188,10 @@ test("while the first read is in flight, the banner's planes taxi on their stand
     const banner = doc.querySelector(".sq-runway")!;
     assert.equal(banner.getAttribute("data-stands"), "3", `${placement}: three taxiing stands`);
     assert.equal(banner.getAttribute("data-loading"), "true");
-    assert.equal(doc.querySelector(".sq-runway-label"), null, `${placement}: no "0 of N lanes flying"`);
+    assert.equal(doc.querySelector(".sq-runway .sq-runway-label"), null, `${placement}: no "0 of N lanes flying" on the tarmac`);
+    for (const held of doc.querySelectorAll(".sq-runway-label")) {
+      assert.ok(held.classList.contains("sq-reserve") && held.getAttribute("aria-hidden") === "true", `${placement}: a held place only, never a count shown or read out`);
+    }
   }
 });
 
@@ -206,6 +211,55 @@ test("a failed first read shows the existing error, not the loading state", asyn
   assert.equal(doc.querySelectorAll(".sq-reading-row, .sq-reading-line").length, 0);
   assert.match(section(doc, "Ready").textContent ?? "", /Couldn't load the board/);
   assert.equal(doc.querySelector(".sq-runway")?.getAttribute("data-stands"), "0", "the banner draws no stands it can't read");
+});
+
+// ---------- the controls row holds its geometry when the board arrives ----------
+
+/** An element's layout skeleton: tags and classes all the way down, ignoring text, state attributes and the reserve. */
+function skeleton(el: Element): string {
+  const classes = [...el.classList].filter((c) => c !== "sq-reserve").sort().join(".");
+  return `${el.tagName.toLowerCase()}${classes ? `.${classes}` : ""}(${[...el.children].map(skeleton).join(",")})`;
+}
+const autopilot = (status: "on" | "off" | "paused"): NonNullable<Board["autopilot"]> => ({ status, laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+
+test("while loading, Autopilot's place in the controls row is held invisible and inert, then the real controls fill it", async () => {
+  for (const placement of ["page", "panel"] as const) {
+    const loading = await view({ placement, loading: true, lanesKnown: false });
+    const held = loading.querySelector(".sq-controls .sq-autopilot")!;
+    assert.ok(held, `${placement}: Autopilot's place is held`);
+    assert.ok(held.classList.contains("sq-reserve"), "drawn invisible");
+    assert.equal(held.getAttribute("aria-hidden"), "true", "hidden from assistive tech: its state isn't known yet");
+    assert.ok(held.hasAttribute("inert"), "and nothing in it can be focused or pressed");
+    assert.equal(held.getAttribute("aria-label"), null);
+    const note = loading.querySelector(".sq-controls .sq-autopilot-runtime")!;
+    assert.ok(note.classList.contains("sq-reserve") && note.getAttribute("aria-hidden") === "true", `${placement}: its note's line is held too`);
+    for (const status of ["off", "on", "paused"] as const) {
+      const ready = await view({ placement, board: { ...empty, laneCapacity: 3, lanes: [lane("FIX-1")], autopilot: autopilot(status) }, loading: false, lanesKnown: true });
+      const controls = ready.querySelector(".sq-controls")!;
+      assert.equal(skeleton(controls), skeleton(loading.querySelector(".sq-controls")!), `${placement}, Autopilot ${status}: the row's layout is unchanged`);
+      assert.equal(controls.querySelectorAll(".sq-reserve, [inert]").length, 0, "the real controls are live");
+      assert.equal(controls.querySelector(".sq-autopilot")?.getAttribute("aria-label"), "Autopilot controls");
+    }
+  }
+  assert.match(readFileSync(join(process.cwd(), "board/board.css"), "utf8"), /\.sq-reserve \{\s*visibility: hidden;/, "a held place shows nothing");
+  assert.match(readFileSync(join(process.cwd(), "board/autopilot.css"), "utf8"), /\.sq-autopilot-status \{[^}]*min-width/, "On, Off and Paused take one width");
+});
+
+test("while loading, the lane label's place is held where the default lane limit's label will land", async () => {
+  for (const placement of ["page", "panel"] as const) {
+    const narrow = placement === "panel";
+    const fits = runwayLayout(narrow ? 560 : 1200, narrow, 3, "0 of 3 lanes flying").label !== null;
+    const loading = await view({ placement, loading: true, lanesKnown: false });
+    const held = loading.querySelector(".sq-controls .sq-runway-label");
+    assert.equal(Boolean(held), !fits, `${placement}: a place is held in the controls row only when the banner has no room`);
+    if (narrow) assert.ok(held, "the side panel's three stands leave no room on the tarmac, so its place is held below");
+    if (held) {
+      assert.ok(held.classList.contains("sq-reserve") && held.getAttribute("aria-hidden") === "true", "invisible, never a count read out");
+    }
+    const ready = await view({ placement, board: { ...empty, laneCapacity: 3, lanes: [lane("FIX-1")], autopilot: autopilot("off") }, loading: false, lanesKnown: true });
+    assert.equal(skeleton(ready.querySelector(".sq-controls")!), skeleton(loading.querySelector(".sq-controls")!), `${placement}: the label lands without moving the row`);
+    assert.equal(Boolean(ready.querySelector(".sq-runway .sq-runway-label")), fits, `${placement}: the real label sits where its place was kept`);
+  }
 });
 
 // ---------- the live board: first read, data arrival, refresh and failure ----------

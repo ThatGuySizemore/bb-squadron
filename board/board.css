@@ -126,6 +126,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* A control's place held, invisible and hidden from assistive tech, until the board's first read (SQD-247). */
+.sq-reserve {
+  visibility: hidden;
+}
 .sq-runway-label b {
   font-weight: 650;
   color: var(--sq-sky-ink);

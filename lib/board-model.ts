@@ -91,7 +91,7 @@ export type ReadySpec = Board["ready"][number];
 export type OpenIssue = Board["openIssues"][number];
 export type ShapingSpec = Board["shaping"][number];
 export type TrackerStatus = NonNullable<Board["tracker"]>;
-export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge" | "autopilot-paused";
+export type NeedsYouKind = "setup" | "waiting" | "failed" | "blocked" | "stopped" | "merge" | "autopilot-paused" | "autopilot-check";
 
 export interface NeedsYouItem {
   key: string;
@@ -108,6 +108,9 @@ export interface NeedsYouItem {
 /** What waits on the owner, derived from lane and ticket state, never stored. */
 export function needsYou(board: Board): NeedsYouItem[] {
   const items: NeedsYouItem[] = [];
+  for (const [id, text] of Object.entries(board.autopilot?.skippedMainChecks ?? {})) {
+    items.push({ key: `autopilot-check:${id}`, kind: "autopilot-check", specId: "", threadId: null, text });
+  }
   if (board.autopilot?.status === "paused") {
     items.push({ key: "autopilot-paused", kind: "autopilot-paused", specId: "", threadId: null,
       text: board.autopilot.pauseReason ?? "Autopilot is paused.",
@@ -162,7 +165,7 @@ export function needsYou(board: Board): NeedsYouItem[] {
       }
     }
   }
-  const order: Record<NeedsYouKind, number> = { "autopilot-paused": -1, setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5 };
+  const order: Record<NeedsYouKind, number> = { "autopilot-paused": -1, "autopilot-check": -1, setup: 0, failed: 1, blocked: 2, stopped: 3, waiting: 4, merge: 5 };
   return items.sort((a, b) => order[a.kind] - order[b.kind]);
 }
 

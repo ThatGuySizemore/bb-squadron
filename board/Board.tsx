@@ -583,6 +583,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
 }
 
 const NEEDS_LABEL: Record<NeedsYouItem["kind"], string> = {
+  "autopilot-check": "Autopilot check",
   setup: "Setup", waiting: "Question", failed: "Failed", blocked: "Blocked", stopped: "Stopped", merge: "Merge",
   "autopilot-paused": "Autopilot paused",
 };

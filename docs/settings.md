@@ -61,7 +61,7 @@ House rules can add a `## Squadron policy` table, read like Model routes: a Sett
 | Low effort | `mechanical only` or `off` | `off` |
 | Checkpoint | a positive whole number | none |
 
-`retry` keeps a retry, then a stop after two strikes. `diagnose first` diagnoses after the first qualifying strike before the replacement. `off` refuses every low route; `mechanical only` allows low for the Mechanical role alone. A route whose effort is `default` counts as low when BB advertises low as that model's default; when BB doesn't report the default, Doctor and the Lead's brief say the low-effort limit isn't proved for that route. The two-strike stop, and carrying strike counts, deadlines and budgets to replacement workers, are fixed for everyone. Checkpoint is read by the observation report (SQD-260), not by launches.
+`retry` keeps a retry, then a stop after two strikes. `diagnose first` diagnoses after the first qualifying strike before the replacement. `off` refuses every low route; `mechanical only` allows low for the Mechanical role alone. A route whose effort is `default` counts as low when BB advertises low as that model's default; when BB doesn't report the default, Doctor and the Lead's brief say the low-effort limit isn't proved for that route. The two-strike stop, and carrying strike counts, deadlines and budgets to replacement workers, are fixed for everyone. Checkpoint is an optional evaluation point that never affects launches; see [the run report](report.md).
 
 Doctor shows the resolved values and where each came from. An unknown setting or value is a Doctor fix that names it, and Start refuses until it is fixed. Start puts the resolved policy in the Lead's brief.
 

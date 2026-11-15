@@ -284,6 +284,31 @@ export async function readLaunchRecords(bb: BbPluginApi, projectId: string, filt
   return { attempts: selected, firstVerifiedPolicyWorker, unrecorded: unrecorded.sort(byCreation) };
 }
 
+/** A recorded launch without BB's live route: enough for categories and cohorts. */
+export interface LaunchEntry { threadId: string; createdAt: number; record: LaunchRecord }
+/**
+ * The light read the checkpoint uses: every recorded launch, active and archived, from metadata alone,
+ * and the cohort start. BB's live route is read only for policy-resolved Worker launches, oldest first,
+ * stopping at the first verified one. No usage, events beyond that, or Lead children.
+ */
+export async function readLaunchCohort(bb: BbPluginApi, projectId: string): Promise<{ attempts: LaunchEntry[]; firstVerifiedPolicyWorker: LaunchEntry | null }> {
+  const attempts: LaunchEntry[] = [];
+  const threads = new Map<string, BbThread>();
+  for (const thread of await listAll(bb, { projectId, originPluginId: bb.pluginId })) {
+    const record = readLaunchMetadata(await bb.sdk.threads.getPluginMetadata({ threadId: thread.id }).catch(() => null));
+    if (!record) continue;
+    threads.set(thread.id, thread);
+    attempts.push({ threadId: thread.id, createdAt: thread.createdAt, record });
+  }
+  attempts.sort(byCreation);
+  for (const attempt of attempts) {
+    if (!attempt.record.policyResolved || attempt.record.role !== "Worker") continue;
+    if (verify(attempt.record.requested, await reportedRoute(bb, threads.get(attempt.threadId)!)).verification === "verified")
+      return { attempts, firstVerifiedPolicyWorker: attempt };
+  }
+  return { attempts, firstVerifiedPolicyWorker: null };
+}
+
 /** The resolved Squadron policy for a Lead's brief. The Lead reads these values, not House rules prose. */
 export function policyBriefLines(settings: SquadronSettings): string[] {
   return ["Squadron policy resolved at Start (follow these values, and the squadron-lead skill's text for each mode):",

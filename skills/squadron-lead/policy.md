@@ -1,6 +1,6 @@
 # Squadron policy for Leads
 
-Required reading before the first worker launch and before every replacement. Your brief lists the resolved Escalation, Low effort and Checkpoint values; follow those, not House rules prose. The owner sets them in House rules; each mode below is equally valid.
+Required reading before the first worker launch and before every replacement, and its Completion results section before each ticket's completion comment. Your brief lists the resolved Escalation, Low effort and Checkpoint values; follow those, not House rules prose. The owner sets them in House rules; each mode below is equally valid.
 
 ## Fixed in every mode
 
@@ -28,4 +28,8 @@ Required reading before the first worker launch and before every replacement. Yo
 ## Planning and Checkpoint
 
 - Launch `planning` for familiar, settled work and `planning-hard` for architecture, unclear requirements or consequential trade-offs.
-- Checkpoint is the Helper's observation point. It never holds a launch.
+- Checkpoint is the Helper's observation point. It never holds a launch. Squadron counts it from launch records and your `squadron-result` blocks.
+
+## Completion results
+
+- When a ticket is done, end its usual completion comment with a `squadron-result` block, as `report.md` beside this file describes. Leave out what you don't know rather than guessing; the run report shows it as unknown.

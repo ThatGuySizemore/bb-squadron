@@ -35,13 +35,16 @@ test('a main check holds only its project while observation and discovery contin
   const f = await helperFixture(t, epoch);
   const completed = f.lead('one', 'Lead');
   f.threads.set(completed.id, {...completed,status:'idle'});
-  f.harness.sdk.stub('plugins.callRpc', async () => ({'env-one': {outcome:'available', pullRequest:{number:12, state:'merged', url:'https://example.invalid/pr/12', updatedAt:new Date(epoch).toISOString(), checks:{state:'passing'}}}}));
+  let merged = false;
+  f.harness.sdk.stub('plugins.callRpc', async () => ({'env-one': {outcome:'available', pullRequest:{number:12, state:merged ? 'merged' : 'open', url:'https://example.invalid/pr/12', updatedAt:new Date(epoch).toISOString(), checks:{state:'passing'}}}}));
   let release!: () => void, enter!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const entered = new Promise<void>(resolve => { enter = resolve; });
   f.setMainCheck(async () => { enter(); await gate; return {passed:true, logPath:'/scratch/check.log', mergedCommit:'a'.repeat(40), baseCommit:'b'.repeat(40)}; });
   t.after(release);
   await f.harness.behavior.callRpc('autopilot.set', {projectId:'one', status:'on'});
+  merged = true;
+  await f.board();
   await entered;
   await f.startWatcher();
   const before = f.harness.inspection.sdk.callsTo('projects.list').length;
@@ -88,7 +91,9 @@ test('an Outside spec closed between refreshes still checks its merge across res
   assert.equal(checks, 1, 'a closed spec missing from the tracker must not hide its merged PR after restart');
   assert.equal(f.harness.inspection.sdk.callsTo('threads.spawn').length, 0, 'no start before the merge check finishes');
   release();
-  const board = await reading;
+  await reading;
+  await settle();
+  const board = await f.board();
   assert.equal(board.autopilot?.status, 'paused');
   assert.equal(board.autopilot?.pauseReason, 'Main fails its quick check');
   assert.equal(board.autopilot?.consecutiveStops, 0);

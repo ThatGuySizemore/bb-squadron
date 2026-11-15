@@ -21,6 +21,7 @@ export function Autopilot({ state, saving = false, onChange }: {
       </select>
     </label>
     <span className="sq-autopilot-note">Autopilot runs only while BB runs on this Mac.</span>
+    {state.checkingMain ? <span className="sq-autopilot-note" role="status">Checking main…</span> : null}
     {saving ? <span className="sq-autopilot-note" role="status">Saving…</span> : null}
   </section>;
 }

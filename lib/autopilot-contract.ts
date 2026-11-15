@@ -5,6 +5,7 @@ export const autopilotStateSchema = z.object({
   laneLimit: z.number().int().min(1).max(10),
   consecutiveStops: z.number().int().nonnegative(),
   pauseReason: z.string().nullable(),
+  checkingMain: z.boolean().optional(),
   pauseLog: z.object({ hostId: z.string(), path: z.string() }).optional(),
 });
 export type AutopilotState = z.infer<typeof autopilotStateSchema>;

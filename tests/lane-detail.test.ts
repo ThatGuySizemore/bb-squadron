@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { elements, parse, visibleText } from "./fixtures/owner-text.js";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { deriveBoard } from "../lib/board-derive.js";
 import type { LeadThread } from "../lib/lead-threads.js";
@@ -308,7 +309,16 @@ test("the path strip counts lanes on the board; SQD-214: the banner counts this 
   const banner = (html: string) => /<div class="sq-runway"[^>]*>/.exec(html)?.[0];
   const label = (html: string) => /<p class="sq-runway-label"[^>]*>([\s\S]*?)<\/p>/.exec(html)?.[1]?.replace(/<[^>]+>/g, "");
   // An owner word in a station carries its definition: the label sits in a term with its tooltip.
-  const station = (html: string, label: string) => new RegExp(`class="sq-station-label"><span[^>]*data-term="${label}"[^>]*>${label}<span[^>]*role="tooltip"[^>]*>[^<]*</span></span></span><span class="sq-station-count sq-num">(\\d+)<`).exec(html)?.[1];
+  const station = (html: string, label: string) => {
+    const button = elements(parse(html)).find((element) => element.tag === "button"
+      && element.attrs.class === "sq-station"
+      && elements(element).some((child) => child.attrs["data-term"] === label));
+    assert.ok(button, `${label} keeps its glossary definition`);
+    assert.ok(elements(button).some((element) => element.attrs.role === "tooltip"), "the station still renders its glossary tooltip");
+    const count = elements(button).find((element) => element.attrs.class === "sq-station-count sq-num");
+    assert.ok(count);
+    return visibleText(count);
+  };
   assert.equal(station(page([]), "Flying"), "0");
   assert.equal(station(page(board.lanes), "Flying"), "1");
   const mixed = [board.lanes[0],

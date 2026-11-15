@@ -309,6 +309,13 @@
   padding-bottom: 7px;
   background: var(--sq-pixel-rule) bottom / 100% 2px no-repeat;
 }
+.sq-section-title {
+  display: inline-flex;
+  vertical-align: middle;
+}
+.sq-label h2 .sq-term {
+  display: inline-block;
+}
 .sq-label h2 {
   margin: 0;
   font-size: 12px;

@@ -18,7 +18,7 @@ import { apply, canStart, initialBoard, resetSimulation, step } from "../lib/fak
 import type { BoardAction } from "../lib/fake-board.js";
 import { workingAgents } from "../lib/working-agents.js";
 import { runwayLayout, runwayState, type RunwayLayout, type RunwayState } from "../lib/runway.js";
-import { layoutPixels } from "../lib/pixels.js";
+import { PixelText } from "./PixelText.js";
 import { DitherCanvas } from "./DitherCanvas.js";
 import { DoctorPanel } from "./Doctor.js";
 import { Term } from "./Term.js";
@@ -29,29 +29,6 @@ import type { ProjectCounts } from "../lib/board-contract.js";
 import { trackerName, type TrackerKind } from "../lib/tracker-detection.js";
 
 // ---------- pixel primitives ----------
-
-function PixelText({ text, cell = 3, gap, className }: { text: string; cell?: number; gap?: number; className?: string }) {
-  gap ??= cell >= 3 ? 1 : 0;
-  const run = useMemo(() => layoutPixels(text), [text]);
-  const pitch = cell + gap;
-  return (
-    <span className={className}>
-      <svg
-        aria-hidden="true"
-        width={run.width * pitch - gap}
-        height={run.height * pitch - gap}
-        viewBox={`0 0 ${run.width * pitch - gap} ${run.height * pitch - gap}`}
-        shapeRendering="crispEdges"
-        className="sq-pixeltext"
-      >
-        {run.cells.map(([x, y]) => (
-          <rect key={`${x}.${y}`} x={x * pitch} y={y * pitch} width={cell} height={cell} />
-        ))}
-      </svg>
-      <span className="sq-sr">{text}</span>
-    </span>
-  );
-}
 
 /** A 6x10 pixel chevron on 2px cells, pointing along the path. */
 function Chevron({ className }: { className: string }) {
@@ -1014,6 +991,7 @@ const STATIONS: [Station, string][] = [["open", "Open issues"], ["shaping", "Sha
 
 /** The path in one strip: each station's count, in path order, jumping to its section. */
 function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>; onJump: (station: Station) => void }) {
+  const layout = useContext(LayoutContext);
   return (
     <nav className="sq-path" aria-label="The path">
       {STATIONS.map(([key, label]) => {
@@ -1023,7 +1001,7 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
             <span className="sq-station-label">
               {key === "open" ? <><span className="sq-station-long">{label}</span><span className="sq-station-short" aria-hidden="true">Open</span></> : <Term text={label} nested />}
             </span>
-            <span className="sq-station-count sq-num">{n ?? "–"}</span>
+            <span className="sq-station-count sq-num">{n === null ? "–" : <PixelText text={String(n)} cell={layout === "narrow" ? 2 : 3} gap={0} />}</span>
             {key !== "landed" ? <Chevron className="sq-station-chev" /> : null}
           </button>
         );
@@ -1036,7 +1014,7 @@ function PathStrip({ counts, onJump }: { counts: Record<Station, number | null>;
 function SectionHead({ id, title, count, amber = false }: { id: string; title: string; count: number; amber?: boolean }) {
   return (
     <div className="sq-label">
-      <h2 id={id}><Term text={title} /></h2>
+      <h2 id={id}><Term text={title}><PixelText text={title} cell={2} className="sq-section-title" /></Term></h2>
       {count > 0 ? <span className={amber ? "sq-count-amber sq-num" : "sq-count sq-num"}>{count}</span> : null}
     </div>
   );

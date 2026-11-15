@@ -2,6 +2,7 @@
 // a recorded Linear workspace behind fetch, and the board read through RPC.
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
+import { elements, parse, visibleText } from "./fixtures/owner-text.js";
 import { readFileSync } from "node:fs";
 import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import plugin from "../server.js";
@@ -322,7 +323,8 @@ test("the board page renders the RPC board model: Ready, Open issues, reasons an
   const html = renderToStaticMarkup(createElement(BoardView, {
     board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   }));
-  assert.match(html, /<h2[^>]*>Open issues<\/h2>/, "the section uses the glossary's Open issue term");
+  assert.equal(visibleText(elements(parse(html)).find((element) => element.tag === "h2" && element.attrs.id === "sq-open-issues-h")!),
+    "Open issues", "the section uses the glossary's Open issue term");
   for (const text of ["Fixture team · Fixture project", "The board reads Linear", "Waits on OUT-10 (outside this project)",
     "Doctor checks", "Linear webhooks", "Nothing is flying. Start a Ready spec or work item to launch its lane.", "Start FIX-5"]) {
     assert.ok(html.includes(text), `the board shows ${text}`);

@@ -150,9 +150,11 @@ function AiChip({ route, prefix, compact = false, launch, note }: { route: Route
   const provider = providers.find((p) => p.id === id) ?? { id };
   const tier = route.serviceTier ?? launch?.reported?.serviceTier ?? undefined;
   const substituted = launch?.verification === "mismatch";
+  const unreported = launch ? unreportedFields(launch) : [];
   const title = [
     `${route.providerId ?? (route.family === "claude" ? "Claude Code" : "Codex")} · ${route.model} · ${route.effort} effort${tier ? ` · ${tier} tier` : ""}`,
     substituted ? `BB runs this instead of the requested ${launchRouteText(launch.requested)}.` : null,
+    unreported.length ? `BB hasn't reported the ${listWords(unreported)}. Requested at launch: ${launchRouteText(launch!.requested)}.` : null,
     launch?.escalation ? `${launch.escalation.kind === "effort" ? "Effort raised" : "Moved to a stronger model"}: ${launch.escalation.reason}` : null,
     note ?? null,
   ].filter(Boolean).join("\n");
@@ -163,7 +165,8 @@ function AiChip({ route, prefix, compact = false, launch, note }: { route: Route
         <span>
           {prefix ? `${prefix} · ` : ""}
           {route.model}
-          <span className="sq-ai-effort"> {route.effort === "medium" ? "med" : route.effort}</span>
+          {route.model === UNREPORTED && route.effort === UNREPORTED ? null
+            : <span className="sq-ai-effort"> {route.effort === "medium" ? "med" : route.effort}</span>}
           {tier && tier !== "default" ? <span className="sq-ai-effort"> · {tier}</span> : null}
         </span>
       )}
@@ -179,11 +182,26 @@ function ReviewerChip({ lane, demo, compact = false }: { lane: Lane; demo: boole
   return lane.finalReview ? <span className="sq-ai" title={lane.finalReview}><span>Reviewer · not chosen</span></span> : null;
 }
 
-/** A worker's chip shows what BB reports it runs, keeping the planned route's family for its icon when BB names no provider. */
-function launchedRoute(reported: NonNullable<LaunchView["reported"]>, planned: Route): Route {
-  return { family: reported.providerId === "claude-code" ? "claude" : reported.providerId === "codex" ? "gpt" : reported.providerId ? "unknown" : planned.family,
-    ...(reported.providerId ? { providerId: reported.providerId } : {}), model: reported.model ?? planned.model, effort: reported.effort ?? planned.effort,
-    ...(reported.serviceTier ? { serviceTier: reported.serviceTier } : {}) };
+/** A worker's chip shows what BB reports it runs. A field BB hasn't reported stays unknown: it is never filled from today's plan,
+ * and the hover names the immutable request instead. Keeps the planned route's family for its icon when BB names no provider. */
+function launchedRoute(reported: LaunchView["reported"], planned: Route): Route {
+  const providerId = reported?.providerId ?? null;
+  return { family: providerId === "claude-code" ? "claude" : providerId === "codex" ? "gpt" : providerId ? "unknown" : planned.family,
+    ...(providerId ? { providerId } : {}), model: reported?.model ?? UNREPORTED, effort: reported?.effort ?? UNREPORTED,
+    ...(reported?.serviceTier ? { serviceTier: reported.serviceTier } : {}) };
+}
+
+const UNREPORTED = "unreported";
+
+function listWords(words: string[]): string {
+  return words.length < 2 ? words.join("") : `${words.slice(0, -1).join(", ")} or ${words[words.length - 1]}`;
+}
+
+/** The fields of a launch BB hasn't reported, in owner words. */
+function unreportedFields(launch: LaunchView): string[] {
+  const reported = launch.reported;
+  return ([["providerId", "provider"], ["model", "model"], ["effort", "effort"], ["serviceTier", "tier"]] as const)
+    .filter(([field]) => !reported || reported[field] === null).map(([, word]) => word);
 }
 
 function launchRouteText(route: LaunchView["requested"]): string {
@@ -403,7 +421,7 @@ function Peg({ ticket, lane, demo }: { ticket: Ticket; lane: Lane; demo: boolean
       {size === "full" ? (
         <span className="sq-peg-foot">
           {state === "review" ? (reviewer ? <AiChip route={reviewer} note={lane.finalReview} /> : null)
-            : <AiChip route={ticket.launch?.reported ? launchedRoute(ticket.launch.reported, ticket.route) : ticket.route} launch={ticket.launch} />}
+            : <AiChip route={ticket.launch ? launchedRoute(ticket.launch.reported, ticket.route) : ticket.route} launch={ticket.launch} />}
           {ticket.minutes > 0 ? <span className="sq-num">{formatMinutes(ticket.minutes)}</span> : null}
         </span>
       ) : null}

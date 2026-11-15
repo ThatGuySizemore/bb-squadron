@@ -503,3 +503,35 @@ test("a valid legacy Family worker launch uses the discovered catalogue without 
   assert.equal(args.pluginMetadata.launch.role, "Worker");
   assert.equal(args.pluginMetadata.launch.policyResolved, false);
 });
+
+test("a partial BB report keeps unreported fields unknown and never fills them from today's plan", async () => {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { JSDOM } = await import("jsdom");
+  const { BoardView } = await import("../board/Board.js");
+  const requested = { providerId: "claude-code", model: "claude-sonnet-5-5", effort: "high", serviceTier: "default" };
+  const lead = { family: "claude" as const, providerId: "claude-code", model: "claude-haiku-5-5", effort: "high", serviceTier: "default" };
+  const ticketWith = (id: string, reported: import("../lib/board-model.js").LaunchView["reported"]) => ({ id, title: `Ticket ${id}`, blockedBy: [], state: "working" as const, minutes: 2, threadId: `thr_${id}`,
+    // Today's plan has moved on to Opus/medium; the launch asked for Sonnet/high.
+    route: { family: "claude" as const, model: "claude-opus-5-5", effort: "medium" },
+    launch: { role: "Worker", category: null, policyResolved: true, requested, reported, mismatch: [], verification: "unknown" as const, escalation: null, replacesThreadId: null } });
+  const lane: import("../lib/board-model.js").Lane = { specId: "FIX-5", title: "Doctor checks", state: "flying", minutes: 3, lead, leadThreadId: "thr_1",
+    branch: "spec/fix-5", acceptOwner: false, tickets: [
+      ticketWith("FIX-6", { providerId: "claude-code", model: null, effort: null, serviceTier: null }),
+      ticketWith("FIX-7", null),
+    ] };
+  const board: Board = { tick: 0, laneCapacity: 2, workersPerLane: 2, autoStart: false, lanes: [lane], ready: [], shaping: [], openIssues: [] };
+  const html = renderToStaticMarkup(createElement(BoardView, { board, placement: "page", demo: false,
+    modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
+  const doc = new JSDOM(html).window.document;
+  for (const id of ["FIX-6", "FIX-7"]) {
+    const peg = [...doc.querySelectorAll(".sq-peg")].find((node) => node.textContent?.includes(id))!;
+    const chip = peg.querySelector(".sq-ai")!;
+    assert.doesNotMatch(chip.textContent!, /claude-opus-5-5|med/, `${id}: today's plan isn't shown as what runs`);
+    assert.doesNotMatch(chip.getAttribute("title")!, /claude-opus-5-5|medium effort/, `${id}: today's plan isn't in the hover either`);
+    assert.match(chip.textContent!, /unreported/, `${id}: unreported fields say so`);
+    assert.match(chip.getAttribute("title")!, /BB hasn't reported/, `${id}: the hover says BB hasn't reported`);
+    assert.match(chip.getAttribute("title")!, /Requested at launch: claude-sonnet-5-5, high effort, default tier/, `${id}: the immutable request stays distinct`);
+  }
+});

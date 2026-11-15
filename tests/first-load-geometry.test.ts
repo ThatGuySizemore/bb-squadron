@@ -46,6 +46,10 @@ export const ARRIVALS: Record<string, Board> = {
   noDoctorYet: { ...base, doctor: undefined, lanes: [lane("FIX-1")] },
   github: { ...base, tracker: { ...tracker, kind: "github" }, ready: [ready("FIX-2")] },
   disconnected: { ...base, tracker: { ...tracker, state: "disconnected", message: "Connect Linear.", syncedAt: null } },
+  localMarkdown: { ...base, tracker: { ...tracker, kind: "local-markdown" } },
+  longProject: { ...base, tracker: { ...tracker, project: "A very long Linear project name that would wrap in a side panel" } },
+  elevenLanes: { ...base, lanes: Array.from({ length: 11 }, (_, i) => lane(`FIX-${i + 1}`)) },
+  twentyLanes: { ...base, lanes: Array.from({ length: 20 }, (_, i) => lane(`FIX-${i + 1}`)) },
 };
 
 /** Page width, side-panel widths: the board's two layouts. */

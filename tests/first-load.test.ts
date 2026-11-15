@@ -203,7 +203,7 @@ test("while the first read is in flight, the banner's planes taxi on their stand
 
 // ---------- the live board: first read, data arrival, refresh and failure ----------
 
-async function liveHarness(answer: (call: number) => Promise<Board>) {
+async function liveHarness(answer: (call: number) => Promise<Board>, options: { context?: string | null; projects?: () => Promise<unknown> } = {}) {
   await import("./fixtures/app-runtime.js");
   const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { pretendToBeVisual: true });
   const browser = dom.window;
@@ -225,7 +225,7 @@ async function liveHarness(answer: (call: number) => Promise<Board>) {
   let reads = 0;
   const rpc = { call: async (method: string) => {
     if (method === "helper.read") return null;
-    if (method === "board.projects") return { projects: [{ id: "proj-one", name: "Fixture" }], lastPick: null };
+    if (method === "board.projects") return options.projects ? options.projects() : { projects: [{ id: "proj-one", name: "Fixture" }], lastPick: null };
     assert.equal(method, "board");
     return answer(++reads);
   } };
@@ -233,7 +233,7 @@ async function liveHarness(answer: (call: number) => Promise<Board>) {
   runtime.useRealtime = () => undefined;
   const { LiveBoard } = await import("../board/Board.js");
   const root = createRoot(browser.document.getElementById("root")!);
-  await act(async () => root.render(createElement(LiveBoard, { modeSwitch: null, context: "proj-one" })));
+  await act(async () => root.render(createElement(LiveBoard, { modeSwitch: null, context: options.context === undefined ? "proj-one" : options.context })));
   const doc = browser.document;
   return {
     doc, act,
@@ -361,4 +361,37 @@ test("before the read the Landed count's dash sits in the flip window its number
   const landed = [...doc.querySelectorAll(".sq-station-count")].at(-1)!;
   assert.ok(landed.querySelector(".sq-flip .sq-flip-digit svg.sq-pixeltext"), "the dash in a flip window");
   assert.equal(landed.querySelector(".sq-sr")?.textContent, "Not read yet");
+});
+
+test("while the saved project is still being looked up, the board shows the loading state, not an empty board", async () => {
+  const lookups: Array<(value: unknown) => void> = [];
+  const reads: Array<(board: Board) => void> = [];
+  const live = await liveHarness(() => new Promise<Board>((resolve) => reads.push(resolve)),
+    { context: null, projects: () => new Promise((resolve) => lookups.push(resolve)) });
+  try {
+    assert.ok(live.loading(), "no project yet, but the lookup is in flight: placeholders show");
+    const shown = [...live.doc.querySelectorAll(".sq-empty, .sq-clear")].filter((el) => !el.closest("[hidden]"));
+    assert.deepEqual(shown.map((el) => el.textContent), [], "no empty state shown (Doctor's closed region is hidden)");
+    assert.doesNotMatch(live.doc.querySelector(".sq-path")?.textContent ?? "", /\d/, "no zero on the path");
+    assert.ok(live.doc.querySelector(".sq-pick .sq-picker-held[aria-hidden='true'] canvas.sq-reading-bar"), "the picker's place is held");
+    await live.act(async () => { lookups.shift()!({ projects: [{ id: "proj-one", name: "Fixture" }], lastPick: "proj-one" }); });
+    assert.ok(live.loading(), "the saved project is known; its first read is in flight");
+    assert.equal(live.doc.querySelector(".sq-picker-name")?.textContent, "Fixture");
+    await live.act(async () => { reads.shift()!({ ...empty, laneCapacity: 3, autopilot: autopilot("off") }); });
+    assert.equal(live.loading(), false, "the board arrived");
+  } finally { await live.close(); }
+  const none = await liveHarness(() => Promise.reject(new Error("no read without a project")),
+    { context: null, projects: async () => ({ projects: [{ id: "proj-one", name: "Fixture" }], lastPick: null }) });
+  try {
+    assert.equal(none.loading(), false, "with no project to show, the board asks for one");
+    assert.match(none.doc.body.textContent ?? "", /Choose a BB project to see its board\./);
+  } finally { await none.close(); }
+});
+
+test("the tracker line stays on one line, with its whole text as its hover title", async () => {
+  const tracker = { kind: "linear" as const, state: "current" as const, message: "", syncedAt: Date.now(), project: "A very long Linear project name that would wrap in a side panel" };
+  const doc = await view({ placement: "panel", board: { ...empty, tracker } });
+  const line = doc.querySelector(".sq-trackerline")!;
+  assert.equal(line.getAttribute("title"), `Linear · ${tracker.project} · Last read from Linear just now.`);
+  assert.match(readFileSync(join(process.cwd(), "board/board.css"), "utf8"), /\.sq-trackerline \{[^}]*flex-wrap: nowrap;[^}]*white-space: nowrap;/);
 });

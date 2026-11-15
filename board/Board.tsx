@@ -141,7 +141,6 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
         style={overflow ? undefined : { height: g.height }}>
         {overflow ? <div className="sq-runway-scene" style={{ width: g.width, height: g.height }}>{scene}</div> : scene}
       </div>
-      {overflow ? <p className="sq-runway-scroll-hint">Scroll the runway to see all {state.stands.length} stands.</p> : null}
     </>
   );
 }
@@ -1122,18 +1121,19 @@ function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerI
     if (!status || status.state === "disconnected" || status.state === "unscoped") return null;
     const age = status.syncedAt === null ? null : Math.max(0, Math.round((now - status.syncedAt) / 60_000));
     const read = age === null ? "" : age === 0 ? "Last read from Linear just now." : `Last read from Linear ${formatMinutes(age)} ago.`;
+    const said = status.state === "current" ? read : status.state === "failed" ? `${status.message} ${read}` : status.message;
     return (
-      <p className="sq-trackerline sq-linear" data-state={status.state} role="status" aria-live="polite">
+      <p className="sq-trackerline sq-linear" data-state={status.state} role="status" aria-live="polite" title={["Linear", status.project, said].filter(Boolean).join(" · ")}>
         <span className="sq-kind">Linear</span>
         {status.project ? <strong className="sq-linear-project">{status.project}</strong> : null}
-        <span>{status.state === "current" ? read : status.state === "failed" ? `${status.message} ${read}` : status.message}</span>
+        <span>{said}</span>
       </p>
     );
   }
   if (kind === null) {
     // Doctor's full reason sits in Needs you; the line only says what's missing.
     return (
-      <p className="sq-trackerline">
+      <p className="sq-trackerline" title={["No tracker found", tracker?.note].filter(Boolean).join(" · ")}>
         <span className="sq-kind">No tracker</span>
         <strong>No tracker found</strong>
         {tracker?.note ? <span>{tracker.note}</span> : null}
@@ -1141,7 +1141,7 @@ function TrackerLine({ board, tracker, now }: { board: Board; tracker?: TrackerI
     );
   }
   return (
-    <p className="sq-trackerline">
+    <p className="sq-trackerline" title={kind === "local-markdown" ? "Local markdown · .scratch/ on main · Flying lanes read from their integration branch" : "GitHub Issues read through gh"}>
       <span className="sq-kind">{trackerName(kind)}</span>
       {kind === "local-markdown"
         ? <><strong>.scratch/</strong><span>on main · Flying lanes read from their integration branch</span></>
@@ -1337,6 +1337,8 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
         <div className="sq-controls">
           <div className="sq-controls-lead">
             {projectButton || projectList ? <div className="sq-pick">{projectButton}{projectList}</div> : null}
+            {/* The scroll hint sits on the lead line, so a runway too long for the board never pushes the page down. */}
+            {runway.overflow ? <p className="sq-runway-scroll-hint">Scroll the runway to see all {runway.state.stands.length} stands.</p> : null}
             {runway.count && !runway.layout.label ? <FlyingLabel count={runway.count} /> : null}
             {demo ? (
               <span className="sq-tag" data-tone="amber">
@@ -1773,7 +1775,8 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
     return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", escape); };
   }, [pickerOpen]);
   // Until the shown project's first read returns, the board shows its loading state; a failed read shows the error.
-  const loading = projectId !== null && board === null && !failed;
+  // While the saved project is still being looked up, the board doesn't know yet that there is nothing to show.
+  const loading = board === null && !failed && (projectId !== null || listed === null);
   const notice = loading ? null : liveNotice({ projectId, board, failed });
   const projectName = listed?.projects.find((item) => item.id === projectId)?.name ?? null;
   const row = counts?.projects.find((item) => item.id === projectId);
@@ -1784,7 +1787,8 @@ export function LiveBoard({ modeSwitch, context, placement = "page" }: { modeSwi
       rootRef={rootRef}
       projectId={projectId}
       tracker={board?.tracker?.kind !== undefined ? { kind: board.tracker.kind, note: board.tracker.message } : row ? { kind: row.tracker, note: row.note } : undefined}
-      projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(trackerKind, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} /> : null}
+      projectButton={listed ? <ProjectButton name={projectName} meta={pickerMeta(trackerKind, shownCounts)} open={pickerOpen || asking} controls={pickerId} onToggle={() => setPickerOpen((value) => !value)} />
+        : <span className="sq-picker-button sq-picker-held" aria-hidden="true"><DitherCanvas fx={{ kind: "reading", delay: 0, shape: "bar" }} className="sq-reading-bar" /></span>}
       projectList={listed && (pickerOpen || asking) ? <ProjectListLoader id={pickerId} projects={listed.projects} current={projectId} onPick={pick} onCounts={setCounts} /> : null}
       lanesKnown={board !== null}
       loading={loading}

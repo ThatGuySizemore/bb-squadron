@@ -29,7 +29,11 @@
   font-weight: 620;
 }
 .sq-picker-meta {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11.5px;
   font-weight: 600;
   color: var(--sq-muted);

@@ -243,6 +243,8 @@ export type RunwayStand =
   | { kind: "empty" }
   /** The quiet hangar: nothing is on the Flying line, so every stand holds its plane, parked and unlit. */
   | { kind: "parked" }
+  /** Before the board's first read: a plane taxiing on its stand, unlit, because nothing is known to fly yet. */
+  | { kind: "taxiing" }
   | { kind: "flying"; laneId: string; beacon: string | null; workKind: WorkKind }
   | { kind: "takeoff"; laneId: string; since: number; beacon: string | null; workKind: WorkKind }
   | { kind: "holding"; laneId: string; beacon: string | null; workKind: WorkKind }
@@ -325,6 +327,18 @@ export function runwayState(lanes: ReadonlyArray<RunwayLane>, limit: number, wor
   };
 }
 
+/** How many planes taxi before the board's first read: the lane limit isn't known yet, so the default limit's three. */
+export const LOADING_STANDS = 3;
+
+/**
+ * The banner before the board's first read (SQD-247): every stand holds a plane
+ * taxiing in place, in the stand's neutral ink, so the banner never shows an
+ * empty runway or a lane count it hasn't read. Nobody is counted as working.
+ */
+export function runwayLoading(slots = LOADING_STANDS): RunwayState {
+  return { stands: Array.from({ length: Math.max(1, slots) }, (): RunwayStand => ({ kind: "taxiing" })), working: 0 };
+}
+
 /** Whether the banner moves, and the still frame drawn under reduced motion: late enough that every moment shows its end. */
 export function runwayMotion(state: RunwayState): { animated: boolean; stillAt: number } {
   const moving = state.stands.some((stand) => stand.kind !== "empty" && stand.kind !== "parked");
@@ -379,7 +393,7 @@ interface Pose { x: number; y: number; workKind: WorkKind; ink: number; trail: n
  * frame each moment is at its end and each mark is lit. A work item's
  * smaller plane takes the same path, centred in the same boxes.
  */
-function pose(stand: Exclude<RunwayStand, { kind: "empty" } | { kind: "parked" }>, g: RunwayLayout, i: number, seconds: number, age: number, inks: RunwayInks): Pose | null {
+function pose(stand: Exclude<RunwayStand, { kind: "empty" } | { kind: "parked" } | { kind: "taxiing" }>, g: RunwayLayout, i: number, seconds: number, age: number, inks: RunwayInks): Pose | null {
   const { workKind } = stand;
   const park = planeBox(g, i, "park", workKind), air = planeBox(g, i, "air", workKind);
   const phase = i * 1.7;
@@ -458,6 +472,15 @@ function sprite(s: Surface, ink: number, x: number, y: number, cell: number, sha
 }
 
 /** An empty stand: the same plane as a dotted outline, one small dot per cell, so it never reads as a lit plane or a cloud. */
+/**
+ * A taxiing plane: the parked sprite in the stand's neutral ink, rolling a cell and a
+ * half either way along its stand on a slow sine, each stand on its own phase.
+ */
+function taxi(s: Surface, ink: number, park: Box, cell: number, seconds: number, i: number): void {
+  const roll = Math.sin(seconds * 0.9 + i * 2.1) * cell * 1.5;
+  sprite(s, ink, Math.round(park.x + roll), park.y, cell);
+}
+
 function dotted(s: Surface, ink: number, x: number, y: number, cell: number): void {
   const d = cell >= 3 ? 2 : 1, o = Math.floor((cell - d) / 2);
   RUNWAY_PLANE.forEach((row, ry) => {
@@ -530,6 +553,7 @@ export function runway({ state, narrow, label, inks }: { state: RunwayState; nar
       const stand = state.stands[i];
       if (!stand || stand.kind === "empty") { dotted(s, inks.stand, park.x, park.y, g.cell); return; }
       if (stand.kind === "parked") { sprite(s, inks.stand, park.x, park.y, g.cell); return; }
+      if (stand.kind === "taxiing") { taxi(s, inks.stand, park, g.cell, seconds, i); return; }
       const age = seconds + ("since" in stand && state.at !== undefined ? (state.at - stand.since) / 1000 : 0);
       const p = pose(stand, g, i, seconds, age, inks);
       if (p) poses.push(p);

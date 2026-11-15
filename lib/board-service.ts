@@ -109,7 +109,9 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     // Outside visibility remains open-only. Its unresolved merge sources survive
     // tracker closure and reload independently, without exposing lane controls.
     const visibleOutside = leads.flatMap(({ outside, thread }) => outside && thread.environmentId ? [thread.environmentId] : []);
-    const outsideEnvironments = await sources.autopilot?.rememberOutside(projectId, visibleOutside) ?? [];
+    const outsideEnvironments = await sources.autopilot?.rememberOutside(projectId, visibleOutside,
+      Object.fromEntries(leads.flatMap(({ outside, thread, specId }) => outside && thread.environmentId
+        ? [[thread.environmentId, { specIdentifier: snapshot.issues.find(issue => issue.id === specId)?.identifier ?? specId }]] : []))) ?? [];
     const checkEnvironments = [...new Set([...environments, ...outsideEnvironments])];
     const pullRequests = checkEnvironments.length ? await sources.pullRequests?.(checkEnvironments, lifetime.signal) : undefined;
     const { board } = deriveBoard({
@@ -153,9 +155,13 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     if (snapshot.error || snapshot.syncedAt === null) throw new Error("Couldn't read existing merges. Try again shortly.");
     const leads = await lanesOf(projectId, snapshot, await sources.planning?.(projectId));
     const visible = leads.flatMap(({ outside, thread }) => outside && thread.environmentId ? [thread.environmentId] : []);
-    const retained = await sources.autopilot!.rememberOutside(projectId, visible);
+    const retained = await sources.autopilot!.rememberOutside(projectId, visible,
+      Object.fromEntries(leads.flatMap(({ outside, thread, specId }) => outside && thread.environmentId
+        ? [[thread.environmentId, { specIdentifier: snapshot.issues.find(issue => issue.id === specId)?.identifier ?? specId }]] : [])));
     const environments = [...new Set([...leads.flatMap(({ thread }) => thread.environmentId ? [thread.environmentId] : []), ...retained])];
     const rows = environments.length ? await sources.pullRequests?.(environments, lifetime.signal) : {};
+    await sources.autopilot!.rememberOutside(projectId, [], Object.fromEntries(Object.entries(rows ?? {}).flatMap(([id, row]) =>
+      row.outcome === "available" ? [[id, { prNumber: row.pullRequest.number }]] : [])));
     const merges = environments.flatMap(id => {
       const row = rows?.[id];
       if (row?.outcome === "unavailable") throw new Error("Couldn't read existing merges. Try again shortly.");

@@ -5,6 +5,7 @@ import { LINEAR_RATE_LIMIT_MESSAGE } from "./linear-auth.js";
 export const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
 const kindNames: Record<NeedsYouKind, string> = {
+  "autopilot-check": "Autopilot check",
   "autopilot-paused": "Autopilot paused", setup: "Setup", waiting: "Question", failed: "Stopped", blocked: "Stopped", stopped: "Stopped", merge: "Merge waiting",
 };
 

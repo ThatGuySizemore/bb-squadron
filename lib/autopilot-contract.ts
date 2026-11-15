@@ -7,6 +7,7 @@ export const autopilotStateSchema = z.object({
   pauseReason: z.string().nullable(),
   checkingMain: z.boolean().optional(),
   pauseLog: z.object({ hostId: z.string(), path: z.string() }).optional(),
+  skippedMainChecks: z.record(z.string(), z.string()).optional(),
 });
 export type AutopilotState = z.infer<typeof autopilotStateSchema>;
 const project = z.object({ projectId: z.string().min(1).max(256) }).strict();

@@ -3,7 +3,8 @@
 // leaves it when it unmounts or scrolls off screen.
 import { useEffect, useRef, type CSSProperties } from "react";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
-import { airstream, burst, BURST_SECONDS, createSurface, formation, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
+import { airstream, burst, BURST_SECONDS, createSurface, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
+import { runway, runwayMotion, type RunwayState } from "../lib/runway.js";
 
 /** What a canvas draws. Inks are read from the board's CSS, so they follow the theme. */
 export type Fx =
@@ -12,7 +13,7 @@ export type Fx =
   | { kind: "needs-you" }
   | { kind: "plate" }
   | { kind: "section-rule" }
-  | { kind: "formation"; slots: number; lit: number }
+  | { kind: "runway"; narrow: boolean; label: string; state: RunwayState }
   | { kind: "burst" };
 
 type Inks = (name: string) => number;
@@ -23,7 +24,10 @@ function painterFor(fx: Fx, ink: Inks): Painter {
     case "needs-you": return needsYou({ ink: ink("--sq-amber") });
     case "plate": return plate({ ink: ink("--sq-green") });
     case "section-rule": return sectionRule({ ink: ink("--sq-rule-ink") });
-    case "formation": return formation({ slots: fx.slots, lit: fx.lit, on: ink("--sq-sky"), off: ink("--border") });
+    case "runway": return runway({ state: fx.state, narrow: fx.narrow, label: fx.label, inks: {
+      cloud: ink("--sq-cloud"), tarmac: ink("--sq-tarmac"), line: ink("--sq-tarmac-line"), rule: ink("--sq-tarmac-rule"),
+      stand: ink("--sq-stand"), plane: ink("--sq-sky"),
+    } });
     case "burst": return burst({ ink: ink("--sq-green") });
     case "peg":
       switch (fx.state) {
@@ -42,7 +46,7 @@ function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until">
   switch (fx.kind) {
     case "airstream": return { animated: fx.pace > 0, stillAt: 2.4 };
     case "needs-you": return { animated: true, stillAt: 0.9 };
-    case "formation": return { animated: fx.lit > 0, stillAt: 0.8 };
+    case "runway": return runwayMotion(fx.state);
     case "burst": return { animated: true, stillAt: BURST_SECONDS, until: BURST_SECONDS };
     case "peg": return { animated: fx.state === "working", stillAt: 1.2 };
     case "plate":
@@ -73,8 +77,20 @@ function inksOf(el: Element): Inks {
   const ctx = probe.getContext("2d", { willReadFrequently: true })!;
   const style = getComputedStyle(el);
   const cache = new Map<string, number>();
+  // A mixed ink, such as the runway's color-mix() neutrals, resolves through the
+  // style engine first, so the canvas gets a plain colour it can always parse.
+  const plain = (css: string) => {
+    if (!/color-mix\(|var\(/.test(css)) return css;
+    const span = document.createElement("span");
+    span.style.display = "none";
+    span.style.color = css;
+    (el.parentElement ?? document.body).appendChild(span);
+    const resolved = getComputedStyle(span).color;
+    span.remove();
+    return resolved || css;
+  };
   return (name) => {
-    const css = style.getPropertyValue(name).trim() || "#888";
+    const css = plain(style.getPropertyValue(name).trim() || "#888");
     const known = cache.get(css);
     if (known !== undefined) return known;
     ctx.clearRect(0, 0, 1, 1);

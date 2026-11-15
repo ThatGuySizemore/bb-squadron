@@ -18,6 +18,12 @@
   /* A pixel rule: 2px on, 2px off. */
   --sq-pixel-rule: repeating-linear-gradient(90deg, var(--sq-rule-ink) 0 2px, transparent 2px 4px);
   --sq-band: color-mix(in oklab, var(--foreground) 4.5%, var(--background));
+  /* The runway banner's neutrals, mixed from the theme: light cloud, flat tarmac and its markings, an empty stand's dots. */
+  --sq-cloud: color-mix(in oklab, var(--foreground) 34%, var(--background));
+  --sq-tarmac: color-mix(in oklab, var(--foreground) 7%, var(--background));
+  --sq-tarmac-rule: color-mix(in oklab, var(--foreground) 30%, var(--background));
+  --sq-tarmac-line: color-mix(in oklab, var(--foreground) 42%, var(--background));
+  --sq-stand: color-mix(in oklab, var(--foreground) 52%, var(--background));
   --sq-hover: color-mix(in oklab, var(--foreground) 6%, var(--background));
   --sq-rule: var(--border);
   --sq-muted: var(--muted-foreground);
@@ -81,37 +87,58 @@
 .sq-page {
   max-width: 1480px;
   margin: 0 auto;
-  padding: 22px 28px 36px;
+  padding: 0 28px 36px;
 }
 
-/* ---------- header ---------- */
+/* ---------- header: the runway banner, then one controls row ---------- */
 
-.sq-head {
+/* The runway banner runs the board's full width. The canvas paints clouds,
+   tarmac and stands; the stencil and the lane label are DOM text the same
+   geometry (lib/runway.ts) sets on plain tarmac, never on moving dither. */
+.sq-runway {
+  position: relative;
+  overflow: hidden;
+  background: var(--sq-pixel-rule) bottom / 100% 2px no-repeat;
+}
+.sq-runway-art {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.sq-runway-title {
+  position: absolute;
+  margin: 0;
+  line-height: 0;
+  color: var(--foreground);
+}
+.sq-runway-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  color: var(--sq-muted);
+  white-space: nowrap;
+}
+.sq-runway .sq-runway-label {
+  position: absolute;
+  height: 18px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sq-runway-label b {
+  font-weight: 650;
+  color: var(--sq-sky-ink);
+}
+
+.sq-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 10px 14px;
-}
-.sq-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.sq-head h1 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.15;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
-/* The formation mark: drawn by the dither renderer, one plane slot per lane in
-   the lane limit. The lead plane's fuselage sits on the title's baseline; the
-   negative margins keep the 80px canvas from heightening the header row. */
-.sq-formation {
-  flex: none;
-  width: 184px;
-  height: 80px;
-  margin: -10px 0 -22px;
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 14px 28px 0;
 }
 .sq-head-actions {
   display: flex;
@@ -119,6 +146,17 @@
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+/* Autopilot closes the row after a hairline; its runtime note sits under it. */
+.sq-head-actions .sq-autopilot {
+  margin-left: 6px;
+  padding-left: 14px;
+  border-left: 1px solid var(--sq-rule);
+}
+.sq-autopilot-runtime {
+  flex-basis: 100%;
+  margin: -4px 0 0;
+  text-align: right;
 }
 
 /* Doctor's verdict rides in its header button: a state square, "Doctor", and what it means for Start. */
@@ -1473,17 +1511,26 @@ button.sq-ticket-row:hover {
 
 @container (max-width: 560px) {
   .sq-page {
-    padding: 14px 14px 28px;
+    padding: 0 14px 28px;
   }
-  .sq-head {
-    gap: 10px;
-  }
-  .sq-head h1 {
-    font-size: 18px;
+  .sq-controls {
+    gap: 8px 10px;
+    padding: 12px 14px 0;
   }
   .sq-pick {
-    order: 3;
     flex-basis: 100%;
+  }
+  .sq-head-actions {
+    margin-left: 0;
+  }
+  .sq-head-actions .sq-autopilot {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
+  }
+  .sq-autopilot-runtime {
+    margin: 0;
+    text-align: left;
   }
   .sq-pick .sq-picker-button {
     width: 100%;

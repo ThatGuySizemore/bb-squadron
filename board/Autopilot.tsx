@@ -4,7 +4,7 @@ import "./autopilot.css";
 
 export type AutopilotChange = { status?: "on" | "off"; laneLimit?: number };
 
-/** Project controls stay below the header so the formation and project picker keep their space. */
+/** Autopilot's switch and lane limit, the last controls in the row under the banner. */
 export function Autopilot({ state, saving = false, onChange }: {
   state: AutopilotState; saving?: boolean; onChange?: (patch: AutopilotChange) => void;
 }) {
@@ -20,8 +20,12 @@ export function Autopilot({ state, saving = false, onChange }: {
         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((limit) => <option key={limit} value={limit}>{limit}</option>)}
       </select>
     </label>
-    <span className="sq-autopilot-note">Autopilot runs only while BB runs on this Mac.</span>
     {state.checkingMain ? <span className="sq-autopilot-note" role="status">Checking main…</span> : null}
     {saving ? <span className="sq-autopilot-note" role="status">Saving…</span> : null}
   </section>;
+}
+
+/** Autopilot's runtime note, on its own line under the controls row. */
+export function AutopilotNote() {
+  return <p className="sq-autopilot-note sq-autopilot-runtime">Autopilot runs only while BB runs on this Mac.</p>;
 }

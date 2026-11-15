@@ -54,7 +54,8 @@ test("only path counts join the section labels and existing spec numbers in pixe
       assert.equal(el.querySelector("svg.sq-pixeltext"), null, `${el.className} stays in normal type`);
     }
     for (const svg of doc.querySelectorAll("svg.sq-pixeltext")) {
-      assert.ok(svg.closest(".sq-label h2, .sq-station-count, .sq-tail-number, .sq-need-id, .sq-plate-id"),
+      // SQD-222: the banner's SQUADRON stencil is the one other approved role.
+      assert.ok(svg.closest(".sq-label h2, .sq-station-count, .sq-tail-number, .sq-need-id, .sq-plate-id, .sq-runway-title"),
         "pixel text is limited to the approved roles");
     }
   }

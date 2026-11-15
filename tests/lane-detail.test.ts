@@ -294,7 +294,7 @@ test("Cancel is a demo-only control and never appears on a live lane", async () 
   assert.match(html(true), />Cancel<\/button>/, "the synthetic simulation keeps Cancel");
 });
 
-test("the path strip counts lanes on the board; SQD-214: the formation mark shows this project's lanes against its lane limit", async () => {
+test("the path strip counts lanes on the board; SQD-214: the banner counts this project's lanes against its lane limit (SQD-222: one stand per slot)", async () => {
   await import("./fixtures/app-runtime.js");
   const { createElement } = await import("react");
   const { renderToStaticMarkup } = await import("react-dom/server");
@@ -306,7 +306,8 @@ test("the path strip counts lanes on the board; SQD-214: the formation mark show
       dispatch: () => undefined, onPlan: () => undefined,
     }));
   const header = (...args: Parameters<typeof page>) => /<header[\s\S]*?<\/header>/.exec(page(...args))![0];
-  const mark = (html: string) => /<canvas class="sq-formation"[^>]*>/.exec(html)?.[0];
+  const banner = (html: string) => /<div class="sq-runway"[^>]*>/.exec(html)?.[0];
+  const label = (html: string) => /<p class="sq-runway-label"[^>]*>([\s\S]*?)<\/p>/.exec(html)?.[1]?.replace(/<[^>]+>/g, "");
   // An owner word in a station carries its definition: the label sits in a term with its tooltip.
   const station = (html: string, label: string) => {
     const button = elements(parse(html)).find((element) => element.tag === "button"
@@ -327,13 +328,15 @@ test("the path strip counts lanes on the board; SQD-214: the formation mark show
   assert.equal(station(page(mixed), "Flying"), "3", "In review and stopped lanes are still on the line");
   assert.equal(station(page(mixed), "Landed"), "1");
 
+  // The label is visible text, so a screen reader reads what the owner sees; the banner draws one stand per slot.
   const said = (...args: Parameters<typeof page>) => {
-    const canvas = mark(header(...args));
-    assert.ok(canvas, "the header draws the formation mark");
-    const aria = /aria-label="([^"]*)"/.exec(canvas)![1];
-    assert.match(canvas, /role="img"/);
-    assert.equal(/title="([^"]*)"/.exec(canvas)?.[1], aria, "hover says what a screen reader says");
-    return aria;
+    const html = header(...args);
+    assert.ok(banner(html), "the header draws the runway banner");
+    const text = label(html);
+    assert.ok(text, "the header says how many lanes fly");
+    const slots = /of (\d+) lanes? flying/.exec(text)![1];
+    assert.match(banner(html)!, new RegExp(`data-stands="${slots}"`), "one stand per slot the label counts");
+    return text;
   };
   assert.equal(said(mixed, { limit: 5 }), "3 of 5 lanes flying", "a lane limit sets the slots");
   assert.equal(said(board.lanes, { demo: true }), "1 of 3 lanes flying", "the demo's lane cap is its limit");
@@ -343,10 +346,9 @@ test("the path strip counts lanes on the board; SQD-214: the formation mark show
   assert.equal(said(mixed, { limit: 2 }), "3 of 3 lanes flying (limit 2)", "label counts every drawn slot and retains the exceeded limit");
   const many = Array.from({ length: 24 }, (_, i) => ({ ...board.lanes[0]!, specId: `FIX-${i + 100}` }));
   assert.equal(said(many), "24 of 24 lanes flying");
-  assert.match(mark(header(many))!, /style="height:88px;margin:0"/, "the canvas grows to keep every sprite visible");
   assert.equal(said(board.lanes, { limit: 24 }), "1 of 24 lanes flying");
-  assert.doesNotMatch(header(mixed), /across your projects/, "the cross-project count leaves the mark");
-  assert.equal(mark(header(mixed, { lanesKnown: false })), undefined, "absent until the live board's first read");
+  assert.doesNotMatch(header(mixed), /across your projects/, "the cross-project count leaves the banner");
+  assert.equal(label(header(mixed, { lanesKnown: false })), undefined, "absent until the live board's first read");
 });
 
 test("SIZE-958: no board visual is demo-only", async () => {
@@ -369,7 +371,7 @@ test("SIZE-958: no board visual is demo-only", async () => {
   const demo = view(true).replace(/<span class="sq-tag" data-tone="amber">Synthetic data<\/span>/g, "");
   const demoOnly = [...visuals(demo)].filter((c) => !live.has(c) && !/^sq-(switch|isolated)/.test(c));
   assert.deepEqual(demoOnly, [], "every visual the demo draws, the live board draws too");
-  for (const visual of ["sq-formation", "sq-path", "sq-air", "sq-fx", "sq-plate", "sq-tail-number", "sq-progress"]) {
+  for (const visual of ["sq-runway", "sq-path", "sq-air", "sq-fx", "sq-plate", "sq-tail-number", "sq-progress"]) {
     assert.ok(live.has(visual), `the live board draws ${visual}`);
   }
 });

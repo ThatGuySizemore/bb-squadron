@@ -381,7 +381,8 @@ function LeadButton({ lane, compact = false }: { lane: Lane; compact?: boolean }
   return (
     <button type="button" className="sq-lead" onClick={() => open.thread(lane.leadThreadId, lane.outside ? `the thread flying ${lane.specId}` : `the Lead thread for ${lane.specId}`)}>
       <AiChip route={lane.lead} prefix="Lead" compact={compact} />
-      {lane.state === "flying" ? <LiveStepLine activity={lane.liveStep} /> : null}
+      {lane.waitingOn?.length ? <span className="sq-live-step">Waiting on {lane.waitingOn.join(", ")}</span>
+        : lane.state === "flying" ? <LiveStepLine activity={lane.liveStep} /> : null}
     </button>
   );
 }

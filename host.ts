@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { experimental_defineHostEntry } from "@get-bb/plugin-sdk";
 import { doctorHostContract } from "./lib/doctor-contract.js";
+import { markdownSection } from "./lib/squadron-settings.js";
 import { setupFiles } from "./lib/doctor.js";
 import { localMarkdownHostContract } from "./lib/local-markdown-contract.js";
 import { readLocalMarkdown } from "./lib/local-markdown-host.js";
@@ -70,6 +71,16 @@ export function createDoctorHost(checkLogin: ((signal: AbortSignal, checkoutPath
   return experimental_defineHostEntry({
     contract: { ...doctorHostContract, ...githubHostContract, ...localMarkdownHostContract, ...repositoryHostContract, ...mainCheckHostContract },
     handlers: {
+      readModelRoutes: async () => {
+        for (const name of ["house-rules.md", "playbook.md"]) {
+          try {
+            const content = await readFile(join(home(), ".bb-squadron", name), "utf8");
+            const body = markdownSection(content, "Model routes");
+            return { markdown: body === undefined ? null : `## Model routes\n${body}` };
+          } catch (error) { if (!absent(error)) throw error; }
+        }
+        return { markdown: null };
+      },
       runMainQuickCheck: (input, { signal }) => runMainQuickCheck(input, signal, commands),
       readRepositoryState: (input, { signal }) => readRepositoryState(input, signal),
       readLocalMarkdown: (input, { signal }) => readLocalMarkdown(input, signal),

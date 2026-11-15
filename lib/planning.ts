@@ -57,7 +57,7 @@ export async function readPlanningThreads(bb: BbPluginApi, projectId: string): P
 }
 
 const routeText = (route: SquadronRoute) =>
-  `${route.label === null ? "(default, no route label)" : `\`${route.label}\``} → ${route.family === "claude" ? "Claude" : "GPT"} ${route.model} ${route.effort}`;
+  `${route.label === null ? "(default, no route label)" : `\`${route.label}\``} → ${route.providerId ?? (route.family === "claude" ? "Claude" : "GPT")} ${route.model} ${route.effort}`;
 
 function seedPrompt(seed: Seed): string {
   const source = seed.kind ? trackerName(seed.kind) : "the tracker";
@@ -90,7 +90,7 @@ function seedPrompt(seed: Seed): string {
     if (issue.description) lines.push(`- Description: ${quote(issue.description.slice(0, 8_000))}`);
   }
   if (seed.routes.length) {
-    lines.push("", "Routes from docs/agents/squadron.md (the first matching label wins):", ...seed.routes.map((route) => `- ${routeText(route)}`));
+    lines.push("", "Resolved routes from House rules and docs/agents/squadron.md (role rows are reserved; the first matching ticket label wins):", ...seed.routes.map((route) => `- ${routeText(route)}`));
   }
   return lines.join("\n");
 }

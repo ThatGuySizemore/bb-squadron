@@ -8,6 +8,7 @@ import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import plugin from "../server.js";
 import { needsYou, type Board } from "../lib/board-model.js";
 import { parseSquadronSettings, SETTINGS_UNREADABLE } from "../lib/squadron-settings.js";
+import { house } from "./fixtures/model-routes.js";
 import { DEFAULT_SQUADRON_TEMPLATE } from "../lib/squadron-template.js";
 import { workspace } from "./fixtures/board-workspace.js";
 
@@ -128,6 +129,6 @@ test("Set up refuses calls that don't come from the board", async (t) => {
 
 test("the default squadron.md template is valid settings for every tracker", () => {
   for (const kind of ["linear", "github", "local-markdown"] as const) {
-    assert.equal(parseSquadronSettings(DEFAULT_SQUADRON_TEMPLATE, kind).ok, true, kind);
+    assert.equal(parseSquadronSettings(DEFAULT_SQUADRON_TEMPLATE, kind, house).ok, true, kind);
   }
 });

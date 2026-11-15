@@ -5,7 +5,7 @@ import { z } from "zod";
 import { doctorReportSchema } from "./doctor-contract.js";
 import { trackerKindSchema } from "./tracker-contract.js";
 
-const route = z.object({ family: z.enum(["claude", "gpt"]), model: z.string(), effort: z.enum(["medium", "high"]) });
+const route = z.object({ family: z.enum(["claude", "gpt", "unknown"]), providerId: z.string().optional(), model: z.string(), effort: z.string(), role: z.string().optional(), overrideNote: z.string().optional() });
 const ticket = z.object({
   id: z.string(), title: z.string(), blockedBy: z.array(z.string()), route,
   state: z.enum(["blocked", "held", "ready", "working", "question", "review", "branch", "failed", "done"]),

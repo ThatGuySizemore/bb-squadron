@@ -3,6 +3,8 @@
 import { experimental_joinHostPath as joinHostPath } from "@get-bb/plugin-sdk";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { parseSquadronSettings, type SettingsResult } from "./squadron-settings.js";
+import { doctorHostContract } from "./doctor-contract.js";
+import { readRouteCapabilities, validateRouteCapabilities, type ProviderModels } from "./model-capabilities.js";
 import { detectTracker, type TrackerDetection } from "./tracker-detection.js";
 
 export interface ProjectCheckout {
@@ -52,11 +54,26 @@ export async function readTrackerConfiguration(bb: BbPluginApi, source: { hostId
   return { issueTrackerMarkdown, settingsMarkdown, unavailableFiles, tracker: detectTracker(issueTrackerMarkdown, settingsMarkdown) };
 }
 
+/** Shared read path for board, Doctor and Start. Only machine-readable Model routes leave the host. */
+export async function readResolvedSettings(bb: BbPluginApi, source: { hostId: string; path: string }, config: Awaited<ReturnType<typeof readTrackerConfiguration>>, signal?: AbortSignal) {
+  const host = bb.hosts.experimental_client({ contract: doctorHostContract });
+  const house = await host.call("readModelRoutes", {}, { hostId: source.hostId, signal, timeoutMs: 15_000 }).catch(() => null);
+  const houseRulesMarkdown = house?.markdown ?? null;
+  let settings = config.settingsMarkdown === null ? null : parseSquadronSettings(config.settingsMarkdown, config.tracker.kind ?? "linear", houseRulesMarkdown);
+  let providerCatalog: ProviderModels[] = [];
+  if (settings?.ok) {
+    providerCatalog = await readRouteCapabilities(bb, source.hostId, settings.settings, signal).catch(() => []);
+    const issues = validateRouteCapabilities(settings.settings, providerCatalog);
+    if (issues.length) settings = { ok: false, issues };
+  }
+  return { settings, houseRulesMarkdown, providerCatalog };
+}
+
 /** null when the project has no default source. */
 export async function readProjectCheckout(bb: BbPluginApi, projectId: string, signal?: AbortSignal): Promise<ProjectCheckout | null> {
   const source = await selectProjectCheckout(bb, projectId, signal);
   if (!source) return null;
   const config = await readTrackerConfiguration(bb, source, signal);
-  const settings = config.settingsMarkdown === null ? null : parseSquadronSettings(config.settingsMarkdown, config.tracker.kind ?? "linear");
+  const { settings } = await readResolvedSettings(bb, source, config, signal);
   return { hostId: source.hostId, path: source.path, settings, ...config };
 }

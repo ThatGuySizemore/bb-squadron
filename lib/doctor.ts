@@ -1,4 +1,5 @@
-import { parseSquadronSettings } from "./squadron-settings.js";
+import { validateRouteCapabilities, type ProviderModels } from "./model-capabilities.js";
+import { parseSquadronSettings, markdownSection } from "./squadron-settings.js";
 import type { Family } from "./board-model.js";
 import { detectTracker, trackerName } from "./tracker-detection.js";
 
@@ -21,6 +22,8 @@ export interface DoctorInput {
   skills: Partial<Record<Family, readonly string[]>>;
   setupFiles: readonly string[];
   settingsMarkdown: string | null;
+  houseRulesMarkdown?: string | null;
+  providerCatalog?: readonly ProviderModels[];
   issueTrackerMarkdown: string | null;
   linearConnected: boolean;
   /** A connection note, including a temporary wait for Linear's request budget. */
@@ -42,13 +45,16 @@ export const setupFiles = ["docs/agents/issue-tracker.md", "docs/agents/triage-l
 /** Public, secret-free output shared by the board and preflight callers. */
 export function doctor(input: DoctorInput): DoctorReport {
   const tracker = detectTracker(input.issueTrackerMarkdown, input.settingsMarkdown);
-  const parsed = input.settingsMarkdown === null ? null : parseSquadronSettings(input.settingsMarkdown, tracker.kind ?? "linear");
+  const parsed = input.settingsMarkdown === null ? null : parseSquadronSettings(input.settingsMarkdown, tracker.kind ?? "linear", input.houseRulesMarkdown);
+  const routeProblems = parsed?.ok ? validateRouteCapabilities(parsed.settings, input.providerCatalog ?? []) : [];
+  const sharedWarning = parsed?.ok && !parsed.settings.routeDefaults && markdownSection(input.houseRulesMarkdown ?? "", "Model routes") !== undefined;
   const families = new Set<Family>(parsed?.ok ? parsed.settings.routes.map((route) => route.family) : ["claude", "gpt"]);
   // An other-family final review also needs its provider's skills installed.
   if (parsed?.ok && parsed.settings.finalReviewFamily === "other") {
     for (const family of [...families]) families.add(family === "claude" ? "gpt" : "claude");
   }
   const missingSkills = [...families].flatMap((family) => {
+    if (family === "unknown") return [];
     const missing = requiredSkills.filter((name) => !input.skills[family]?.includes(name));
     return missing.length ? [`${family === "claude" ? "Claude Code" : "Codex"}: ${missing.join(", ")}`] : [];
   });
@@ -66,8 +72,8 @@ export function doctor(input: DoctorInput): DoctorReport {
       message: missingSetup.length ? `Press Set up to create ${missingSetup.join(", ")} with Matt's setup in a thread.` : "Issue tracker, triage labels and domain docs are present.",
     },
     {
-      id: "settings", name: "Project settings", status: parsed?.ok && !scopeProblem ? "pass" : "fix",
-      message: scopeProblem ?? (parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? ", scope and Linear statuses" : ""} are ready.`
+      id: "settings", name: "Project settings", status: parsed?.ok && !scopeProblem && !routeProblems.length ? (sharedWarning ? "warning" : "pass") : "fix",
+      message: scopeProblem ?? (routeProblems.length ? routeProblems.map((issue) => issue.message).join(" ") : sharedWarning ? "House rules has Model routes, but this repo keeps its own routes. Add Defaults: House rules to opt in." : parsed?.ok ? `Quick check, stop list, time limits, routes and final review${tracker.kind === "linear" ? ", scope and Linear statuses" : ""} are ready.`
         : parsed ? parsed.issues.map((issue) => issue.message).join(" ")
         : `Create docs/agents/squadron.md with Quick check, Stop list, Time limits, Routes and Final review sections${tracker.kind === "linear" ? ", plus Scope and the Linear status each state uses" : ""}.`),
     },

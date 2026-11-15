@@ -6,6 +6,88 @@ import type { PullRequestRow } from '../lib/pull-requests.js';
 
 const epoch = Date.parse('2026-11-14T12:00:00Z');
 
+test('a hidden merge recovered once during another main check gets checked without expiry', async t => {
+  const f = await helperFixture(t, epoch);
+  f.lead('one', 'Lead');
+  f.threads.set('outside', makeThreadResponse({ id: 'outside', title: 'Lead FIX-1', projectId: 'one', environmentId: 'outside-env', status: 'active' }));
+  const request = (number: number, state: 'open' | 'merged'): PullRequestRow => ({ outcome: 'available', pullRequest: {
+    number, state, url: `https://example.invalid/pr/${number}`, updatedAt: new Date(epoch).toISOString(), checks: { state: 'passing' },
+  } });
+  let rows = { 'env-one': request(21, 'open'), 'outside-env': request(22, 'open') };
+  let recoveryReads = 0;
+  f.harness.sdk.stub('plugins.callRpc', async () => {
+    const observed = rows;
+    const b = observed['outside-env'];
+    if (b.outcome === 'available' && b.pullRequest.state === 'merged') {
+      recoveryReads++;
+      rows = { ...rows, 'outside-env': { outcome: 'unavailable', message: 'Offline again' } };
+    }
+    return observed;
+  });
+  await f.harness.behavior.callRpc('autopilot.set', { projectId: 'one', status: 'on' });
+  const checked: number[] = [];
+  let active = 0;
+  let overlap = false;
+  let finishA!: () => void;
+  f.setMainCheck(async number => {
+    checked.push(number);
+    overlap ||= ++active > 1;
+    if (number === 21) await new Promise<void>(resolve => { finishA = resolve; });
+    active--;
+    return { passed: true, logPath: '/scratch/pass.log', mergedCommit: 'a'.repeat(40), baseCommit: 'b'.repeat(40) };
+  });
+  rows = { 'env-one': request(21, 'merged'), 'outside-env': { outcome: 'unavailable', message: 'Offline' } };
+  await f.board(); await settle();
+  assert.deepEqual(checked, [21]);
+  f.threads.delete('outside');
+  await f.advance(29 * 60_000);
+  rows = { 'env-one': request(21, 'merged'), 'outside-env': request(22, 'merged') };
+  const recovered = await f.board();
+  assert.ok(!recovered.lanes.some(lane => lane.outside), 'B is hidden when its single recovery read arrives');
+  assert.equal(recoveryReads, 1, 'B is readable on exactly one PR observation');
+  await f.advance(2 * 60_000);
+  finishA(); await settle();
+  await f.board(); await settle();
+  assert.deepEqual(checked, [21, 22], 'B must use its one successful observation, even after the original deadline');
+  assert.equal(overlap, false, 'the host checks must remain serialized');
+  assert.equal((await f.board()).autopilot?.checkingMain, undefined);
+  assert.ok(!(await f.harness.behavior.runCli(['needs'], { projectId: 'one' })).stdout.includes('Autopilot carried on'));
+});
+
+test('a single recovery read survives host failure and reload, then applies the normal failure brake', async t => {
+  const f = await helperFixture(t, epoch);
+  f.threads.set('outside', makeThreadResponse({ id: 'outside', title: 'Lead FIX-5', projectId: 'one', environmentId: 'outside-env', status: 'active' }));
+  let rows: Record<string, PullRequestRow> = {};
+  f.harness.sdk.stub('plugins.callRpc', async () => rows);
+  await f.harness.behavior.callRpc('autopilot.set', { projectId: 'one', status: 'on' });
+  await f.board();
+  f.threads.delete('outside');
+  await f.advance(29 * 60_000);
+  rows = { 'outside-env': { outcome: 'available', pullRequest: {
+    number: 24, state: 'merged', url: 'https://example.invalid/pr/24', updatedAt: new Date(epoch).toISOString(), checks: { state: 'passing' },
+  } } };
+  const checked: number[] = [];
+  f.setMainCheck(async number => {
+    checked.push(number);
+    if (checked.length === 1) throw new Error('Host offline');
+    return { passed: false, logPath: '/scratch/retry.log', mergedCommit: 'a'.repeat(40), baseCommit: 'b'.repeat(40) };
+  });
+  await f.board(); await settle();
+  rows = {};
+  await f.board(); await settle();
+  assert.deepEqual(checked, [24], 'the normal retry delay still prevents an immediate retry');
+  await f.reload();
+  f.harness.sdk.stub('plugins.callRpc', async () => rows);
+  await f.advance(2 * 60_000);
+  await f.board(); await settle();
+  const board = await f.board();
+  assert.deepEqual(checked, [24, 24], 'the pending normal check survives losing all PR rows and reloading');
+  assert.equal(board.autopilot?.status, 'paused');
+  assert.equal(board.autopilot?.pauseReason, 'Main fails its quick check');
+  assert.deepEqual(board.autopilot?.pauseLog, { hostId: 'host', path: '/scratch/retry.log' });
+  assert.ok(!(await f.harness.behavior.runCli(['needs'], { projectId: 'one' })).stdout.includes('Autopilot carried on'));
+});
+
 test('an unreadable merge that disappears expires at 30 minutes across reload and reports once', async t => {
   const f = await helperFixture(t, epoch);
   f.threads.set('outside', makeThreadResponse({ id: 'outside', title: 'Lead FIX-5', projectId: 'one', environmentId: 'outside-env', status: 'active' }));
@@ -43,6 +125,39 @@ test('an unreadable merge that disappears expires at 30 minutes across reload an
   assert.equal(needs.stdout.split("Couldn't check main after PR #17; Autopilot carried on.").length - 1, 1);
   assert.equal(f.sends().filter(send => send.input[0].text.includes('Autopilot carried on')).length, 0, 'reload never repeats the notification');
 });
+
+test('a missing baseline PR row followed by immediate disappearance expires with the spec identifier', async t => {
+  const f = await helperFixture(t, epoch);
+  f.threads.set('outside', makeThreadResponse({ id: 'outside', title: 'Lead FIX-5', projectId: 'one', environmentId: 'opaque-environment', status: 'active' }));
+  f.harness.sdk.stub('plugins.callRpc', async () => ({}));
+  await f.harness.behavior.callRpc('autopilot.set', { projectId: 'one', status: 'on' });
+  f.threads.delete('outside');
+  await f.board();
+  await f.advance(30 * 60_000);
+  const needs = await f.harness.behavior.runCli(['needs'], { projectId: 'one' });
+  assert.equal(needs.stdout.split("Couldn't check main after FIX-5; Autopilot carried on.").length - 1, 1);
+  assert.ok(!needs.stdout.includes('opaque-environment'));
+});
+
+for (const name of ['PR #23', 'FIX-5']) {
+  test(`first-candidate stored state keeps its deadline and ${name} notice across reload`, async t => {
+    const f = await helperFixture(t, epoch, {}, undefined, undefined, {
+      status: 'on', laneLimit: 4, consecutiveStops: 0, pauseReason: null,
+      pendingOutsideEnvironments: ['old-environment'], unreadableSince: { 'old-environment': epoch - 29 * 60_000 },
+      outsideNames: { 'old-environment': name },
+    });
+    f.harness.sdk.stub('plugins.callRpc', async () => ({}));
+    assert.equal((await f.board()).autopilot?.checkingMain, true);
+    await f.reload();
+    f.harness.sdk.stub('plugins.callRpc', async () => ({}));
+    await f.advance(60_000);
+    const board = await f.board();
+    assert.equal(board.autopilot?.status, 'on');
+    assert.equal(board.autopilot?.laneLimit, 4);
+    const needs = await f.harness.behavior.runCli(['needs'], { projectId: 'one' });
+    assert.equal(needs.stdout.split(`Couldn't check main after ${name}; Autopilot carried on.`).length - 1, 1);
+  });
+}
 
 test('recovery before timeout runs the normal main check and retains its unavailable retry and failure brake', async t => {
   const f = await helperFixture(t, epoch);

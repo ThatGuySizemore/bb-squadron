@@ -8,13 +8,17 @@ import type { PullRequestRow } from "./pull-requests.js";
 
 const PREFIX = "autopilot.project.";
 const defaults = (): AutopilotState => ({ status: "off", laneLimit: 3, consecutiveStops: 0, pauseReason: null });
+const outsideReferenceSchema = z.object({ specIdentifier: z.string().optional(), prNumber: z.number().optional() });
 const storedSchema = autopilotStateSchema.omit({ checkingMain: true }).extend({
   observedOutcomes: z.record(z.string(), z.enum(["stopped", "landed"])).default({}),
   seenMerges: z.array(z.string()).default([]),
   checkedMerges: z.record(z.string(), mainCheckResultSchema).default({}),
   pendingOutsideEnvironments: z.array(z.string()).default([]),
   unreadableSince: z.record(z.string(), z.number()).default({}),
-  outsideNames: z.record(z.string(), z.string()).default({}),
+  outsideNames: z.record(z.string(), z.string()).default({}), // First-candidate display labels, read only for compatibility.
+  outsideReferences: z.record(z.string(), outsideReferenceSchema).default({}),
+  pendingMainChecks: z.record(z.string(), z.number()).default({}),
+  outsideMergeUrls: z.record(z.string(), z.string()).default({}),
 });
 type StoredState = z.infer<typeof storedSchema>;
 
@@ -29,7 +33,8 @@ export async function registerAutopilot(bb: BbPluginApi) {
   let disposed = false;
   bb.onDispose(() => { disposed = true; });
   const withCheck = (projectId: string, state: AutopilotState): AutopilotState =>
-    (checking.has(projectId) || retryAfter.has(projectId) || Object.keys(states.get(projectId)?.unreadableSince ?? {}).length) ? { ...state, checkingMain: true } : state;
+    (checking.has(projectId) || retryAfter.has(projectId) || Object.keys(states.get(projectId)?.unreadableSince ?? {}).length
+      || Object.keys(states.get(projectId)?.pendingMainChecks ?? {}).length) ? { ...state, checkingMain: true } : state;
   const readStored = async (projectId: string): Promise<StoredState> => {
     const parsed = storedSchema.safeParse(await bb.storage.kv.get(PREFIX + projectId));
     return parsed.success ? parsed.data : storedSchema.parse(defaults());
@@ -65,7 +70,7 @@ export async function registerAutopilot(bb: BbPluginApi) {
     return changeStored(projectId, (state) => {
       if (patch.status === "off") { checking.delete(projectId); retryAfter.delete(projectId); }
       return { ...state, ...patch, ...(patch.status ? { pauseReason: null, pauseLog: undefined } : {}),
-        ...(patch.status === "off" ? { pendingOutsideEnvironments: [], unreadableSince: {}, outsideNames: {} } : {}) };
+        ...(patch.status === "off" ? { pendingOutsideEnvironments: [], unreadableSince: {}, outsideNames: {}, outsideReferences: {}, pendingMainChecks: {}, outsideMergeUrls: {} } : {}) };
     });
   };
   const rememberMerges = (projectId: string, merges: { url: string }[]) => changeStored(projectId, state => ({ ...state,
@@ -77,24 +82,43 @@ export async function registerAutopilot(bb: BbPluginApi) {
     return { ...state, status: "on", pauseReason: null, pauseLog: undefined, consecutiveStops: 0 };
   });
   /** Retain merge sources while visible or unresolved, even if the tracker later drops the spec. */
-  const rememberOutside = async (projectId: string, environmentIds: string[], names: Record<string, string> = {}) => {
+  const rememberOutside = async (projectId: string, environmentIds: string[], references: Record<string, z.infer<typeof outsideReferenceSchema>> = {}) => {
     await changeStored(projectId, (state) => ({ ...state,
       pendingOutsideEnvironments: [...new Set([...state.pendingOutsideEnvironments, ...environmentIds])].filter(id => !state.skippedMainChecks?.[id]),
-      outsideNames: { ...state.outsideNames, ...Object.fromEntries(Object.entries(names).filter(([id, name]) =>
-        !state.outsideNames[id] || name.startsWith("PR #"))) },
+      outsideReferences: { ...state.outsideReferences, ...Object.fromEntries(Object.entries(references).map(([id, reference]) =>
+        [id, { ...state.outsideReferences[id], ...reference }])) },
     }));
     return (await readStored(projectId)).pendingOutsideEnvironments;
   };
-  /** Reserve one background check per project; host work never holds the save queue. */
+  /** Observe PR evidence independently of the host reservation; never discard a recovered merge. */
   const checkMain = async (projectId: string, merges: { number: number; url: string }[], check: (prNumber: number) => Promise<z.infer<typeof mainCheckResultSchema> & { hostId: string }>, outside: { requests: Record<string, PullRequestRow>; visible: string[] } = { requests: {}, visible: [] }) => {
     const initial = await readStored(projectId);
-    if (disposed || initial.status === "off" || checking.has(projectId)
-      || Date.now() < (retryAfter.get(projectId) ?? 0)) return get(projectId);
+    if (disposed || initial.status === "off") return get(projectId);
     const retireOutside = () => changeStored(projectId, (state) => {
+      if (disposed || state.status === "off") return state;
+      const pendingMainChecks = { ...state.pendingMainChecks };
+      const outsideMergeUrls = { ...state.outsideMergeUrls };
+      for (const pr of merges) {
+        if (!state.checkedMerges[pr.url] && !state.seenMerges.includes(pr.url)) pendingMainChecks[pr.url] = pr.number;
+      }
+      for (const [id, row] of Object.entries(outside.requests)) {
+        if (row.outcome === "available" && row.pullRequest.state === "merged") outsideMergeUrls[id] = row.pullRequest.url;
+        else if (row.outcome !== "unavailable") delete outsideMergeUrls[id];
+      }
       const unreadableSince = { ...state.unreadableSince };
-      const outsideNames = { ...state.outsideNames };
+      const outsideReferences = { ...state.outsideReferences };
+      for (const [id, row] of Object.entries(outside.requests)) {
+        if (row.outcome === "available") outsideReferences[id] = { ...outsideReferences[id], prNumber: row.pullRequest.number };
+      }
       const skippedMainChecks = { ...state.skippedMainChecks };
       const pendingOutsideEnvironments = state.pendingOutsideEnvironments.filter((id) => {
+        const mergeUrl = outsideMergeUrls[id];
+        if (mergeUrl) {
+          delete unreadableSince[id];
+          if (!state.checkedMerges[mergeUrl] && !state.seenMerges.includes(mergeUrl)) return true;
+          delete outsideMergeUrls[id];
+          return outside.visible.includes(id);
+        }
         const row = outside.requests[id];
         if (row?.outcome === "absent") {
           delete unreadableSince[id];
@@ -102,35 +126,43 @@ export async function registerAutopilot(bb: BbPluginApi) {
         }
         if (row?.outcome === "available") {
           delete unreadableSince[id];
-          outsideNames[id] = `PR #${row.pullRequest.number}`;
           return outside.visible.includes(id) || !(row.pullRequest.state === "closed"
             || row.pullRequest.state === "merged" && (state.checkedMerges[row.pullRequest.url] || state.seenMerges.includes(row.pullRequest.url)));
         }
         unreadableSince[id] ??= Date.now();
         if (Date.now() - unreadableSince[id] < 30 * 60_000) return true;
-        skippedMainChecks[id] = `Couldn't check main after ${outsideNames[id] ?? id}; Autopilot carried on.`;
+        const reference = outsideReferences[id];
+        const name = reference?.prNumber !== undefined ? `PR #${reference.prNumber}`
+          : state.outsideNames[id] ?? reference?.specIdentifier ?? id;
+        skippedMainChecks[id] = `Couldn't check main after ${name}; Autopilot carried on.`;
         delete unreadableSince[id];
         return false;
       });
-      return { ...state, pendingOutsideEnvironments, unreadableSince, outsideNames,
+      return { ...state, pendingOutsideEnvironments, unreadableSince, outsideReferences, pendingMainChecks, outsideMergeUrls,
         ...(Object.keys(skippedMainChecks).length ? { skippedMainChecks } : {}) };
     });
     await retireOutside();
-    if (!merges.some(pr => !initial.checkedMerges[pr.url] && !initial.seenMerges.includes(pr.url))) {
+    if (checking.has(projectId) || Date.now() < (retryAfter.get(projectId) ?? 0)
+      || !Object.keys((await readStored(projectId)).pendingMainChecks).length) {
       return get(projectId);
     }
     if (!checking.has(projectId)) {
       const run = Promise.resolve().then(async () => {
-        for (const pr of merges) {
+        while (true) {
           const state = await readStored(projectId);
           if (disposed || checking.get(projectId) !== run || state.status === "off") return;
-          if (state.checkedMerges[pr.url] || state.seenMerges.includes(pr.url)) continue;
-          const result = await check(pr.number);
+          const next = Object.entries(state.pendingMainChecks)[0];
+          if (!next) break;
+          const [url, number] = next;
+          const result = await check(number);
           if (disposed || checking.get(projectId) !== run) return;
           await changeStored(projectId, (state) => {
-            if (disposed || checking.get(projectId) !== run || state.seenMerges.includes(pr.url)) return state;
+            if (disposed || checking.get(projectId) !== run || state.seenMerges.includes(url)) return state;
+            const pendingMainChecks = { ...state.pendingMainChecks };
+            delete pendingMainChecks[url];
             return { ...state,
-              checkedMerges: { ...state.checkedMerges, [pr.url]: mainCheckResultSchema.parse(result) },
+              pendingMainChecks,
+              checkedMerges: { ...state.checkedMerges, [url]: mainCheckResultSchema.parse(result) },
               ...(!result.passed && state.status !== "off" ? { status: "paused" as const,
                 pauseReason: "Main fails its quick check", pauseLog: { hostId: result.hostId, path: result.logPath } } : {}),
             };
@@ -138,7 +170,7 @@ export async function registerAutopilot(bb: BbPluginApi) {
         }
         if (disposed || checking.get(projectId) !== run) return;
         retryAfter.delete(projectId);
-        await retireOutside();
+        // PR rows captured when this run began are stale now. The next observation retires sources.
       }).catch(() => {
         if (disposed || checking.get(projectId) !== run) return;
         retryAfter.set(projectId, Date.now() + 30_000);
@@ -176,7 +208,7 @@ export async function registerAutopilot(bb: BbPluginApi) {
     return { ...state, observedOutcomes, consecutiveStops, status, pauseReason };
   });
   const isOn = (projectId: string) => states.get(projectId)?.status === "on" && !checking.has(projectId) && !retryAfter.has(projectId)
-    && !Object.keys(states.get(projectId)?.unreadableSince ?? {}).length;
+    && !Object.keys(states.get(projectId)?.unreadableSince ?? {}).length && !Object.keys(states.get(projectId)?.pendingMainChecks ?? {}).length;
   const isEnabled = (projectId: string) => states.has(projectId) && states.get(projectId)?.status !== "off";
   const enabledProjectIds = () => [...states].filter(([, state]) => state.status !== "off").map(([id]) => id);
   bb.rpc.register(autopilotContract, {

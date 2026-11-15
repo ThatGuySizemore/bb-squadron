@@ -24,4 +24,3 @@ export function PixelText({ text, cell = 3, gap, className }: { text: string; ce
     </span>
   );
 }
-

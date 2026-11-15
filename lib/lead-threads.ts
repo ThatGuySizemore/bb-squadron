@@ -19,6 +19,8 @@ export interface LeadThread {
   previousLeadId?: string;
   /** Epoch milliseconds of a normal terminal turn, never a generic row update. */
   idleSince?: number;
+  /** The latest reply in the completed turn explicitly asks the owner to act. */
+  asksOwner?: boolean;
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
   route: Route;
@@ -72,11 +74,44 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       const idleSince = await readIdleSince(bb, thread);
       leads.push({ ...(metadata.kind === "work-item" || metadata.kind === "spec" ? { kind: metadata.kind } : {}),
         ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
+        asksOwner: idleSince !== undefined && await readOwnerQuestion(bb, thread.id),
         workers: await readWorkers(bb, projectId, thread.id),
         route: threadRoute(thread.providerId, execution) });
     }
     if (threads.length < 200) return leads;
   }
+}
+
+/** Conservative fallback for questions asked without a native pending request.
+ * Read only this turn's latest top-level reply; never forward its private prose. */
+async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boolean> {
+  try {
+    const [boundaries, requests, items] = await Promise.all([
+      bb.sdk.threads.events.list({ threadId, order: "desc", limit: "2", types: ["turn/completed", "turn/started", "system/thread/interrupted"] }),
+      bb.sdk.threads.events.list({ threadId, order: "desc", limit: "1", types: ["client/turn/requested"] }),
+      bb.sdk.threads.events.list({ threadId, order: "desc", limit: "50", types: ["item/completed"] }),
+    ]);
+    const end = boundaries[0];
+    if (end?.type !== "turn/completed" || end.data.status !== "completed") return false;
+    const after = Math.max(boundaries[1]?.seq ?? -1, requests[0]?.seq ?? -1);
+    const reply = items.find((event) => event.seq > after && event.seq < end.seq &&
+      event.type === "item/completed" && event.data.item.type === "agentMessage" && !event.data.item.parentToolCallId);
+    if (reply?.type !== "item/completed" || reply.data.item.type !== "agentMessage") return false;
+    // Ignore quoted/code questions. Explicit Needs you copy also supports requests without a question mark.
+    let fence: string | undefined;
+    const prose = reply.data.item.text.split("\n").filter((line) => {
+      if (/^\s*>/.test(line) || /^(?: {4}|\t)/.test(line)) return false;
+      const mark = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (fence) {
+        if (mark && mark[1][0] === fence[0] && mark[1].length >= fence.length && !mark[2].trim()) fence = undefined;
+        return false;
+      }
+      if (mark) { fence = mark[1]; return false; }
+      return true;
+    }).join("\n");
+    return /^\s*(?:\*\*)?Needs you(?:\*\*)?:\s*\S/im.test(prose) ||
+      /^\s*(?:Josh[,.:]?\s+)?(?:can|could|would|will|do|are) you\b[^\n]*\?\s*$/im.test(prose);
+  } catch { return false; }
 }
 
 /** Unknown history retains the existing Stopped fallback. No assistant text is classified. */

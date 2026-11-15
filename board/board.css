@@ -279,6 +279,13 @@
   gap: 8px;
   margin: 0 0 14px;
 }
+.sq-section-title {
+  display: inline-flex;
+  vertical-align: middle;
+}
+.sq-label h2 .sq-term {
+  display: inline-block;
+}
 .sq-label h2 {
   margin: 0;
   font-size: 12px;

@@ -294,8 +294,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const returning = new Set(lanes.filter((lane) => lane.state === "landed" && !lane.outside)
     .map((lane) => lane.specId));
   const queueSpecs = [...specs, ...closedSpecs.filter((spec) => returning.has(spec.identifier))];
+  // Tickets already in the landed branch are the lane that just landed, not new work. Until the tracker
+  // marks them Done, a spec whose tickets are all in branch must not look like a returning spec.
+  const newWork = (ticket: TrackerIssue) => !held(ticket) && trackerTicketState(ticket, snapshot.kind, settings) !== "branch";
   for (const spec of queueSpecs.filter((spec) => !leads.has(spec.id) ||
-    (returning.has(spec.identifier) && ticketsOf(spec).some((ticket) => !held(ticket))))) {
+    (returning.has(spec.identifier) && ticketsOf(spec).some(newWork)))) {
     const tickets = ticketsOf(spec);
     const marked = readyMarked(spec);
     const heldTickets = tickets.filter(held);

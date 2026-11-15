@@ -479,3 +479,27 @@ test("a returning completed spec keeps its queue order beside Ready specs and it
   assert.deepEqual(board.ready.map((row) => row.id), ["FIX-20", "FIX-1"]);
   assert.deepEqual(board.lanes.map((row) => [row.specId, row.state, row.leadThreadId]), [["FIX-20", "landed", "old-lead"]]);
 });
+
+const landedLead = (id = "old-lead") => ({ specId: "fix-20", branch: "landed/old", route: { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const },
+  thread: makeThreadResponse({ id, projectId: "proj-one", environmentId: "old-env", status: "idle" }) });
+const mergedPr = { "old-env": { outcome: "available" as const, pullRequest: { number: 1, state: "merged" as const, url: "https://example.invalid/pr/1",
+  updatedAt: "2026-11-13T20:00:00Z", checks: { state: "passing" as const } } } };
+
+test("a lane that just landed does not return while every ticket is in branch or done and the spec is still open", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"] }),
+    issue("FIX-21", { parent: "FIX-20", status: "In Review" }),
+    issue("FIX-22", { parent: "FIX-20", done: true }),
+  ]), { leads: [landedLead()], pullRequests: mergedPr }));
+  assert.deepEqual(board.lanes.map((row) => [row.specId, row.state]), [["FIX-20", "landed"]]);
+  assert.deepEqual(board.ready, []);
+});
+
+test("a landed spec that gains a new open ticket still returns", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"] }),
+    issue("FIX-21", { parent: "FIX-20", status: "In Review" }),
+    issue("FIX-23", { parent: "FIX-20" }),
+  ]), { leads: [landedLead()], pullRequests: mergedPr }));
+  assert.deepEqual(board.ready.map((row) => row.id), ["FIX-20"]);
+});

@@ -51,6 +51,20 @@ Use your project's own preparation command. Squadron assumes no package manager 
 
 Squadron runs Check setup only in the isolated worktree at the merged main commit, then runs Quick check there if setup succeeds. Both receive `SQUADRON_BASE` set to the commit before the merge and share a 30-minute command budget. Setup output and quick-check output stay in the check's log. A setup failure skips Quick check and pauses Autopilot through the main-check brake with the log link. The owner's checkout is never used to execute either command. Lane checks keep their existing behavior.
 
+## Squadron policy
+
+House rules can add a `## Squadron policy` table, read like Model routes: a Setting / Value table where a missing file, section or row keeps the default. Squadron reads only this section, stopping at the next heading; `## Models and effort` prose is never policy.
+
+| Setting | Values | Default |
+|---|---|---|
+| Escalation | `diagnose first` or `retry` | `retry` |
+| Low effort | `mechanical only` or `off` | `off` |
+| Checkpoint | a positive whole number | none |
+
+`retry` keeps a retry, then a stop after two strikes. `diagnose first` diagnoses after the first qualifying strike before the replacement. `off` refuses every low route; `mechanical only` allows low for the Mechanical role alone. A route whose effort is `default` counts as low when BB advertises low as that model's default; when BB doesn't report the default, Doctor and the Lead's brief say the low-effort limit isn't proved for that route. The two-strike stop, and carrying strike counts, deadlines and budgets to replacement workers, are fixed for everyone. Checkpoint is read by the observation report (SQD-260), not by launches.
+
+Doctor shows the resolved values and where each came from. An unknown setting or value is a Doctor fix that names it, and Start refuses until it is fixed. Start puts the resolved policy in the Lead's brief.
+
 ## Lead and worker routes
 
 House rules can supply a `## Model routes` table with these fixed Role names: Lead, Worker, Worker (hard), Planning, Planning (hard), Review of claude-code, Review of codex and Mechanical. The other columns are Provider, Model and Effort. Use BB provider IDs and exact model IDs from `bb provider models <provider>`. An effort can be any level that model advertises, or `default` to use its native default. Low is allowed only for Mechanical; later policy enforcement may disable low entirely. Worker (hard) and Planning (hard) are separate roles, resolved explicitly rather than selected by similarly named ticket labels.

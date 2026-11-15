@@ -15,6 +15,8 @@ The board's planning buttons supply the project's tracker and an optional seed i
 
 Use Owner words from `GLOSSARY.md` in PR bodies, comments and Needs you text. Squadron is the orchestrator; the Helper is the optional agent thread the owner talks to.
 
+Squadron started this thread on its Planning route, for familiar, settled work. When architecture, unclear requirements or consequential trade-offs appear, put a `Needs you:` line asking the owner to re-plan on Planning (hard).
+
 Read the repo rules and `docs/agents/issue-tracker.md`. Read the current routes in `docs/agents/squadron.md`.
 
 With the owner, run these skills from Matt Pocock's installed plugin, in order and as written:

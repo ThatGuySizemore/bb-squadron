@@ -1,6 +1,6 @@
 import { routeProblem, validateRouteCapabilities, type ProviderModels } from "./model-capabilities.js";
 import { launchRoutes, type RouteViewRow } from "./launch-record.js";
-import { parseSquadronSettings, markdownSection } from "./squadron-settings.js";
+import { parseSquadronSettings, markdownSection, policyRows } from "./squadron-settings.js";
 import type { Family } from "./board-model.js";
 import { detectTracker, trackerName } from "./tracker-detection.js";
 
@@ -21,6 +21,8 @@ export interface DoctorReport {
   ready: boolean; checks: DoctorCheck[]; configurationFiles: ConfigurationFile[];
   /** The route each role and ticket label exception launches on, from the same resolver Start and the board use. */
   routes?: RouteViewRow[];
+  /** The resolved Squadron policy and where each value came from; absent while the settings don't parse. */
+  policy?: { setting: string; value: string; source: "House rules" | "default" }[];
 }
 export interface DoctorInput {
   /** Only installed plugin skills, with symlinked files excluded by the host. */
@@ -106,9 +108,10 @@ export function doctor(input: DoctorInput): DoctorReport {
     }),
     { id: "tracker", name: tracker.kind ? `Tracker: ${trackerName(tracker.kind)}` : "Tracker", status: tracker.kind ? "pass" : "fix", message: tracker.reason },
   ];
-  const routes = parsed?.ok ? launchRoutes(parsed.settings).map((row) => {
+  const routes = parsed?.ok ? launchRoutes(parsed.settings, input.providerCatalog).map((row) => {
     const problem = row.route?.providerId && row.route.model ? routeProblem({ providerId: row.route.providerId, model: row.route.model, effort: row.route.effort }, input.providerCatalog ?? []) : null;
     return problem && !row.problem ? { ...row, problem } : row;
   }) : undefined;
-  return { ready: checks.every((check) => check.status !== "fix"), checks, configurationFiles: input.configurationFiles, ...(routes ? { routes } : {}) };
+  return { ready: checks.every((check) => check.status !== "fix"), checks, configurationFiles: input.configurationFiles, ...(routes ? { routes } : {}),
+    ...(parsed?.ok ? { policy: policyRows(parsed.settings) } : {}) };
 }

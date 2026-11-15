@@ -60,7 +60,7 @@ export async function readTrackerConfiguration(bb: BbPluginApi, source: { hostId
 export async function readResolvedSettings(bb: BbPluginApi, source: { hostId: string; path: string }, config: Awaited<ReturnType<typeof readTrackerConfiguration>>, signal?: AbortSignal) {
   const host = bb.hosts.experimental_client({ contract: doctorHostContract });
   const house = await host.call("readModelRoutes", {}, { hostId: source.hostId, signal, timeoutMs: 15_000 }).catch(() => null);
-  const houseRulesMarkdown = house?.markdown ?? null;
+  const houseRulesMarkdown = [house?.markdown, house?.policy].filter(Boolean).join("\n") || null;
   let settings = config.settingsMarkdown === null ? null : parseSquadronSettings(config.settingsMarkdown, config.tracker.kind ?? "linear", houseRulesMarkdown);
   let providerCatalog: ProviderModels[] = [];
   if (settings?.ok) {

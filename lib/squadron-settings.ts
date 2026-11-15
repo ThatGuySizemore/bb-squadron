@@ -80,6 +80,7 @@ export interface LinearScope { team?: string; project?: string; initiative?: str
 export const SCOPE_KEYS = ["Team", "Project", "Initiative", "Label", "View"] as const;
 export type ScopeKey = typeof SCOPE_KEYS[number];
 export const SETTINGS_UNREADABLE = "docs/agents/squadron.md is missing or unreadable. Press Set up to write it with a thread, or make sure this repo's machine is online, then check again.";
+export const HOUSE_RULES_UNREADABLE = "Couldn't read House rules (~/.bb-squadron/house-rules.md). Squadron won't use default routes or policy in its place. Make sure this repo's machine is online and the file is readable, then check again.";
 export const SCOPE_MISSING = "Add the Scope section to docs/agents/squadron.md, naming at least one of Team, Project, Initiative, Label or View.";
 
 export type SettingsSection = "Quick check" | "Check setup" | "Stop list" | "Time limits" | "Routes" | "Final review" | "Status mapping" | "Scope" | "Hold labels" | "Squadron policy";

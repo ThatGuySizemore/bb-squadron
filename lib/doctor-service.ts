@@ -5,7 +5,7 @@ import { doctorContract, doctorHostContract } from "./doctor-contract.js";
 import { readTrackerConfiguration, readResolvedSettings, selectProjectCheckout, squadronSettingsPath } from "./project-checkout.js";
 import type { Family } from "./board-model.js";
 import { repositoryHostContract } from "./repository-contract.js";
-import { SETTINGS_UNREADABLE } from "./squadron-settings.js";
+import { HOUSE_RULES_UNREADABLE, SETTINGS_UNREADABLE } from "./squadron-settings.js";
 import { LINEAR_BUDGET_WAIT_MESSAGE } from "./linear-auth.js";
 
 function mattSkill(skill: { name: string; pluginId: string | null; scope: string; filePath: string; provider: string | null }): { name: string; family: Family; path: string } | null {
@@ -104,6 +104,14 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: (projectId: stri
     if (!localOnly && (github.status === "rejected" || github.value.authenticated === null)) warn("github", "Couldn't reach GitHub just now; checking again on the next check.");
     if (linear.status === "rejected") warn("linear", "Couldn't check Linear just now; checking again on the next check.");
     if (config.settingsMarkdown === null) report.checks[2].message = SETTINGS_UNREADABLE;
+    else if (resolved.houseRulesUnreadable) {
+      // Unreadable House rules must not pass for absent ones; show no defaulted routes or policy.
+      const check = report.checks.find((check) => check.id === "settings");
+      if (check) { check.status = "fix"; check.message = HOUSE_RULES_UNREADABLE; }
+      report.ready = false;
+      delete report.routes;
+      delete report.policy;
+    }
     if (config.unavailableFiles.includes("docs/agents/squadron.md")) warn("settings", "Couldn't check this repo's project settings just now; checking again on the next check.");
     if (config.unavailableFiles.length && !config.tracker.kind) warn("tracker", "Couldn't check this repo's issue tracker setup just now; checking again on the next check.");
     return report;

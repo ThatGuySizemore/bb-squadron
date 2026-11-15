@@ -5,23 +5,25 @@ description: Run a spec started from the Squadron board with Matt Pocock's insta
 
 # Squadron Lead
 
-Read the spec and first message's pointers: `AGENTS.md`, `docs/agents/`, `docs/agents/squadron.md`, House rules and This machine. Missing optional files are warnings. House rules' Never and Held entries take precedence. Verify your family's identity from This machine before tracker writes.
+Spec: A plan whose tickets are its sub-issues. Ticket: One piece of a spec. Work item: An issue that stands alone: no parent spec, no tickets of its own.
+
+The Lead runs a multi-ticket Spec. Work items use their own standalone lanes. Read the spec and supplied pointers: `AGENTS.md`, `docs/agents/`, `docs/agents/squadron.md`, House rules and This machine. Warn on missing optional files. House rules' Never and Held entries win. Verify your identity before tracker writes.
 
 Use Owner words from `GLOSSARY.md` in PR bodies, comments and Needs you text. Squadron is the orchestrator; the Helper is the optional agent thread the owner talks to.
 
-Run Matt Pocock's installed `implement-spec`, reaching its `tdd`, `code-review` and `pr` skills as needed. Invoke skills or follow their installed `SKILL.md`; ask the owner to install missing skills. Squadron adds:
+Run installed `implement-spec`, reaching `tdd`, `code-review` and `pr` skills as needed. Follow installed skills; ask the owner to install missing ones. Lane rules:
 
 - Workers build tickets, including UI. Never install/reinstall Squadron or redirect BB loading; the owner's checkout and Helper handle it.
-- Workers are visible BB child threads. Use `bb thread spawn` with `--parent-self`, `--parent-notifications auto`, `--new-environment worktree`, `--base-branch` naming the integration branch, `--service-tier default`, and a title containing the ticket identifier. Give workers ticket, spec and current-rules pointers. Each ticket's labels select the first matching route in project settings, with the default row as fallback; `Lead` is reserved for the coordinator. Set its provider (`claude-code` for Claude, `codex` for GPT), model and effort explicitly with `--provider`, `--model` and `--reasoning-level`.
+- Workers are BB child threads. Use `bb thread spawn` with `--parent-self`, `--parent-notifications auto`, `--new-environment worktree`, `--base-branch` naming the integration branch, `--service-tier default`, and a title containing the ticket identifier. Give workers ticket, spec and rules pointers. Ticket labels select the first matching project route, defaulting otherwise; `Lead` is reserved for the coordinator. Set its provider (`claude-code` for Claude, `codex` for GPT), model and effort explicitly with `--provider`, `--model` and `--reasoning-level`.
 - Each worker brief points to the spec's Testing Decisions as the confirmed `tdd` seams. Tell workers: "Run typechecking regularly, single test files regularly, and the full test suite once at the end." Split tickets that keep overrunning upstream rather than raising effort.
-- Keep worker communication sparse, through context pointers. Write one line per event to the owner unless asked for more.
-- Skip held tickets, identified by labels or Status lines from your first message. Re-read tickets before starting each worker; cleared tickets join the frontier. List held tickets under "Held" in the PR body.
-- Run the project's quick check before merging a worker into the integration branch. Keep one integration branch and PR. Track lane and worker elapsed time against project settings; wind down at the limit.
-- Use the configured final-review family, relative to the Lead: `other` selects the other family and `same` selects the Lead's family. Run one fresh high-effort `code-review` on the whole integration branch, then use one fresh worker for its fixes.
+- Use context pointers for sparse worker communication. Tell the owner one line per event unless asked for more.
+- Skip tickets held by labels or Status lines from your first message. Re-read tickets before starting each worker; cleared tickets join the frontier. List held tickets under "Held" in the PR.
+- Quick-check each worker before merging into the single integration branch and PR. Track lane and worker elapsed time against project settings; wind down at the limit.
+- Use the configured final-review family: `other` selects the other family and `same` selects the Lead's family. Run one fresh high-effort `code-review` on the whole branch; one fresh worker fixes findings.
 - Fix findings inside the spec in the branch. Write the spec PR with Matt's `pr` skill: Summary, Evidence, Merge Danger. Put "Not proven" under Evidence; add Held and Open questions only when needed. Drop hypothetical edge cases with one line. File only real defects outside the spec as `needs-triage`, after checking for duplicates.
 - Count two strikes per ticket: reported-done work failing its quick check or final review, or a truly stuck worker. Ordinary red tests and compile failures during `tdd` aren't strikes. After two strikes, stop the lane and post a one-paragraph progress summary on the spec for the owner.
 - Publish updates as the repo's `docs/agents/issue-tracker.md` describes. Only Linear uses the project settings' status mapping: lane Ready, Flying, In review, Landed; ticket Waiting, Working, In branch, Done. GitHub and Local markdown use their own issue states. In branch follows integration; Done follows the spec's merge. While a held ticket stays open, leave it and the spec open: don't mark the spec Landed or Done.
-- A spec with `accept:owner` waits for the owner's Merge click or explicit merge instruction. Otherwise squash-merge the spec PR when the quick check passes and the final review is addressed, subject to the owner's held actions and repo rules.
+- An `accept:owner` spec waits for the owner's Merge click or explicit merge instruction. Otherwise squash-merge the spec PR when the quick check passes and the final review is addressed, subject to the owner's held actions and repo rules.
 - On Stop, wind down workers, save their work in progress to their branches and tickets, then post the spec's progress summary. Wind-down comments record progress only, never "paused" or "don't start". The Lead thread's status alone represents the stop. On Resume, read the last summary and current branch, tickets and threads, then carry on. Treat comments as history, not standing orders.
 
-Report the branch, PR, checks, owner questions and anything unproven. Done when the PR merges and ticket statuses reflect it, leaving held tickets open; or Stop, a time limit or two strikes ends the run with work saved.
+Report branch, PR, checks, questions and unproven behavior. Done when the PR merges and ticket statuses reflect it, leaving held tickets open; or Stop, a time limit or two strikes ends the run with work saved.

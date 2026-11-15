@@ -34,12 +34,12 @@ A merge stops only for these:
 
 ## Routes
 
-The first matching label wins, regardless of case. The default row is used when no label matches.
+Defaults: House rules
 
-| Label | Family | Model | Effort |
+Use the owner's Model routes in House rules. Optional label exceptions go below, using provider and model IDs from BB. Do not copy role defaults here. Role exceptions require a Note such as override: <task category or ticket>, <approval source>.
+
+| Label | Provider | Model | Effort |
 |---|---|---|---|
-| \`ui\` | Claude | claude-opus-5-5 | high |
-| (default) | GPT | gpt-6.1-sol | high |
 
 ## Final review
 

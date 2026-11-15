@@ -3,7 +3,7 @@ import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from 
 import { deriveBoard } from "./board-derive.js";
 import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import { resolveLeadRoute, resolveRoute } from "./squadron-settings.js";
+import { providerFor, resolveLeadRoute, resolveRoute } from "./squadron-settings.js";
 import { workItemPrompt } from "./work-item-prompt.js";
 import type { DoctorReport } from "./doctor.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
@@ -68,7 +68,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     if (allowed && !await allowed()) return null;
     const thread = await bb.sdk.threads.spawn({
       projectId, title: `${workItem ? "Work item" : "Lead"} ${spec.identifier}`, visibility: "visible",
-      providerId: route.family === "claude" ? "claude-code" : "codex", model: route.model, reasoningLevel: route.effort, serviceTier: "default",
+      providerId: providerFor(route), model: route.model, ...(route.effort === "default" ? {} : { reasoningLevel: route.effort }), serviceTier: "default",
       pluginMetadata: { role: "lead", specId: spec.id, startedBy, ...(workItem ? { kind: "work-item" } : {}), ...(returning ? { previousLeadId: existing.thread.id } : {}) },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
       prompt: workItem ? workItemPrompt({ identifier: spec.identifier, url: spec.url, settings: checkout.settings.settings,

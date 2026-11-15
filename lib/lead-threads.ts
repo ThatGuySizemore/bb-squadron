@@ -1,4 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
+import { familyForProvider } from "./squadron-settings.js";
 import type { Route } from "./board-model.js";
 import { STOP_MESSAGE } from "./lane-contract.js";
 import { isActiveProjectThread } from "./project-thread.js";
@@ -49,8 +50,9 @@ export function latestLeads(leads: LeadThread[]): LeadThread[] {
 
 /** The route BB actually runs on a thread, including its unavailable-model fallback. */
 export function threadRoute(providerId: string | null, execution: { model?: string | null; reasoningLevel?: string | null } | null): Route {
-  return { family: providerId === "claude-code" ? "claude" : "gpt",
-    model: execution?.model ?? "Unknown model", effort: execution?.reasoningLevel === "high" ? "high" : "medium" };
+  return { family: familyForProvider(providerId ?? ""),
+    ...(providerId && !["claude-code", "codex"].includes(providerId) ? { providerId } : {}),
+    model: execution?.model ?? "Unknown model", effort: execution?.reasoningLevel ?? "default" };
 }
 
 export async function readWorkers(bb: BbPluginApi, projectId: string, leadId: string): Promise<WorkerThread[]> {

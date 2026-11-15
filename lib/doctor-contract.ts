@@ -20,6 +20,11 @@ export const doctorContract = {
 };
 
 export const doctorHostContract = {
+  readModelRoutes: {
+    input: z.object({}),
+    output: z.object({ markdown: z.string().nullable() }),
+    experimental_retryable: true,
+  },
   inspectFiles: {
     input: z.object({ checkoutPath: z.string(), skillPaths: z.array(z.string()) }),
     output: z.object({

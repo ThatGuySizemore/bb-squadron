@@ -6,7 +6,12 @@ export interface SquadronRoute extends Route {
   label: string | null;
 }
 
+export const MODEL_ROLES = ["Lead", "Worker", "Worker (hard)", "Planning", "Planning (hard)", "Review of claude-code", "Review of codex", "Mechanical"] as const;
+export type ModelRole = typeof MODEL_ROLES[number];
+
 export interface SquadronSettings {
+  modelRoutes?: Partial<Record<ModelRole, Route>>;
+  routeDefaults?: "house-rules";
   quickCheck: string;
   /** Optional preparation command for the isolated merged-main check only. */
   checkSetup?: string;
@@ -79,6 +84,8 @@ function sections(markdown: string): Map<string, string> {
   return result;
 }
 
+export function markdownSection(markdown: string, heading: string): string | undefined { return sections(markdown).get(heading); }
+
 function table(body: string): string[][] {
   return body.split("\n").filter((line) => line.trim().startsWith("|"))
     .map((line) => line.trim().replace(/^\||\|$/g, "").split("|").map((cell) => cell.trim()))
@@ -105,7 +112,7 @@ export function parseLinearScope(markdown: string): { ok: true; scope: LinearSco
 }
 
 /** Read the repo-owned Markdown without executing its quick check. */
-export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind = detectTracker(null, markdown).kind ?? "linear"): SettingsResult {
+export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind = detectTracker(null, markdown).kind ?? "linear", houseRulesMarkdown?: string | null): SettingsResult {
   const parts = sections(markdown);
   const issues: SettingsIssue[] = [];
   for (const section of ["Quick check", "Stop list", "Time limits", "Routes", "Final review", "Status mapping", "Scope"] as const) {
@@ -124,11 +131,9 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
     const match = /^(\d+)\s*(h|m|s)$/.exec(value ?? "");
     return match ? Number(match[1]) * ({ h: 3_600_000, m: 60_000, s: 1_000 }[match[2]] ?? 0) : 0;
   };
-  const routeRows = table(parts.get("Routes") ?? "");
-  const routes = routeRows.map(([label = "", family = "", model = "", effort = ""]) => ({
-    label: label === "(default)" ? null : label.replace(/^`|`$/g, ""),
-    family: family.toLowerCase() as Route["family"], model, effort: effort as Route["effort"],
-  }));
+  const routing = parseRoutes(parts.get("Routes") ?? "", houseRulesMarkdown);
+  issues.push(...routing.issues);
+  const routes = routing.routes;
   const settings: SquadronSettings = {
       quickCheck, stopList,
       ...(checkSetup ? { checkSetup } : {}),
@@ -136,6 +141,7 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
         laneTimeLimitMs: duration(values.get("Lane time limit")), workerTimeLimitMs: duration(values.get("Worker time limit")),
       },
       routes,
+      ...(routing.modelRoutes ? { modelRoutes: routing.modelRoutes, routeDefaults: "house-rules" as const } : {}),
       finalReviewFamily: "other",
       statusMapping: {
         lane: { ready: "Todo", flying: "In Progress", inReview: "In Review", landed: "Done" },
@@ -149,11 +155,6 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
   if (!stopList.length) issues.push({ section: "Stop list", message: "List the problems that stop a merge under Stop list." });
   if (Object.values(settings.limits).some((value) => !Number.isSafeInteger(value) || value <= 0)) {
     issues.push({ section: "Time limits", message: "Set positive durations such as 8 h for both lane and worker time limits." });
-  }
-  if (!routes.length || routes.filter((row) => row.label === null).length !== 1 ||
-    routeRows.some((row) => row.length !== 4) ||
-    routes.some((row) => row.label === "" || !["claude", "gpt"].includes(row.family) || !row.model || !["medium", "high"].includes(row.effort))) {
-    issues.push({ section: "Routes", message: "Set each route's label, Claude or GPT family, model and medium or high effort. Include one (default) row." });
   }
   const finalReview = (parts.get("Final review") ?? "").trim().toLowerCase();
   if (finalReview === "other" || finalReview === "same") settings.finalReviewFamily = finalReview;
@@ -188,14 +189,88 @@ export function parseSquadronSettings(markdown: string, trackerKind: TrackerKind
 /** Matching labels keep file order and ignore case; the default is used only when none match. */
 export function resolveRoute(settings: SquadronSettings, labels: readonly string[]): Route {
   const names = new Set(labels.map((label) => label.toLowerCase()));
-  const row = settings.routes.find((route) => route.label !== null && route.label.toLowerCase() !== "lead" && names.has(route.label.toLowerCase()))
+  const row = settings.routes.find((route) => route.label !== null && route.role === undefined && route.label.toLowerCase() !== "lead" && names.has(route.label.toLowerCase()))
     ?? settings.routes.find((route) => route.label === null);
   if (!row) throw new Error("Add a default route to docs/agents/squadron.md.");
-  return { family: row.family, model: row.model, effort: row.effort };
+  return routeValue(row);
 }
 
 /** An explicit Lead row overrides spec labels; older settings keep their label-based routing. */
 export function resolveLeadRoute(settings: SquadronSettings, labels: readonly string[]): Route {
   const row = settings.routes.find((route) => route.label?.toLowerCase() === "lead");
-  return row ? { family: row.family, model: row.model, effort: row.effort } : resolveRoute(settings, labels);
+  return row ? routeValue(row) : resolveRoute(settings, labels);
+}
+
+/** Keep policy role identity for launch recording without conflating it with ticket labels. */
+export function resolveRoleRoute(settings: SquadronSettings, role: ModelRole): Route {
+  const route = settings.modelRoutes?.[role] ?? settings.routes.find((row) => row.role === role);
+  if (!route) throw new Error(`Add the ${role} row to House rules Model routes.`);
+  return "label" in route ? routeValue(route as SquadronRoute) : { ...route };
+}
+
+function routeValue({ label: _label, ...route }: SquadronRoute): Route { return route; }
+export const providerFor = (route: Route): string => route.providerId ?? (route.family === "claude" ? "claude-code" : "codex");
+export const familyForProvider = (provider: string): Route["family"] => provider === "claude-code" ? "claude" : provider === "codex" ? "gpt" : "unknown";
+
+function parseRoutes(body: string, houseRulesMarkdown?: string | null): {
+  routes: SquadronRoute[]; modelRoutes?: Partial<Record<ModelRole, Route>>; issues: SettingsIssue[];
+} {
+  const issues: SettingsIssue[] = [];
+  const fail = (message: string) => issues.push({ section: "Routes", message });
+  const shared = /^Defaults: House rules\s*$/m.test(body);
+  const rows = table(body);
+  const header = body.split("\n").find((line) => line.trim().startsWith("|")) ?? "";
+  const providerColumn = /\|\s*Provider\s*\|/i.test(header);
+  const noteColumn = /\|\s*Note\s*\|/i.test(header);
+  const routes: SquadronRoute[] = [];
+  const overrides = new Set<ModelRole>();
+  const modelRoutes: Partial<Record<ModelRole, Route>> = {};
+  function readRoute(name: string, provider: string, model: string, effort: string, legacy: boolean): Route {
+    if (legacy && !["medium", "high"].includes(effort)) fail(`Route ${name}: legacy Family tables use medium or high effort; use Provider for other advertised levels.`);
+    if (legacy) provider = provider.toLowerCase() === "claude" ? "claude-code" : provider.toLowerCase() === "gpt" ? "codex" : "";
+    if (!name || !provider || !model || !effort) fail(`Route ${name || "(empty)"}: name a provider, model and effort.`);
+    if (effort === "low" && name !== "Mechanical") fail(`Route ${name}: low effort is allowed only for Mechanical.`);
+    if (name.startsWith("Review") && familyForProvider(provider) === "unknown") fail(`Route ${name}: provider ${provider} has no known review family.`);
+    return { family: familyForProvider(provider), model, effort, ...(!legacy || shared ? { providerId: provider } : {}) };
+  }
+  if (shared) {
+    const policy = sections(houseRulesMarkdown ?? "").get("Model routes");
+    if (policy === undefined) fail("Defaults: House rules requires a Model routes table in House rules.");
+    else {
+      const policyRows = table(policy);
+      if (!/\|\s*Role\s*\|\s*Provider\s*\|\s*Model\s*\|\s*Effort\s*\|/.test(policy)) fail("House rules Model routes needs Role, Provider, Model and Effort columns.");
+      for (const [name = "", provider = "", model = "", effort = "", ...extra] of policyRows) {
+        if (!MODEL_ROLES.includes(name as ModelRole)) { fail(`House rules Model routes: unknown role ${name}.`); continue; }
+        if (extra.length || modelRoutes[name as ModelRole]) fail(`House rules Model routes: malformed or duplicate ${name} row.`);
+        modelRoutes[name as ModelRole] = { ...readRoute(name, provider, model, effort, false), role: name };
+      }
+      for (const role of MODEL_ROLES) if (!modelRoutes[role]) fail(`House rules Model routes: add the ${role} row.`);
+    }
+  } else if (/^Defaults:/m.test(body)) fail("Set Routes Defaults to House rules, or omit the Defaults line.");
+  for (const cells of rows) {
+    const [raw = "", provider = "", model = "", effort = "", note = ""] = cells;
+    const name = raw.replace(/^`|`$/g, "");
+    if (cells.length !== (noteColumn ? 5 : 4)) fail(`Route ${name}: use the table's columns.`);
+    const role = MODEL_ROLES.find((role) => role.toLowerCase() === name.toLowerCase()) ?? (name === "(default)" ? "Worker" : undefined);
+    const value = readRoute(role ?? name, provider, model, effort, !providerColumn);
+    if (shared && (role || name.toLowerCase() === "review")) {
+      if (!/^override:\s*[^,]+\S\s*,\s*\S.+$/i.test(note)) fail(`Route ${name}: Note must say override: <task category or ticket>, <approval source>.`);
+      if (!role) fail(`Route ${name}: name Review of claude-code or Review of codex.`);
+      else {
+        if (overrides.has(role)) fail(`Route ${name}: duplicate override row.`);
+        overrides.add(role);
+        modelRoutes[role] = { ...value, role, overrideNote: note };
+      }
+      continue;
+    }
+    if (routes.some((row) => row.label === (name === "(default)" ? null : name))) fail(`Route ${name}: duplicate row.`);
+    routes.push({ label: name === "(default)" ? null : name, ...value, ...(providerColumn && role && name !== "(default)" ? { role } : {}) });
+  }
+  if (shared) {
+    for (const role of MODEL_ROLES) {
+      const value = modelRoutes[role];
+      if (value) routes.push({ label: role === "Worker" ? null : role, ...value });
+    }
+  } else if (routes.filter((row) => row.label === null).length !== 1) fail("Include one (default) route row.");
+  return { routes, issues, ...(shared ? { modelRoutes } : {}) };
 }

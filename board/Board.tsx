@@ -145,9 +145,9 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
 /** The agent's family icon, model and effort. A compact chip with a prefix shows only the icon and prefix; the model stays in its hover title. */
 function AiChip({ route, prefix, compact = false }: { route: Route; prefix?: string; compact?: boolean }) {
   const { providers } = useProviders();
-  const id = route.family === "claude" ? "claude-code" : "codex";
+  const id = route.providerId ?? (route.family === "claude" ? "claude-code" : "codex");
   const provider = providers.find((p) => p.id === id) ?? { id };
-  const title = `${route.family === "claude" ? "Claude Code" : "Codex"} · ${route.model} · ${route.effort} effort`;
+  const title = `${route.providerId ?? (route.family === "claude" ? "Claude Code" : "Codex")} · ${route.model} · ${route.effort} effort`;
   return (
     <span className="sq-ai" title={compact && prefix ? `${prefix}: ${title}` : title}>
       <ProviderIcon providerKind="agent" provider={provider} />
@@ -155,7 +155,7 @@ function AiChip({ route, prefix, compact = false }: { route: Route; prefix?: str
         <span>
           {prefix ? `${prefix} · ` : ""}
           {route.model}
-          <span className="sq-ai-effort"> {route.effort === "high" ? "high" : "med"}</span>
+          <span className="sq-ai-effort"> {route.effort === "medium" ? "med" : route.effort}</span>
         </span>
       )}
     </span>

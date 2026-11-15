@@ -45,13 +45,13 @@ A merge stops only for these:
 
 ## Routes
 
-Lead coordinates and merges; workers build tickets. The Lead row selects the coordinator. For workers, the first matching ticket label wins, with the default row as fallback.
+Defaults: House rules
 
-| Label | Family | Model | Effort |
+The owner's Model routes supply role defaults. This repo keeps only its UI exception.
+
+| Label | Provider | Model | Effort |
 |---|---|---|---|
-| Lead | GPT | gpt-6.1-sol | medium |
-| `ui` | Claude | claude-opus-5-5 | high |
-| (default) | GPT | gpt-6.1-sol | medium |
+| `ui` | claude-code | claude-opus-5-5 | high |
 
 ## Final review
 

@@ -2,7 +2,7 @@ import { experimental_joinHostPath as joinHostPath } from "@get-bb/plugin-sdk";
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { doctor, requiredSkills, type ConfigurationFile } from "./doctor.js";
 import { doctorContract, doctorHostContract } from "./doctor-contract.js";
-import { readTrackerConfiguration, selectProjectCheckout, squadronSettingsPath } from "./project-checkout.js";
+import { readTrackerConfiguration, readResolvedSettings, selectProjectCheckout, squadronSettingsPath } from "./project-checkout.js";
 import type { Family } from "./board-model.js";
 import { repositoryHostContract } from "./repository-contract.js";
 import { SETTINGS_UNREADABLE } from "./squadron-settings.js";
@@ -43,6 +43,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: (projectId: stri
     const settingsPath = squadronSettingsPath(path);
     if (!settingsPath) throw new Error("Choose a repo with an absolute checkout path.");
     const config = await readTrackerConfiguration(bb, checkout, signal);
+    const resolved = await readResolvedSettings(bb, checkout, config, signal);
     const localOnly = config.tracker.kind === "local-markdown" && await repository.call("readRepositoryState",
       { checkoutPath: path, branches: [] }, { hostId, signal, timeoutMs: 15_000 }).then((state) => !state.hasRemote).catch(() => false);
     const [skills, linear, github] = await Promise.allSettled([
@@ -80,6 +81,7 @@ export function registerDoctor(bb: BbPluginApi, getLinearState: (projectId: stri
       );
     }
     const report = doctor({
+      houseRulesMarkdown: resolved.houseRulesMarkdown, providerCatalog: resolved.providerCatalog,
       skills: installed, setupFiles: inspection?.setupFiles ?? [], configurationFiles,
       legacyHouseRulesExists: inspection?.playbookExists,
       settingsMarkdown: config.settingsMarkdown, issueTrackerMarkdown: config.issueTrackerMarkdown,

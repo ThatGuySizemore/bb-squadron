@@ -19,7 +19,7 @@ function nativeThreads() {
     metadata: new Map<string, Record<string, unknown>>(), routes: new Map<string, { model: string; reasoningLevel: string }>() };
 }
 function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile,
-  mainCheck: (input: unknown) => unknown = () => ({ passed: true, logPath: "/scratch/check.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) })) {
+  mainCheck: (input: unknown) => unknown = () => ({ passed: true, logPath: "/scratch/check.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) }), policy?: string) {
   const { threads, metadata, routes } = native;
   return { native, ...createFakePluginHost({
     pluginId: "squadron", experimental_hostEntry: true,
@@ -58,7 +58,7 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
         },
       },
     },
-    experimental_callHostRpc: async ({ method, input }) => method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : method === "codexMattSkills" ? { skills: [] } : {
+    experimental_callHostRpc: async ({ method, input }) => method === "readModelRoutes" ? { markdown: policy ?? null } : method === "runMainQuickCheck" ? mainCheck(input) : method === "githubLogin" ? { authenticated: true } : method === "codexMattSkills" ? { skills: [] } : {
       homePath: "/owner", repoRulesExists: true, playbookExists: false, machineProfileExists: false,
       ...(ownerHost ? await ownerHost.experimental_call("inspectFiles", { checkoutPath: "/repo", skillPaths: [] }) as Record<string, unknown> : {}),
       setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"],
@@ -66,10 +66,10 @@ function host(native = nativeThreads(), ownerHost?: ReturnType<typeof experiment
     },
   }) };
 }
-async function setup(t: import("node:test").TestContext, issues?: () => Response, ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile) {
+async function setup(t: import("node:test").TestContext, issues?: () => Response, ownerHost?: ReturnType<typeof experimental_createHostEntryHarness>, settings = settingsFile, policy?: string) {
   const linear = workspace({ issues });
   const fetch = mock.method(globalThis, "fetch", linear.fetch);
-  const { bb, harness, native } = host(undefined, ownerHost, settings);
+  const { bb, harness, native } = host(undefined, ownerHost, settings, undefined, policy);
   t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
   await plugin(bb);
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
@@ -1402,3 +1402,88 @@ for (const reason of ["hold or blocker", "two strikes", "time limit"]) {
     assert.match(prompt, /Track cumulative elapsed time across Stop\/Resume/);
   });
 }
+
+test("shared model defaults reach Doctor, board and Start without a substitute", async (t) => {
+  const { shared, house } = await import("./fixtures/model-routes.js");
+  const { harness } = await setup(t, undefined, undefined, shared, house);
+  harness.sdk.stub("providers.list", async () => [{ id: "claude-code" }, { id: "codex" }]);
+  harness.sdk.stub("providers.models", async ({ providerId }: { providerId: string }) => ({ modelLoadError: null,
+    models: (providerId === "claude-code" ? ["claude-sonnet-5-5", "claude-opus-5-5"] : ["gpt-6.1-sol"]).map((id) => ({
+      id, supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })),
+    })),
+  }));
+  const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+  assert.equal(report.ready, true, JSON.stringify(report.checks));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier],
+    ["claude-code", "claude-sonnet-5-5", "high", "default"]);
+});
+
+test("Doctor and Start refuse unrunnable rows by name and never spawn a fallback", async (t) => {
+  const { shared, house } = await import("./fixtures/model-routes.js");
+  for (const [replacement, named] of [
+    ["| ui | absent-provider | claude-opus-5-5 | high |", "absent-provider"],
+    ["| ui | claude-code | absent-model | high |", "absent-model"],
+    ["| ui | claude-code | claude-opus-5-5 | ultra |", "ultra"],
+    ["| ui | claude-code | claude-opus-5-5 | low |", "low"],
+  ]) {
+    await t.test(named, async (t) => {
+      const settings = shared.replace("| ui | claude-code | claude-opus-5-5 | high |", replacement);
+      const { harness } = await setup(t, undefined, undefined, settings, house);
+      harness.sdk.stub("providers.list", async () => [{ id: "claude-code" }, { id: "codex" }]);
+      harness.sdk.stub("providers.models", async ({ providerId }: { providerId: string }) => ({ modelLoadError: null,
+        models: (providerId === "claude-code" ? ["claude-sonnet-5-5", "claude-opus-5-5"] : ["gpt-6.1-sol"]).map((id) => ({
+          id, supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })),
+        })),
+      }));
+      const report = await harness.behavior.callRpc("doctor", { projectId: "proj-one" }) as import("../lib/doctor.js").DoctorReport;
+      assert.equal(report.ready, false);
+      const message = report.checks.find((check) => check.id === "settings")!.message;
+      assert.ok(message.includes("ui") && message.includes(named), message);
+      await assert.rejects(harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { message });
+      const cli = await harness.behavior.runCli(["start", "FIX-5"], { projectId: "proj-one" });
+      assert.equal(cli.exitCode, 1);
+      assert.equal(cli.stderr.trim(), message);
+      assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 0);
+    });
+  }
+});
+
+test("Start uses any advertised provider and native default effort, and the board reports it accurately", async (t) => {
+  const { shared, house } = await import("./fixtures/model-routes.js");
+  const settings = shared.replace("| Label | Provider | Model | Effort |", "| Label | Provider | Model | Effort | Note |")
+    .replace("|---|---|---|---|", "|---|---|---|---|---|")
+    .replace("| ui | claude-code | claude-opus-5-5 | high |", "| Lead | fixture-provider | fixture-model | default | override: tooling task, owner approval on FIX-5 |");
+  const { harness } = await setup(t, undefined, undefined, settings, house);
+  harness.sdk.stub("providers.list", async () => [{ id: "claude-code" }, { id: "codex" }, { id: "fixture-provider" }]);
+  harness.sdk.stub("providers.models", async ({ providerId }: { providerId: string }) => ({ modelLoadError: null,
+    models: (providerId === "fixture-provider" ? ["fixture-model"] : providerId === "claude-code" ? ["claude-sonnet-5-5", "claude-opus-5-5"] : ["gpt-6.1-sol"]).map((id) => ({
+      id, supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })),
+    })),
+  }));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["fixture-provider", "fixture-model", undefined, "default"]);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes[0].lead, { providerId: "fixture-provider", family: "unknown", model: "fixture-model", effort: "default" });
+});
+
+test("Doctor's host reads only Model routes from House rules, falling back only when the file is absent", async (t) => {
+  const { house } = await import("./fixtures/model-routes.js");
+  const root = await mkdtemp(join(tmpdir(), "sqd256-policy-fixture-"));
+  const folder = join(root, ".bb-squadron");
+  await mkdir(folder);
+  const ownerHost = experimental_createHostEntryHarness(createDoctorHost(undefined, () => root));
+  t.after(() => ownerHost.experimental_dispose());
+  await writeFile(join(folder, "playbook.md"), house);
+  const legacy = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null };
+  assert.ok(legacy.markdown?.includes("Worker (hard)"));
+  assert.equal(legacy.markdown?.includes("Squadron policy"), false);
+  assert.equal(legacy.markdown?.includes("prose-only"), false);
+  await writeFile(join(folder, "house-rules.md"), "# House rules\n## Models and effort\nPolicy prose only.\n");
+  assert.deepEqual(await ownerHost.experimental_call("readModelRoutes", {}), { markdown: null });
+  await writeFile(join(folder, "house-rules.md"), house.replace("claude-sonnet-5-5", "fixture-preferred-model"));
+  const preferred = await ownerHost.experimental_call("readModelRoutes", {}) as { markdown: string | null };
+  assert.ok(preferred.markdown?.includes("fixture-preferred-model"));
+});

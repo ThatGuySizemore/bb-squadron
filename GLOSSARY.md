@@ -98,7 +98,9 @@ _Avoid_: Lane state, Ticket state as separate entries → States
 
 **Family**: Which company's models a thread runs on: Claude through Claude Code or GPT through Codex.
 
-**Route**: A row that maps a ticket label to a family, model and effort.
+**Route**: A resolved provider, model and effort for a role or ticket label. Claude Code and Codex supply the Claude and GPT families; other providers have an unknown family.
+
+**Model routes**: The role defaults in the owner's House rules. A repo opts in with `Defaults: House rules` and supplies explicit exceptions in its Routes section. Named roles include Lead, Worker, Worker (hard), Planning, Planning (hard), Review of claude-code, Review of codex and Mechanical.
 
 **Identity**: Who an agent appears as in Linear and in Git. It is set for each family, and Squadron never holds the credential.
 

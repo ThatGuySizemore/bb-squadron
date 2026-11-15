@@ -200,8 +200,18 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // Squadron holds nothing for an outside lane: it never merges, stops or resumes one.
     const inReview = acceptOwner && localMerge ? "merge-waits"
       : pr?.state === "open" ? (!outside && acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
+    const remaining = (workItem ? [laneById.get(spec.id) ?? spec] : issues)
+      .filter((issue) => !held(issue) && !["branch", "done"].includes(ticketState(issue)));
+    const outsideBlockers = remaining.map((issue) => laneSnapshot.relations
+      .filter((relation) => relation.relatedIssueId === issue.id && !ids.has(relation.issueId) && relation.issueId !== spec.id)
+      .flatMap((relation) => {
+        const blocker = laneById.get(relation.issueId);
+        return blocker && isOpenIssue(blocker) ? [blocker.identifier] : [];
+      }));
+    const waitingOn = remaining.length && outsideBlockers.every((blockers) => blockers.length)
+      ? [...new Set(outsideBlockers.flat())].sort((a, b) => a.localeCompare(b, "en", { numeric: true })) : [];
     if (!lead.outside && landedAt === undefined && spec.state.type !== "completed" && inReview !== "merge-waits" && !stopped && noRunningThreads &&
-      !needs.length && lead.idleSince !== undefined && input.now - lead.idleSince >= 300_000) {
+      !needs.length && lead.asksOwner === true && lead.idleSince !== undefined && input.now - lead.idleSince >= 300_000) {
       needs.push({ threadId: lead.thread.id, kind: "waiting", text: "The Lead is waiting on you" });
     }
     return {
@@ -215,6 +225,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
         outcomeAt: Math.max(...[lead.thread, ...workers].map((thread) => thread.updatedAt ?? thread.createdAt)),
       } : {}),
       workingThreads: [lead.thread, ...workers].filter((thread) => isRunningThread(thread)).length,
+      ...(waitingOn.length && noRunningThreads && !stopped && landedAt === undefined ? { waitingOn } : {}),
       ...(outside ? { outside } : {}),
       ...(noRemote && !outside ? { localMerge } : {}),
       ...(needs.length ? { needs } : {}),

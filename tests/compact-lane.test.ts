@@ -39,6 +39,16 @@ const one = (root: Element, name: string) => {
   return found[0]!;
 };
 
+test("a lane shows its outside blockers in wide and narrow Lead chips", async () => {
+  for (const placement of ["page", "panel"] as const) {
+    const root = await view([lane("FIX-1", { workingThreads: 0, waitingOn: ["OUT-9", "FIX-10"] })], placement);
+    const leads = byClass(root, "sq-lead");
+    assert.ok(leads.length > 0);
+    for (const lead of leads) assert.match(visibleText(lead), /Waiting on OUT-9, FIX-10/);
+    assert.equal(byClass(root, "sq-needs").length, 0);
+  }
+});
+
 test("work items use the compact row at both widths, with their tag and live step but no ticket list", async () => {
   for (const placement of ["page", "panel"] as const) {
     const root = await view([lane("FIX-9", { kind: "work-item", title: "One standalone fix", tickets: [] })], placement);

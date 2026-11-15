@@ -24,6 +24,8 @@ const lane = z.object({
   stopped: z.boolean().optional(),
   /** Running Lead and child threads, independent of tracker ticket statuses. */
   workingThreads: z.number().int().nonnegative().optional(),
+  /** Open blockers outside this lane when every remaining ticket waits. */
+  waitingOn: z.array(z.string()).optional(),
   /** A no-remote lane whose tickets are ready for the Lead's local merge. */
   localMerge: z.boolean().optional(),
   /** Started outside Squadron: read-only, with no Stop, Resume or Merge. leadThreadId is its thread. */

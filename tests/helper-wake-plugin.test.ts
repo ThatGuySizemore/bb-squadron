@@ -4,6 +4,8 @@ import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { helperFixture, settle } from "./fixtures/helper-plugin.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { STOP_MESSAGE } from "../lib/lane-contract.js";
+import { end, openExternalBlocker } from "./fixtures/linear-mirror.js";
+import { needsYou } from "../lib/board-model.js";
 
 const epoch = Date.parse("2026-11-14T12:00:00Z");
 async function secondHelper(f: Awaited<ReturnType<typeof fixture>>) {
@@ -73,12 +75,15 @@ test("a stopped work item sends one Needs you line across repeated observations 
 });
 
 
-test("a normally completed quiet Lead becomes a Question at five minutes in the board and Helper batch", async (t) => {
+test("an idle Lead's latest plain-text owner question becomes Needs you and wakes its Helper", async (t) => {
   const f = await fixture(t);
   const lead = f.lead("one", "Lead");
   f.threads.set(lead.id, { ...lead, status: "idle", runtime: { displayStatus: "idle" }, updatedAt: epoch - 86_400_000 });
   f.events.set(lead.id, [{ id: "completed", threadId: lead.id, seq: 4, createdAt: epoch, scope: { kind: "thread" },
-    type: "turn/completed", data: { status: "completed", providerThreadId: null } }]);
+    type: "turn/completed", data: { status: "completed", providerThreadId: null } },
+  { id: "message", threadId: lead.id, seq: 3, createdAt: epoch, scope: { kind: "thread" },
+    type: "item/completed", data: { providerThreadId: "provider",
+      item: { id: "answer", type: "agentMessage", text: "Can you choose which wording we should ship?" } } }]);
   await f.startWatcher();
   const early = await f.board();
   assert.equal(early.lanes[0].state, "flying", "normal turn completion isn't a stop");
@@ -92,6 +97,48 @@ test("a normally completed quiet Lead becomes a Question at five minutes in the 
   assert.equal(f.sends().length, 1);
   assert.equal(f.sends()[0].input[0].text, "Fixture | Question | FIX-5 | The Lead is waiting on you | @thread:lead-one");
   await f.advance(120_000);
+  assert.equal(f.sends().length, 1);
+});
+
+test("idle status messages and unreadable question evidence never wake the Helper", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead");
+  f.threads.set(lead.id, { ...lead, status: "idle", runtime: { displayStatus: "idle" } });
+  f.events.set(lead.id, [{ id: "completed", threadId: lead.id, seq: 4, createdAt: epoch, scope: { kind: "thread" },
+    type: "turn/completed", data: { status: "completed", providerThreadId: null } },
+  { id: "message", threadId: lead.id, seq: 3, createdAt: epoch, scope: { kind: "thread" },
+    type: "item/completed", data: { providerThreadId: "provider",
+      item: { id: "answer", type: "agentMessage", text: "FIX-6 still waits for the reader files." } } }]);
+  await f.startWatcher(); await f.advance(480_000);
+  assert.equal((await f.board()).lanes[0].needs, undefined);
+  assert.equal(f.sends().length, 0);
+});
+
+test("an idle lane blocked outside itself stays quiet, but an explicit owner question still wakes its Helper", async (t) => {
+  const f = await fixture(t, { issues: () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-6" ? { ...node,
+      inverseRelations: { nodes: [{ id: "wait", type: "blocks", issue: openExternalBlocker, relatedIssue: node }], pageInfo: end },
+    } : node),
+  } } }) });
+  const lead = f.lead("one", "Lead");
+  f.threads.set(lead.id, { ...lead, status: "idle", runtime: { displayStatus: "idle" } });
+  const events = (text: string) => [
+    { id: "completed", threadId: lead.id, seq: 4, createdAt: epoch, scope: { kind: "thread" as const },
+      type: "turn/completed" as const, data: { status: "completed" as const, providerThreadId: null } },
+    { id: "message", threadId: lead.id, seq: 3, createdAt: epoch, scope: { kind: "thread" as const },
+      type: "item/completed" as const, data: { providerThreadId: "provider",
+        item: { id: "answer", type: "agentMessage" as const, text } } },
+  ];
+  f.events.set(lead.id, events("FIX-6 still waits for OUT-10."));
+  await f.startWatcher(); await f.advance(480_000);
+  let board = await f.board();
+  assert.deepEqual(board.lanes[0].waitingOn, ["OUT-10"]);
+  assert.deepEqual(needsYou(board), []);
+  assert.equal(f.sends().length, 0);
+  f.events.set(lead.id, events("Can you choose the wording while OUT-10 finishes?"));
+  await f.advance(30_000); await f.advance(120_000);
+  board = await f.board();
+  assert.deepEqual(needsYou(board).map(({ kind }) => kind), ["waiting"]);
   assert.equal(f.sends().length, 1);
 });
 

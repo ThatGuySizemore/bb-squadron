@@ -51,3 +51,19 @@ test("a verified launched reviewer shows no substitution", () => {
   const lane = laneWithReview({ providerId: "codex", model: "gpt-6.1-sol", effort: "high", serviceTier: "default" }).lanes[0] as Board["lanes"][number] & { reviewerLaunch?: import("../lib/board-model.js").LaunchView };
   assert.equal(lane.reviewerLaunch?.verification, "verified");
 });
+
+test("an ordinary Flying lane flags a reviewer that ran on a different model, through the real derive path", async () => {
+  const board = laneWithReview({ providerId: "codex", model: "gpt-fallback", effort: "medium", serviceTier: "priority" });
+  assert.equal(board.lanes[0]!.state, "flying", "the lane is not in review");
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { JSDOM } = await import("jsdom");
+  const { BoardView } = await import("../board/Board.js");
+  for (const placement of ["page", "panel"] as const) {
+    const html = renderToStaticMarkup(createElement(BoardView, { board, placement, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
+    const chips = [...new JSDOM(html).window.document.querySelectorAll(".sq-ai")].filter((chip) => chip.getAttribute("title")?.includes("instead of the requested gpt-6.1-sol"));
+    assert.ok(chips.length > 0, `the Flying lane shows its reviewer's substitution (${placement})`);
+    assert.equal(chips[0]!.getAttribute("data-substituted"), "true");
+  }
+});

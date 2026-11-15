@@ -585,7 +585,7 @@ function LaneRow({ lane, dispatch, landing, demo, acting }: { lane: Lane; dispat
         {lane.tickets.length ? <span className="sq-lane-count sq-num">{inBranch(lane)}/{lane.tickets.length} in branch</span> : null}
         <div className="sq-lane-row-end">
           {lane.state !== "flying" ? <span className="sq-lane-state" data-lane={lane.state}><Term text={LANE_LABEL[lane.state]} /></span> : null}
-          {lane.state === "spec-review" ? <ReviewerChip lane={lane} demo={demo} compact /> : null}
+          {lane.state === "spec-review" || (lane.reviewerLaunch && !demo) ? <ReviewerChip lane={lane} demo={demo} compact /> : null}
           {lane.pr ? <PrChip pr={lane.pr} /> : null}
           {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
           {lane.outside ? null : <LaneActions lane={lane} dispatch={dispatch} demo={demo} acting={acting} />}
@@ -697,7 +697,7 @@ function SortieLine({ lane, dispatch, landing, demo, acting = null }: { lane: La
           </span> : null}
           <span className="sq-time sq-num">{formatMinutes(lane.minutes)}</span>
         </div>
-        {lane.state === "spec-review" ? <ReviewerChip lane={lane} demo={demo} /> : null}
+        {lane.state === "spec-review" || (lane.reviewerLaunch && !demo) ? <ReviewerChip lane={lane} demo={demo} /> : null}
         {lane.pr ? <PrChip pr={lane.pr} /> : null}
         {lane.outside ? <span className="sq-outside">Started outside Squadron</span> : null}
         <span className="sq-branch">{lane.branch}</span>

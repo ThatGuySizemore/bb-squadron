@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
+import { createFakePluginHost, makeThreadResponse } from "@get-bb/plugin-sdk/testing";
+import plugin from "../server.js";
 
 test("the header starts and opens the Helper, offers replacement and selection, and restores Start Helper when it disappears", async () => {
   await import("./fixtures/app-runtime.js");
@@ -75,6 +77,70 @@ test("the header starts and opens the Helper, offers replacement and selection, 
     assert.equal(reason(), "Choose a project first.");
   } finally {
     await act(async () => root.unmount());
+    runtime.useRpc = oldRpc;
+    browser.close();
+    for (const [key, descriptor] of Object.entries(previous)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);
+    }
+  }
+});
+
+test("switching boards reads and opens only that project's Helper, including a switch during a pending action", async () => {
+  await import("./fixtures/app-runtime.js");
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { pretendToBeVisual: true });
+  const browser = dom.window;
+  const globals = { window: browser, document: browser.document, HTMLElement: browser.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true };
+  const previous = Object.fromEntries(Object.keys(globals).map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, globals);
+  const threads = new Map(["one", "two"].map((projectId) => [projectId, makeThreadResponse({ id: projectId, projectId, title: projectId })]));
+  const { bb, harness } = createFakePluginHost({ pluginId: "squadron", sdk: { threads: {
+    get: async ({ threadId }) => threads.get(threadId)!, send: async () => ({ ok: true, delivery: "sent" }),
+  } } });
+  await plugin(bb);
+  for (const projectId of ["one", "two"]) await harness.behavior.callRpc("helper.use", { projectId, threadId: projectId });
+  const runtime = (globalThis as any).__bbPluginRuntime.pluginSdkApp;
+  const oldRpc = runtime.useRpc;
+  let finishRead!: () => void;
+  let delay: Promise<void> | undefined;
+  const rpc = { call: async (method: string, input: any) => {
+    if (delay) await delay;
+    return harness.behavior.callRpc(method, input);
+  } };
+  runtime.useRpc = () => rpc;
+  const { createElement, act } = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const { HelperControl } = await import("../board/HelperControl.js");
+  const container = browser.document.getElementById("root")!;
+  const root = createRoot(container);
+  const opened: string[] = [];
+  const show = (projectId: string | null) => root.render(createElement(HelperControl, { projectId, openThread: (id: string) => opened.push(id) }));
+  const main = () => container.querySelector<HTMLButtonElement>("button")!;
+  try {
+    await act(async () => show("one"));
+    await act(async () => main().click());
+    assert.deepEqual(opened, ["one"]);
+    delay = new Promise<void>((resolve) => { finishRead = resolve; });
+    await act(async () => show("two"));
+    assert.equal(main().disabled, true, "the former project's Helper is unavailable while this project loads");
+    assert.equal(container.querySelector('[aria-label="Helper options"]'), null);
+    await act(async () => finishRead());
+    delay = undefined;
+    await act(async () => main().click());
+    assert.deepEqual(opened, ["one", "two"]);
+    delay = new Promise<void>((resolve) => { finishRead = resolve; });
+    await act(async () => main().click());
+    await act(async () => show("one"));
+    await act(async () => finishRead());
+    delay = undefined;
+    assert.deepEqual(opened, ["one", "two"], "late actions in the previous project never open its Helper on this board");
+    await act(async () => main().click());
+    assert.equal(opened.at(-1), "one");
+    await act(async () => show(null));
+    assert.equal(main().disabled, true);
+    assert.equal(container.querySelector('[aria-label="Helper options"]'), null);
+  } finally {
+    await act(async () => root.unmount());
+    await harness.lifecycle.dispose();
     runtime.useRpc = oldRpc;
     browser.close();
     for (const [key, descriptor] of Object.entries(previous)) {

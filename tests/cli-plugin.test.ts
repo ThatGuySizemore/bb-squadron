@@ -64,14 +64,39 @@ async function setup(t: import("node:test").TestContext, options: Parameters<typ
   return { harness, native };
 }
 
-test("status lists every project with short owner-visible counts, even from a project thread", async (t) => {
+test("status defaults to the calling thread's project with short owner-visible counts", async (t) => {
   const { harness } = await setup(t);
   harness.sdk.stub("projects.list", async () => ["one", "two"].map((id) => ({
     id: `proj-${id}`, name: id === "one" ? "Fixture" : "Second", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
   })));
   assert.deepEqual(await harness.behavior.runCli(["status"], { projectId: "proj-one" }), {
+    exitCode: 0, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 0 | Needs you 0\n",
+  });
+});
+
+test("status --all lists every project even from a project thread", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("projects.list", async () => ["one", "two"].map((id) => ({
+    id: `proj-${id}`, name: id === "one" ? "Fixture" : "Second", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
+  })));
+  assert.deepEqual(await harness.behavior.runCli(["status", "--all"], { projectId: "proj-one" }), {
     exitCode: 0, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 0 | Needs you 0\nSecond | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 0 | Needs you 0\n",
   });
+});
+
+test("read commands require an explicit selection without caller context and reject conflicting selectors", async (t) => {
+  const { harness } = await setup(t);
+  harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
+  for (const command of ["status", "needs"]) {
+    const missing = await harness.behavior.runCli([command]);
+    assert.equal(missing.exitCode, 1);
+    assert.equal(missing.stdout, "");
+    assert.match(missing.stderr, /Choose a project with --project or use --all/);
+    const conflict = await harness.behavior.runCli([command, "--all", "--project", "Fixture"], { projectId: "proj-one" });
+    assert.equal(conflict.exitCode, 1);
+    assert.equal(conflict.stdout, "");
+    assert.match(conflict.stderr, /Use either --project or --all/);
+  }
 });
 
 test("status narrows by project ID or unique name and explains unknown or ambiguous names", async (t) => {
@@ -83,7 +108,7 @@ test("status narrows by project ID or unique name and explains unknown or ambigu
   ]);
   const expected = "Fixture | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 0 | Needs you 0\n";
   for (const project of ["proj-one", "Fixture"]) {
-    assert.deepEqual(await harness.behavior.runCli(["status", "--project", project]), { exitCode: 0, stdout: expected, stderr: "" });
+    assert.deepEqual(await harness.behavior.runCli(["status", "--project", project], { projectId: "proj-two" }), { exitCode: 0, stdout: expected, stderr: "" });
   }
   for (const [project, reason] of [["missing", 'No project matches "missing".'], ["Shared", 'More than one project matches "Shared". Use its project ID.']]) {
     const result = await harness.behavior.runCli(["status", "--project", project]);
@@ -96,12 +121,12 @@ test("status narrows by project ID or unique name and explains unknown or ambigu
 test("needs prints one short line when nothing needs you, across all or one project", async (t) => {
   const { harness } = await setup(t);
   harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
-  for (const args of [["needs"], ["needs", "--project", "Fixture"]]) {
+  for (const args of [["needs", "--all"], ["needs", "--project", "Fixture"]]) {
     assert.deepEqual(await harness.behavior.runCli(args), { exitCode: 0, stdout: "Nothing needs you.\n", stderr: "" });
   }
 });
 
-test("needs lists each project's open questions with the spec, short text and thread link", async (t) => {
+test("needs defaults to its caller and lets explicit selectors read other projects", async (t) => {
   const { harness, native } = await setup(t);
   harness.sdk.stub("projects.list", async () => ["one", "two"].map((id) => ({
     id: `proj-${id}`, name: id === "one" ? "Fixture" : "Second", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
@@ -110,8 +135,15 @@ test("needs lists each project's open questions with the spec, short text and th
   harness.sdk.stub("threads.list", async (args: { parentThreadId?: string }) => [...native.threads.values()]
     .filter((thread) => !args?.parentThreadId || thread.parentThreadId === args.parentThreadId)
     .map((thread) => ({ ...thread, hasPendingInteraction: true, environmentBranchName: "spec/fix-5" })));
-  assert.deepEqual(await harness.behavior.runCli(["needs"]), {
-    exitCode: 0, stderr: "", stdout: "Fixture | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:thr_lead_1\n",
+  for (const [args, projectId] of [
+    [["needs"], "proj-one"], [["needs", "--all"], "proj-two"], [["needs", "--project", "Fixture"], "proj-two"],
+  ] as const) {
+    assert.deepEqual(await harness.behavior.runCli([...args], { projectId }), {
+      exitCode: 0, stderr: "", stdout: "Fixture | Question | FIX-5 | The Lead for FIX-5 is waiting on you. | @thread:thr_lead_1\n",
+    });
+  }
+  assert.deepEqual(await harness.behavior.runCli(["needs"], { projectId: "proj-two" }), {
+    exitCode: 0, stderr: "", stdout: "Nothing needs you.\n",
   });
   assert.deepEqual(await harness.behavior.runCli(["needs", "--project", "Second"]), {
     exitCode: 0, stderr: "", stdout: "Nothing needs you.\n",
@@ -121,7 +153,7 @@ test("needs lists each project's open questions with the spec, short text and th
 test("CLI output keeps project names on one line", async (t) => {
   const { harness } = await setup(t);
   harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture\nProject", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
-  assert.deepEqual(await harness.behavior.runCli(["status"]), {
+  assert.deepEqual(await harness.behavior.runCli(["status", "--all"]), {
     exitCode: 0, stderr: "", stdout: "Fixture Project | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 0 | Needs you 0\n",
   });
 });
@@ -135,10 +167,10 @@ test("an unreadable project doesn't hide other projects or pretend nothing needs
     if (args?.projectId === "proj-two") throw new Error("private host error");
     return [];
   });
-  assert.deepEqual(await harness.behavior.runCli(["status"]), {
+  assert.deepEqual(await harness.behavior.runCli(["status", "--all"]), {
     exitCode: 1, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 0 | Needs you 0\nOffline | Tracker: Couldn't read this project. Make sure its machine is online. | Ready ? | Shaping ? | Flying ? | Landed today ? | Needs you ?\n",
   });
-  assert.deepEqual(await harness.behavior.runCli(["needs"]), {
+  assert.deepEqual(await harness.behavior.runCli(["needs", "--all"]), {
     exitCode: 1, stderr: "", stdout: "Offline | Setup | Project | Couldn't read this project. Make sure its machine is online. | /plugins/squadron/board\n",
   });
 });
@@ -157,7 +189,7 @@ test("needs names a waiting merge in owner words and links its PR", async (t) =>
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
     number: 7, state: "open", url: "https://github.com/fixture/repo/pull/7", updatedAt: new Date().toISOString(), checks: { state: "passing" },
   } } }));
-  assert.deepEqual(await harness.behavior.runCli(["needs"]), {
+  assert.deepEqual(await harness.behavior.runCli(["needs", "--all"]), {
     exitCode: 0, stderr: "", stdout: "Fixture | Merge waiting | FIX-5 | PR #7 passed its checks and waits for your merge. | https://github.com/fixture/repo/pull/7\n",
   });
 });
@@ -174,7 +206,7 @@ test("status counts Shaping, Flying and only today's landed specs from the board
   } } }) });
   harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
-  assert.deepEqual(await harness.behavior.runCli(["status"]), {
+  assert.deepEqual(await harness.behavior.runCli(["status", "--all"]), {
     exitCode: 0, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 1 | Shaping 1 | Flying 1 | Landed today 0 | Needs you 0\n",
   });
   delivered = true; // The tracker records completion before the merged PR is observed.
@@ -182,7 +214,7 @@ test("status counts Shaping, Flying and only today's landed specs from the board
     harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
       number: 7, state: "merged", url: "https://github.com/fixture/repo/pull/7", updatedAt, checks: { state: "passing" },
     } } }));
-    assert.deepEqual(await harness.behavior.runCli(["status"]), {
+    assert.deepEqual(await harness.behavior.runCli(["status", "--all"]), {
       exitCode: 0, stderr: "", stdout: `Fixture | Tracker: Up to date with Linear. | Ready 1 | Shaping 1 | Flying 0 | Landed today ${count} | Needs you 0\n`,
     });
   }
@@ -195,7 +227,7 @@ test("status counts a landed spec with remaining open tickets as Ready and keeps
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
     number: 7, state: "merged", url: "https://github.com/fixture/repo/pull/7", updatedAt: new Date().toISOString(), checks: { state: "passing" },
   } } }));
-  assert.deepEqual(await harness.behavior.runCli(["status"]), {
+  assert.deepEqual(await harness.behavior.runCli(["status", "--all"]), {
     exitCode: 0, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 2 | Shaping 0 | Flying 0 | Landed today 1 | Needs you 0\n",
   });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as import("../lib/board-model.js").Board;
@@ -211,10 +243,10 @@ test("status counts a landed spec with remaining open tickets as Ready and keeps
 test("failed tracker reads show unknown counts and a Setup item instead of a false empty result", async (t) => {
   const { harness } = await setup(t, { issues: () => new Response("unavailable", { status: 503 }) });
   harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
-  const status = await harness.behavior.runCli(["status"]);
+  const status = await harness.behavior.runCli(["status", "--all"]);
   assert.equal(status.exitCode, 1);
   assert.match(status.stdout, /Fixture \| Tracker: .+ \| Ready \? \| Shaping \? \| Flying 0 \| Landed today 0 \| Needs you 1\n$/);
-  const needs = await harness.behavior.runCli(["needs"]);
+  const needs = await harness.behavior.runCli(["needs", "--all"]);
   assert.equal(needs.exitCode, 1);
   assert.match(needs.stdout, /^Fixture \| Setup \| Project \| .+ \| \/plugins\/squadron\/board\n$/);
 });
@@ -224,10 +256,10 @@ test("needs reports a stopped lane and status includes its Needs you count", asy
   harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
-  assert.deepEqual(await harness.behavior.runCli(["needs"]), {
+  assert.deepEqual(await harness.behavior.runCli(["needs", "--all"]), {
     exitCode: 0, stderr: "", stdout: "Fixture | Stopped | FIX-5 | The lane stopped. | @thread:thr_lead_1\n",
   });
-  assert.deepEqual(await harness.behavior.runCli(["status"]), {
+  assert.deepEqual(await harness.behavior.runCli(["status", "--all"]), {
     exitCode: 0, stderr: "", stdout: "Fixture | Tracker: Up to date with Linear. | Ready 1 | Shaping 0 | Flying 1 | Landed today 0 | Needs you 1\n",
   });
 });
@@ -242,7 +274,7 @@ test("CLI help, usage errors and an empty install stay short and don't run lane 
   for (const command of ["helper use", "start", "stop", "resume", "merge"]) {
     assert.ok(help.stdout.includes(`bb squadron ${command}`), `${command} appears in help`);
   }
-  assert.deepEqual(await harness.behavior.runCli(["status"]), { exitCode: 0, stdout: "No projects.\n", stderr: "" });
+  assert.deepEqual(await harness.behavior.runCli(["status", "--all"]), { exitCode: 0, stdout: "No projects.\n", stderr: "" });
   for (const args of [["needs", "--project"], ["status", "--unknown"], ["helper", "use"], ["start", "FIX-5"]]) {
     assert.equal((await harness.behavior.runCli(args)).exitCode, 1);
   }

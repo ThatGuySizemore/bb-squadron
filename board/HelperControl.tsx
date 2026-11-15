@@ -4,8 +4,12 @@ import type { Helper, helperContract } from "../lib/helper-contract.js";
 import { Term } from "./Term.js";
 import "./helper.css";
 
-/** The same install-wide Helper from every project's header. */
+/** The selected project's Helper. */
 export function HelperControl({ projectId, openThread }: { projectId: string | null; openThread: (threadId: string) => void }) {
+  return <ProjectHelperControl key={projectId} projectId={projectId} openThread={openThread} />;
+}
+
+function ProjectHelperControl({ projectId, openThread }: { projectId: string | null; openThread: (threadId: string) => void }) {
   const rpc = useRpc<typeof helperContract>();
   const [helper, setHelper] = useState<Helper | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -22,13 +26,16 @@ export function HelperControl({ projectId, openThread }: { projectId: string | n
   const version = useRef(0);
   const active = useRef(false);
   const choices = useRef(0);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     let current = true;
     const read = async () => {
+      if (!projectId) return;
       if (document.visibilityState === "hidden") return;
       const request = ++version.current;
       try {
-        const value = await rpc.call("helper.read", null);
+        const value = await rpc.call("helper.read", { projectId });
         if (current && request === version.current && !active.current) { setHelper(value); setLoaded(true); setError(null); }
       } catch { if (current && request === version.current && !active.current) { setLoaded(false); setError("Couldn't read the Helper. Try again when its machine is online."); } }
     };
@@ -65,10 +72,11 @@ export function HelperControl({ projectId, openThread }: { projectId: string | n
     active.current = true; version.current++; setBusy(true); setError(null);
     try {
       const selected = await action();
+      if (!mounted.current) return;
       setHelper(selected); setLoaded(true); setMenu(false); setChoosing(false);
       openThread(selected.threadId);
-    } catch (error) { setError(error instanceof Error ? error.message : "Couldn't open the Helper. Try again."); }
-    finally { active.current = false; setBusy(false); }
+    } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : "Couldn't open the Helper. Try again."); }
+    finally { active.current = false; if (mounted.current) setBusy(false); }
   };
   const start = (fresh = false) => {
     if (!projectId) return;
@@ -78,8 +86,8 @@ export function HelperControl({ projectId, openThread }: { projectId: string | n
     if (!projectId || active.current) return;
     setChoosing(true); setThreads(null); setError(null);
     const request = ++choices.current;
-    try { const list = await rpc.call("helper.threads", { projectId }); if (request === choices.current) setThreads(list); }
-    catch { if (request === choices.current) setError("Couldn't read this project's threads. Close this menu and try again."); }
+    try { const list = await rpc.call("helper.threads", { projectId }); if (mounted.current && request === choices.current) setThreads(list); }
+    catch { if (mounted.current && request === choices.current) setError("Couldn't read this project's threads. Close this menu and try again."); }
   };
   const disabledReason = busy ? "Opening the Helper…" : !projectId ? "Choose a project first."
     : !loaded ? (error ? "Waiting for the Helper's machine." : "Reading the Helper…") : null;

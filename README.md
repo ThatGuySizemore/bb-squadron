@@ -10,6 +10,14 @@ Status: being designed. The decisions so far are in [`docs/adr/`](docs/adr/) and
 
 Project setup is documented in [Squadron settings](docs/settings.md), including the optional Tracker override and Linear-only Status mapping.
 
+## Helper and project commands
+
+Each BB project can have one optional Helper thread. Its board's Helper button starts, opens or replaces that project's Helper. `bb squadron helper use` makes the calling thread the Helper for its own project; `--project` selects a project explicitly. A thread can be Helper for only one project at a time, so assigning it elsewhere moves it. On upgrade, the previous shared Helper stays with its thread's project.
+
+Squadron sends wake messages and daily summaries only to that project's Helper. A project without a Helper sends nothing; Needs you stays on its board.
+
+`bb squadron status` and `bb squadron needs` show the calling thread's project by default. Use `--project <ID or unique name>` to select another, or `--all` to see every project. Outside a project thread, one of those selectors is required. Use only one selector at a time.
+
 ## Licence
 
 MIT. Code adapted from other plugins keeps its notice in `THIRD_PARTY_NOTICES.md`.

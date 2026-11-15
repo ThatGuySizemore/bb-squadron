@@ -8,7 +8,7 @@ import type { Board } from "../../lib/board-model.js";
 import { workspace } from "./board-workspace.js";
 
 export async function settle() { for (let i = 0; i < 40; i++) await setImmediate(); }
-export async function helperFixture(t: TestContext, epoch: number, options: Parameters<typeof workspace>[0] = {}, storedNotifications?: unknown) {
+export async function helperFixture(t: TestContext, epoch: number, options: Parameters<typeof workspace>[0] = {}, storedNotifications?: unknown, storedSummary?: unknown) {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: epoch });
   const linear = workspace(options);
   t.mock.method(globalThis, "fetch", linear.fetch);
@@ -40,6 +40,7 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
         setupFiles: ["docs/agents/issue-tracker.md", "docs/agents/triage-labels.md", "docs/agents/domain.md"], regularSkillFiles: (input as { skillPaths: string[] }).skillPaths },
   });
   if (storedNotifications !== undefined) await fake.bb.storage.kv.set("helper.notifications.v1", storedNotifications);
+  if (storedSummary !== undefined) await fake.bb.storage.kv.set("helper.summary.v1", storedSummary);
   let harness = fake.harness;
   t.after(async () => { await harness.lifecycle.dispose(); t.mock.timers.reset(); });
   await plugin(fake.bb);

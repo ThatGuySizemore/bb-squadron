@@ -1,5 +1,5 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
-import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
+import { cleanWaitTarget, laneContract, LOCAL_MERGE_MESSAGE, waitMessage, RESUME_MESSAGE, STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
 import { deriveBoard } from "./board-derive.js";
 import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
@@ -166,6 +166,10 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     merge,
     stop: (projectId: string, specId: string, reason?: "two-strikes") =>
       tell(projectId, specId, reason === "two-strikes" ? TWO_STRIKES_STOP_MESSAGE : STOP_MESSAGE, "steer-if-active", "stop"),
+    wait: (projectId: string, specId: string, on: string) => {
+      if (!cleanWaitTarget(on)) throw new Error("Say what the lane is waiting on.");
+      return tell(projectId, specId, waitMessage(on), "steer-if-active", "wait");
+    },
     resume: (projectId: string, specId: string) => tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume"),
     start(projectId: string, specId: string) {
       return startLane(projectId, specId, "owner").then((result): Promise<{ threadId: string }> | { threadId: string } => {
@@ -199,4 +203,4 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   return { ...actions, startAutomatic: startLane };
 }
 
-export type LaneActions = Pick<ReturnType<typeof registerLaneStart>, "start" | "stop" | "resume" | "merge">;
+export type LaneActions = Pick<ReturnType<typeof registerLaneStart>, "start" | "stop" | "wait" | "resume" | "merge">;

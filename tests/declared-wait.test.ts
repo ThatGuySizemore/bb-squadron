@@ -74,7 +74,8 @@ test("a declared wait clears when the named lane lands", async (t) => {
   idle(f, lead.id);
   const board = await f.board();
   assert.equal(board.lanes[0].waitingOn, undefined);
-  assert.equal(board.lanes[0].stopped, true, "an idle Lead whose wait is over reads as it does today");
+  assert.equal(board.lanes[0].stopped, false, "a Lead whose wait is over reads as any Lead that ended a normal turn");
+  assert.deepEqual(needsYou(board), []);
 });
 
 test("a declared wait clears when the Lead starts work again", async (t) => {
@@ -115,4 +116,32 @@ test("wait needs a reason and the Stop message never reads as a wait", async (t)
   const blank = await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "  "], { projectId: "one", threadId: lead.id });
   assert.equal(blank.exitCode, 1);
   assert.match(blank.stderr, /waiting on/i);
+});
+
+test("a declared wait clears once its closed lane has left the tracker snapshot", async (t) => {
+  const f = await helperFixture(t, epoch, { issues: () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.filter((node) => node.identifier !== "FIX-9") } } }) });
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "FIX-9"], { projectId: "one", threadId: lead.id });
+  idle(f, lead.id);
+  assert.equal((await f.board()).lanes[0].waitingOn, undefined, "a team issue the reader pruned is closed");
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "OUT-77"], { projectId: "one", threadId: lead.id });
+  assert.deepEqual((await f.board()).lanes[0].waitingOn, ["OUT-77"], "an issue of another team can't be judged, so the wait stays");
+});
+
+test("an owner question from a waiting Lead still reaches Needs you and wakes the Helper", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  const reply = { id: "message", threadId: lead.id, seq: 4.5, createdAt: epoch, scope: { kind: "thread" as const },
+    type: "item/completed" as const, data: { providerThreadId: "provider",
+      item: { id: "answer", type: "agentMessage" as const, text: "Holding for FIX-9.\nNeeds you: choose the wording" } } };
+  recordControl(f, lead.id, [reply as never]);
+  await f.harness.behavior.runCli(["wait", "FIX-5", "--on", "FIX-9"], { projectId: "one", threadId: lead.id });
+  idle(f, lead.id);
+  await f.startWatcher(); await f.advance(300_000); await f.advance(30_000); await f.advance(120_000);
+  const board = await f.board();
+  assert.deepEqual(board.lanes[0].waitingOn, ["FIX-9"]);
+  assert.deepEqual(needsYou(board).map(({ kind }) => kind), ["waiting"]);
+  assert.equal(f.sends().filter((send) => send.threadId === "helper").length, 1);
 });

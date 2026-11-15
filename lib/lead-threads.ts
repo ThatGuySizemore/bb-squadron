@@ -192,7 +192,7 @@ async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbP
       // A wait is steered into the Lead's own turn, so no turn starts after it. A later turn means work began again.
       const declared = request.data.input?.flatMap((part) => part.type === "text" ? [readWaitTarget(part.text)] : []).find((target) => target !== null);
       if (declared && end?.type === "turn/completed" && end.data.status === "completed" && (started[0]?.seq ?? -1) < request.seq)
-        return { declaredWait: declared };
+        return { declaredWait: declared, idleSince: end.createdAt }; // an owner question in the reply still counts
     }
     if (end?.type === "turn/completed" && end.data.status === "completed" && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
   } catch { /* Unreadable lifecycle isn't evidence of a normal idle Lead. */ }

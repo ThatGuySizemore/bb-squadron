@@ -184,8 +184,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // failed or unreadable turn keeps the Stopped fallback (ADR-0011).
     const noRunningThreads = [lead.thread, ...workers].every((thread) => !isRunningThread(thread));
     // A declared wait is over once the lane it names has closed. A reason that names no lane stays until the Lead runs again.
+    // The reader prunes closed issues, so a missing issue of this project's team is a closed one.
     const named = lead.declaredWait ? snapshot.issues.find((issue) => issue.identifier.toLowerCase() === lead.declaredWait!.toLowerCase()) : undefined;
-    const declaredWait = lead.declaredWait && !(named && !isOpenIssue(named)) ? lead.declaredWait : undefined;
+    const teamKey = (identifier: string) => /^([A-Za-z][A-Za-z0-9]*)-\d+$/.exec(identifier)?.[1].toLowerCase();
+    const sameTeam = lead.declaredWait !== undefined && teamKey(lead.declaredWait) !== undefined && teamKey(lead.declaredWait) === teamKey(spec.identifier);
+    const declaredWait = lead.declaredWait && !(named ? !isOpenIssue(named) : sameTeam) ? lead.declaredWait : undefined;
     const stopped = noRunningThreads && ((lead.idleSince === undefined && declaredWait === undefined) || needs.some((need) => need.kind !== "waiting"));
     const children = [...workers].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const matched = new Set<string>();

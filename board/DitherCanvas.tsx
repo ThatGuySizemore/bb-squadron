@@ -3,7 +3,7 @@
 // leaves it when it unmounts or scrolls off screen.
 import { useEffect, useRef, type CSSProperties } from "react";
 import { createDitherRenderer, type DitherRenderer, type DitherTarget } from "../lib/dither-renderer.js";
-import { airstream, burst, BURST_SECONDS, createSurface, formation, needsYou, packInk, pegFill, plate, type Painter, type Surface } from "../lib/dither.js";
+import { airstream, burst, BURST_SECONDS, createSurface, formation, needsYou, packInk, pegFill, plate, sectionRule, type Painter, type Surface } from "../lib/dither.js";
 
 /** What a canvas draws. Inks are read from the board's CSS, so they follow the theme. */
 export type Fx =
@@ -11,6 +11,7 @@ export type Fx =
   | { kind: "peg"; state: "working" | "question" | "review" | "branch" | "done" | "failed" }
   | { kind: "needs-you" }
   | { kind: "plate" }
+  | { kind: "section-rule" }
   | { kind: "formation"; slots: number; lit: number }
   | { kind: "burst" };
 
@@ -20,7 +21,8 @@ function painterFor(fx: Fx, ink: Inks): Painter {
   switch (fx.kind) {
     case "airstream": return airstream({ pace: fx.pace, ink: ink("--sq-sky") });
     case "needs-you": return needsYou({ ink: ink("--sq-amber") });
-    case "plate": return plate({ ink: ink("--sq-green"), level: 0.2 });
+    case "plate": return plate({ ink: ink("--sq-green") });
+    case "section-rule": return sectionRule({ ink: ink("--sq-rule-ink") });
     case "formation": return formation({ slots: fx.slots, lit: fx.lit, on: ink("--sq-sky"), off: ink("--border") });
     case "burst": return burst({ ink: ink("--sq-green") });
     case "peg":
@@ -43,7 +45,8 @@ function motionFor(fx: Fx): Pick<DitherTarget, "animated" | "stillAt" | "until">
     case "formation": return { animated: fx.lit > 0, stillAt: 0.8 };
     case "burst": return { animated: true, stillAt: BURST_SECONDS, until: BURST_SECONDS };
     case "peg": return { animated: fx.state === "working", stillAt: 1.2 };
-    case "plate": return { animated: false, stillAt: 0 };
+    case "plate":
+    case "section-rule": return { animated: false, stillAt: 0 };
   }
 }
 

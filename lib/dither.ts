@@ -172,20 +172,31 @@ export function pegFill({ ink, base, amp = 0, speed = 0, edge }: { ink: number; 
 export function needsYou({ ink }: { ink: number }): Painter {
   return (s, t) => {
     const breath = 0.5 + 0.5 * Math.sin((t * Math.PI * 2) / 3.6);
-    const depth = 7 + 3 * breath;
+    const depth = 10 + 4 * breath;
     field(s, ink, (x, y) => {
-      const edge = Math.min(y, s.cssH - 1 - y, x * 0.6, (s.cssW - 1 - x) * 0.6);
+      const edge = Math.min(y, s.cssH - 1 - y, x * 1.15, (s.cssW - 1 - x) * 1.15);
       if (edge > depth + 2) return 0;
       const n = fbm((x - t * 14) / 40, y / 9 + t * 0.08);
       const falloff = Math.max(0, 1 - edge / depth);
-      return falloff * falloff * (0.22 + 0.3 * breath + 0.35 * (n - 0.4));
+      return falloff * falloff * (0.36 + 0.3 * breath + 0.4 * (n - 0.4));
     });
   };
 }
 
-/** A still plate: a flat dither level. */
-export function plate({ ink, level }: { ink: number; level: number }): Painter {
-  return (s) => field(s, ink, () => level);
+/** A still Landed stamp: green edge grain with a clean centre for the number. */
+export function plate({ ink }: { ink: number }): Painter {
+  return (s) => field(s, ink, (x, y) => {
+    const edge = Math.min(y, s.cssH - 1 - y, x, s.cssW - 1 - x);
+    const falloff = Math.max(0, 1 - edge / 7);
+    return falloff * falloff * 0.85;
+  });
+}
+
+/** A section separator: 2px square dots on an 8px pitch, as in the Runway comp. */
+export function sectionRule({ ink }: { ink: number }): Painter {
+  return (s) => {
+    for (let x = 0; x < s.cssW; x += 8) rect(s, ink, x, 0, 2, 2);
+  };
 }
 
 /**

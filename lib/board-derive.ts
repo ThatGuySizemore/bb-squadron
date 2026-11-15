@@ -192,7 +192,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // Stopped needs recorded evidence: a Stop control, an interrupted or failed turn, or a failed thread. A history Squadron couldn't read isn't any of those.
     const stopped = noRunningThreads && ((lead.idleSince === undefined && declaredWait === undefined && !lead.unreadable) || needs.some((need) => need.kind !== "waiting"));
     if (lead.unreadable && !stopped && noRunningThreads) {
-      needs.push({ threadId: lead.thread.id, kind: "blocked", text: `Squadron couldn't read the Lead for ${spec.identifier}. Open it to check.` });
+      needs.push({ threadId: lead.thread.id, kind: "blocked", text: `Squadron couldn't read the Lead for ${spec.identifier} (${lead.unreadable}). Open it to check.` });
     }
     const children = [...workers].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const matched = new Set<string>();

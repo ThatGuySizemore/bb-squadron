@@ -258,6 +258,8 @@ test("needs reports a stopped lane and status includes its Needs you count", asy
   harness.sdk.stub("projects.list", async () => [{ id: "proj-one", name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0 }]);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
+  // An idle Lead with no recorded history at all: nothing was read, so nothing says it ran.
+  harness.sdk.stub("threads.events.list", async () => []);
   assert.deepEqual(await harness.behavior.runCli(["needs", "--all"]), {
     exitCode: 0, stderr: "", stdout: "Fixture | Stopped | FIX-5 | The lane stopped. | @thread:thr_lead_1\n",
   });

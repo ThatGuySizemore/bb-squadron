@@ -100,7 +100,7 @@ test("a declared wait clears when the Lead starts work again", async (t) => {
   assert.equal(board.lanes[0].waitingOn, undefined);
 });
 
-test("an idle Lead with no wait and no question behaves as before", async (t) => {
+test("an idle Lead with no wait, no question and no history behaves as before", async (t) => {
   const f = await fixture(t);
   const lead = f.lead("one", "Lead FIX-5");
   idle(f, lead.id);
@@ -108,6 +108,29 @@ test("an idle Lead with no wait and no question behaves as before", async (t) =>
   assert.equal(board.lanes[0].stopped, true);
   assert.equal(board.lanes[0].waitingOn, undefined);
   assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [{ kind: "stopped", text: "The lane stopped." }]);
+});
+
+test("an idle Lead whose history holds no finished turn is surfaced as unread, not Stopped", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  f.events.set(lead.id, [row(lead.id, 2, "request", "Go."), { id: "u", threadId: lead.id, seq: 3, createdAt: epoch, scope: { kind: "thread" },
+    type: "thread/tokenUsage/updated", data: {} }] as never);
+  idle(f, lead.id);
+  const board = await f.board();
+  assert.equal(board.lanes[0].stopped, false);
+  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })),
+    [{ kind: "blocked", text: "Squadron couldn't read the Lead for FIX-5 (no finished turn is recorded). Open it to check." }]);
+});
+
+test("an interrupted last turn is recorded evidence and still reads Stopped", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  f.events.set(lead.id, [{ id: "i", threadId: lead.id, seq: 2, createdAt: epoch, scope: { kind: "thread" }, type: "system/thread/interrupted", data: {} },
+    row(lead.id, 1, "started")] as never);
+  idle(f, lead.id);
+  const board = await f.board();
+  assert.equal(board.lanes[0].stopped, true);
+  assert.deepEqual(needsYou(board).map(({ text }) => text), ["The lane stopped."]);
 });
 
 test("wait needs a reason and the Stop message never reads as a wait", async (t) => {
@@ -287,7 +310,7 @@ test("a Stop followed by a peer message that only gets a reply stays Stopped wit
   const board = await f.board();
   assert.equal(board.lanes[0].stopped, true);
   assert.equal(board.lanes[0].state, "stopped");
-  assert.deepEqual(needsYou(board).map(({ text }) => text), ["Stopped after two strikes, wants a new go."]);
+  assert.deepEqual(needsYou(board).map(({ text }) => text), ["Stopped after two strikes, wants a new go"]);
 });
 
 test("a Stop's own wind-down turn, saved files and worker outcomes don't undo it", async (t) => {
@@ -352,5 +375,5 @@ test("a history Squadron can't read is surfaced, never read as a Stop", async (t
   const board = await f.board();
   assert.equal(board.lanes[0].stopped, false);
   assert.equal(board.lanes[0].state, "flying");
-  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [{ kind: "blocked", text: "Squadron couldn't read the Lead for FIX-5. Open it to check." }]);
+  assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })), [{ kind: "blocked", text: "Squadron couldn't read the Lead for FIX-5 (history unavailable). Open it to check." }]);
 });

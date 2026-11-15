@@ -34,7 +34,7 @@ export interface LeadThread {
   /** What the Lead declared it waits on, from a fixed control input; never from reply prose. */
   declaredWait?: string;
   /** The Lead's history couldn't be read. That is a read error to surface, never evidence of a Stop. */
-  unreadable?: true;
+  unreadable?: string;
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
   /** What BB reports the Lead runs, including a substituted model. */
@@ -210,9 +210,13 @@ async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbP
         return { declaredWait: declared, idleSince: end.createdAt }; // an owner question in the reply still counts
     }
     if (completed && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
-  } catch {
-    // A failed read says nothing about the lane. Surface it instead of letting it read as a Stop.
-    return { unreadable: true };
+    // A finished turn that was interrupted or failed is recorded evidence of a stop. No turn boundary at all is not.
+    // A thread with no history at all keeps the Stopped fallback.
+    if (end?.type !== "turn/completed" && end?.type !== "system/thread/interrupted" &&
+      (end || (await bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1" })).length)) return { unreadable: "no finished turn is recorded" };
+  } catch (error) {
+    // A failed read says nothing about the lane. Surface it, with why, instead of letting it read as a Stop.
+    return { unreadable: (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 120) || "the read failed" };
   }
   return {};
 }

@@ -54,6 +54,7 @@ function host(options: { skills?: ReturnType<typeof skills>; linked?: boolean; u
         return { authenticated: options.unknownLogin ? null : options.gh ?? true };
       }
       if (method === "codexMattSkills") return { skills: options.codex ?? [] };
+      if (method === "readModelRoutes") return { markdown: null, policy: null };
       assert.equal(method, "inspectFiles");
       assert.equal((input as { checkoutPath: string }).checkoutPath, "/repo");
       return {
@@ -220,4 +221,17 @@ test("the Doctor's settings fixes for a Linear repo use owner words", async () =
     // The owner still learns that a Linear repo lists which Linear status each state uses.
     if (settingsMarkdown !== fixture) assert.match(settings.message, /Linear status/, settings.message);
   }
+});
+
+test("Doctor names a fix when House rules can't be read instead of showing default policy", async () => {
+  const { bb, harness } = host({ failedMethods: ["readModelRoutes"] });
+  try {
+    registerDoctor(bb, async () => ({ status: "connected" }));
+    const report = await harness.behavior.callRpc("doctor", { projectId: "project" }) as DoctorReport;
+    const settings = report.checks.find((check) => check.id === "settings")!;
+    assert.equal(settings.status, "fix");
+    assert.match(settings.message, /Couldn't read House rules/);
+    assert.equal(report.ready, false);
+    assert.equal(report.policy, undefined, "no default policy is shown for unreadable House rules");
+  } finally { await harness.lifecycle.dispose(); }
 });

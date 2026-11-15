@@ -52,7 +52,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
     if (matches.length > 1) throw new PluginCliError("Choose a project with --project.");
     return matches[0].id;
   }
-  function actionCommand(action: keyof LaneActions, summary: string) {
+  function actionCommand(action: Exclude<keyof LaneActions, "wait">, summary: string) {
     return cliCommand({
       summary,
       options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
@@ -74,6 +74,25 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
             merge: `Asked the Lead for ${specId} to merge locally.`,
           };
           return { exitCode: 0, stdout: `${messages[action]} @thread:${result.threadId}\n` };
+        } catch (error) {
+          return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
+        }
+      },
+    });
+  }
+  /** A Lead declares what it holds back for, as a fixed control like Stop. */
+  function waitCommand() {
+    return cliCommand({
+      summary: "Declare what this lane is waiting on, such as another lane that holds the same files.",
+      options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
+        on: { type: "string", description: "The lane or reason this lane is waiting on." } },
+      positionals: [{ name: "spec", description: "Spec or work item identifier.", required: true }],
+      async run({ options, positionals }, context) {
+        try {
+          const projectId = await actionProject(options.project, context.projectId);
+          if (!options.on?.trim()) throw new Error("Say what the lane is waiting on with --on.");
+          const result = await actions.wait(projectId, positionals.spec, options.on);
+          return { exitCode: 0, stdout: `Recorded that ${oneLine(positionals.spec)} is waiting on ${oneLine(options.on)}. @thread:${result.threadId}\n` };
         } catch (error) {
           return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
         }
@@ -130,6 +149,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
       "autopilot pause": autopilotCommand("pause"),
       start: actionCommand("start", "Start a spec or work item."),
       stop: actionCommand("stop", "Ask a spec's Lead to wind down."),
+      wait: waitCommand(),
       resume: actionCommand("resume", "Ask a spec's Lead to carry on."),
       merge: actionCommand("merge", "Merge where the board offers Merge. Only the owner's own words approve."),
       report: cliCommand({

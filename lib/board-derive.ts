@@ -183,7 +183,10 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // A normal completed turn can be a plain-text question. An interrupted,
     // failed or unreadable turn keeps the Stopped fallback (ADR-0011).
     const noRunningThreads = [lead.thread, ...workers].every((thread) => !isRunningThread(thread));
-    const stopped = noRunningThreads && (lead.idleSince === undefined || needs.some((need) => need.kind !== "waiting"));
+    // A declared wait is over once the lane it names has closed. A reason that names no lane stays until the Lead runs again.
+    const named = lead.declaredWait ? snapshot.issues.find((issue) => issue.identifier.toLowerCase() === lead.declaredWait!.toLowerCase()) : undefined;
+    const declaredWait = lead.declaredWait && !(named && !isOpenIssue(named)) ? lead.declaredWait : undefined;
+    const stopped = noRunningThreads && ((lead.idleSince === undefined && declaredWait === undefined) || needs.some((need) => need.kind !== "waiting"));
     const children = [...workers].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
     const matched = new Set<string>();
     const tickets: Ticket[] = issues.sort(byIdentifier).map((issue) => {
@@ -228,8 +231,9 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
         const blocker = laneById.get(relation.issueId);
         return blocker && isOpenIssue(blocker) ? [blocker.identifier] : [];
       }));
-    const waitingOn = remaining.length && outsideBlockers.every((blockers) => blockers.length)
+    const trackerWaits = remaining.length && outsideBlockers.every((blockers) => blockers.length)
       ? [...new Set(outsideBlockers.flat())].sort((a, b) => a.localeCompare(b, "en", { numeric: true })) : [];
+    const waitingOn = declaredWait && !trackerWaits.includes(declaredWait) ? [...trackerWaits, declaredWait] : trackerWaits;
     if (!lead.outside && landedAt === undefined && spec.state.type !== "completed" && inReview !== "merge-waits" && !stopped && noRunningThreads &&
       !needs.length && lead.asksOwner === true && lead.idleSince !== undefined && input.now - lead.idleSince >= 300_000) {
       needs.push({ threadId: lead.thread.id, kind: "waiting", text: "The Lead is waiting on you" });

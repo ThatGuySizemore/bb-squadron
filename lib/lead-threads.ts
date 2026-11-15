@@ -3,7 +3,7 @@ import { familyForProvider } from "./squadron-settings.js";
 import type { LaunchView, Route } from "./board-model.js";
 import { launchView, readLaunchMetadata, reportedRoute, type LaunchRecord, type ReportedRoute } from "./launch-record.js";
 import type { LaneLaunch } from "./final-reviewer.js";
-import { STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
+import { readWaitTarget, STOP_MESSAGE, TWO_STRIKES_STOP_MESSAGE } from "./lane-contract.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
 type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
@@ -31,6 +31,8 @@ export interface LeadThread {
   asksOwner?: boolean;
   /** A policy stop recorded by a fixed control input, never inferred from reply prose. */
   stopReason?: "two-strikes";
+  /** What the Lead declared it waits on, from a fixed control input; never from reply prose. */
+  declaredWait?: string;
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
   /** What BB reports the Lead runs, including a substituted model. */
@@ -173,12 +175,13 @@ async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boo
 }
 
 /** Unknown history retains the existing Stopped fallback. No assistant text is classified. */
-async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<Pick<LeadThread, "idleSince" | "stopReason">> {
+async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number]): Promise<Pick<LeadThread, "idleSince" | "stopReason" | "declaredWait">> {
   if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return {};
   try {
-    const [terminal, request] = await Promise.all([
+    const [terminal, request, started] = await Promise.all([
       bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/completed", "system/thread/interrupted", "turn/started"] }),
       readLatestControl(bb, thread.id),
+      bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/started"] }),
     ]);
     const end = terminal[0];
     // The board/CLI Stop sends this exact fixed input. A normal wind-down completion stays Stopped.
@@ -186,6 +189,10 @@ async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbP
       if (request.data.input?.some((part) => part.type === "text" && part.text === TWO_STRIKES_STOP_MESSAGE))
         return { stopReason: "two-strikes" };
       if (request.data.input?.some((part) => part.type === "text" && part.text === STOP_MESSAGE)) return {};
+      // A wait is steered into the Lead's own turn, so no turn starts after it. A later turn means work began again.
+      const declared = request.data.input?.flatMap((part) => part.type === "text" ? [readWaitTarget(part.text)] : []).find((target) => target !== null);
+      if (declared && end?.type === "turn/completed" && end.data.status === "completed" && (started[0]?.seq ?? -1) < request.seq)
+        return { declaredWait: declared };
     }
     if (end?.type === "turn/completed" && end.data.status === "completed" && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
   } catch { /* Unreadable lifecycle isn't evidence of a normal idle Lead. */ }

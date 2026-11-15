@@ -3,11 +3,12 @@
 // the same board update as the lane row: takeoff, beacon, holding, landing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { countInk as count, pixelAt as at } from "./fixtures/pixel-count.js";
 import { JSDOM } from "jsdom";
 import { createSurface, type Surface } from "../lib/dither.js";
 import { LANDING_MS, needsYou, nextLandings, TAKEOFF_MS, type Board, type Lane, type Landings } from "../lib/board-model.js";
 import { windSpeed, workingAgents } from "../lib/working-agents.js";
-import { runway, runwayLayout, runwayState, runwayTrails, RUNWAY_ENGINES, RUNWAY_HEIGHT, RUNWAY_PLANE, type Box, type RunwayInks, type RunwayStand, type RunwayState } from "../lib/runway.js";
+import { runway, runwayLayout, runwayState, runwayTrails, RUNWAY_ENGINES, RUNWAY_HEIGHT, RUNWAY_PLANE, type RunwayInks, type RunwayStand, type RunwayState } from "../lib/runway.js";
 
 const INKS: RunwayInks = {
   cloud: 0xff111111, tarmac: 0xff222222, line: 0xff333333, rule: 0xff444444, stand: 0xff555555, plane: 0xff0000ff,
@@ -18,14 +19,6 @@ function paint(state: RunwayState, seconds: number, width = 1200): Surface {
   const s = createSurface(width, RUNWAY_HEIGHT.wide, 1);
   runway({ state, narrow: false, label: "", inks: INKS })(s, seconds);
   return s;
-}
-const at = (s: Surface, x: number, y: number) => s.buf[y * s.w + x]!;
-function count(s: Surface, ink: number, box: Box): number {
-  let n = 0;
-  for (let y = Math.max(0, Math.floor(box.y)); y < Math.min(s.h, Math.ceil(box.y + box.h)); y++) {
-    for (let x = Math.max(0, Math.floor(box.x)); x < Math.min(s.w, Math.ceil(box.x + box.w)); x++) if (at(s, x, y) === ink) n++;
-  }
-  return n;
 }
 const one = (stand: RunwayStand, extra: Partial<RunwayState> = {}): RunwayState => ({ stands: [stand, { kind: "empty" }], working: 3, ...extra });
 
@@ -378,5 +371,30 @@ test("in the view, the path's Landed count flips when a lane arrives in Landed, 
     await view.show(boardOf([landedLane("A-1"), landedLane("B-1")]));
     assert.equal(station().querySelector(".sq-station-count .sq-sr")?.textContent, "2");
     assert.deepEqual(digits().map((d) => d.dataset.flip), ["true"], "the changed digit flips");
+  } finally { await view.close(); }
+});
+
+test("a stopped lane keeps its red holding form and matching amber beacon in motion and stills", async () => {
+  const { runwayMotion } = await import("../lib/runway.js");
+  for (const workKind of ["spec", "work-item"] as const) {
+    const board = boardOf([lane({ kind: workKind, state: "stopped", stopped: true, workingThreads: 0 })]);
+    const state = runwayState(board.lanes, 2, 0, { needs: needsYou(board), landings: null, now: 1000 });
+    assert.deepEqual(state.stands[0], { kind: "holding", laneId: "A-1", beacon: "stopped:A-1", workKind });
+    for (const seconds of [0, 1, runwayMotion(state).stillAt]) {
+      const s = paint(state, seconds);
+      const all = { x: 0, y: 0, w: s.w, h: s.h };
+      assert.ok(count(s, INKS.holding, all) > 150, `${workKind}: red plane and holding ring remain`);
+      assert.equal(count(s, INKS.beacon, all), 128, `${workKind}: all four amber brackets remain lit, including the still frame`);
+      assert.equal(count(s, INKS.trail, all), 0, "holding still leaves no contrails");
+    }
+  }
+  const stopped = boardOf([lane({ state: "stopped", stopped: true, workingThreads: 0 })]);
+  const view = await mount([stopped]);
+  try {
+    const button = view.doc.querySelector<HTMLButtonElement>(".sq-runway-plane")!;
+    assert.equal(button.dataset.beacon, "stopped:A-1");
+    await view.act(async () => button.click());
+    assert.equal((view.scrolled.at(-1) as HTMLElement).dataset.need, "stopped:A-1");
+    assert.ok([...view.doc.querySelectorAll(".sq-need button")].some((button) => button.textContent === "Resume"));
   } finally { await view.close(); }
 });

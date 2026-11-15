@@ -3,6 +3,7 @@
 // Ready spec lands, the whole formation flies past once in a long V, then parks.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { countInk as count, pixelAt as at } from "./fixtures/pixel-count.js";
 import { createSurface, type Surface } from "../lib/dither.js";
 import { LANDING_MS, needsYou, nextLandings, type Board, type Lane, type Landings } from "../lib/board-model.js";
 import { FLYPAST_MS, nextFlyPast, type FlyPast } from "../lib/fly-past.js";
@@ -19,14 +20,6 @@ function paint(state: RunwayState, seconds: number, width = 1200, narrow = false
   const s = createSurface(width, narrow ? RUNWAY_HEIGHT.narrow : RUNWAY_HEIGHT.wide, 1);
   runway({ state, narrow, label: "", inks: INKS })(s, seconds);
   return s;
-}
-const at = (s: Surface, x: number, y: number) => s.buf[y * s.w + x]!;
-function count(s: Surface, ink: number, box: Box): number {
-  let n = 0;
-  for (let y = Math.max(0, Math.floor(box.y)); y < Math.min(s.h, Math.ceil(box.y + box.h)); y++) {
-    for (let x = Math.max(0, Math.floor(box.x)); x < Math.min(s.w, Math.ceil(box.x + box.w)); x++) if (at(s, x, y) === ink) n++;
-  }
-  return n;
 }
 const all = (s: Surface): Box => ({ x: 0, y: 0, w: s.w, h: s.h });
 
@@ -360,4 +353,32 @@ test("with Ready work that can start, the empty Flying section still points to N
     await view.act(async () => buttons[0]!.click());
     assert.deepEqual(planned, [[]], "New spec plans a new spec from nothing");
   } finally { await view.close(); }
+});
+
+test("new work cancels an old fly-past in the same update and keeps its real beacon visible", () => {
+  const start = update(null, boardOf([lane()]), 1000);
+  const empty = boardOf([landedLane("A-1")]);
+  const landing = update(start, empty, 2000);
+  const now = 2000 + LANDING_MS + 500;
+  assert.ok(update(landing, empty, now).state.flyPast, "the old pass is playing");
+  const question = boardOf([landedLane("A-1"), lane({ specId: "B-1", tickets: [{ ...lane().tickets[0]!, id: "B-2", state: "question", question: "Which?" }] })]);
+  for (const work of [question, withReady(empty, "B-1")]) {
+    const arrived = update(landing, work, now);
+    assert.equal(arrived.fly.since, null, "new Flying or Ready work cancels the pass");
+    assert.equal(arrived.fly.armed, true, "new work still arms the next earned pass");
+    assert.equal(arrived.state.flyPast, undefined);
+  }
+  const arrived = update(landing, question, now);
+  const beacon = arrived.state.stands.find((stand) => "laneId" in stand && stand.laneId === "B-1");
+  assert.ok(beacon && "beacon" in beacon && beacon.beacon === "question:B-2");
+  for (const seconds of [0, runwayMotion(arrived.state).stillAt]) {
+    const s = paint(arrived.state, seconds);
+    assert.ok(count(s, INKS.beacon, all(s)) > 100, "real plane and beacon are visible, including the reduced-motion still");
+  }
+  // Even a stale pass supplied by a caller cannot hide live work in the painter.
+  const stale = { ...arrived.state, at: now, flyPast: { since: now - 500 } };
+  assert.ok(count(paint(stale, 0), INKS.beacon, all(paint(stale, 0))) > 100);
+  const landed = update(arrived, boardOf([landedLane("A-1"), landedLane("B-1")]), now + 10_000);
+  assert.equal(landed.fly.since, now + 10_000 + LANDING_MS, "the next genuine queue clear earns one new pass");
+  assert.equal(update(landed, boardOf([landedLane("A-1"), landedLane("B-1")]), now + 11_000).fly.since, landed.fly.since, "no repeat");
 });

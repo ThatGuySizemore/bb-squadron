@@ -67,6 +67,7 @@ interface Runway {
   /** Null until the live board's first read, so the banner never counts lanes it hasn't read. */
   count: ReturnType<typeof flyingCount> | null;
   layout: RunwayLayout;
+  overflow: boolean;
 }
 
 /**
@@ -81,8 +82,9 @@ function useRunway(board: Board, lanesKnown: boolean, narrow: boolean, working: 
   const flying = board.lanes.filter((lane) => lane.state !== "landed").length;
   const state: RunwayState = lanesKnown ? runwayState(board.lanes, board.laneCapacity, working, moments) : { stands: [], working: 0 };
   const count = lanesKnown ? flyingCount(flying, board.laneCapacity) : null;
-  const layout = runwayLayout(width ?? (narrow ? 560 : 1200), narrow, state.stands.length, count?.text ?? "");
-  return { ref, narrow, state, count, layout };
+  const viewport = width ?? (narrow ? 560 : 1200);
+  const layout = runwayLayout(viewport, narrow, state.stands.length, count?.text ?? "");
+  return { ref, narrow, state, count, layout, overflow: layout.width > viewport };
 }
 
 /**
@@ -103,10 +105,9 @@ function planeName(stand: PlaneStand, title: string | undefined): string {
 }
 
 function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: ReadonlyMap<string, string>; onPlane: (stand: PlaneStand) => void }) {
-  const { layout: g, state, count, narrow } = runway;
-  return (
-    <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length}
-      data-fly-past={state.flyPast?.since} style={{ height: g.height }}>
+  const { layout: g, state, count, narrow, overflow } = runway;
+  const scene = (
+    <>
       <DitherCanvas fx={{ kind: "runway", narrow, label: count?.text ?? "", state }} className="sq-runway-art" />
       <h1 className="sq-runway-title" style={g.title ? { left: g.title.x, top: g.title.y } : undefined}>
         {g.title ? <PixelText text="Squadron" cell={g.title.cell} gap={g.title.gap} /> : <span className="sq-sr">Squadron</span>}
@@ -123,7 +124,19 @@ function RunwayBanner({ runway, titles, onPlane }: { runway: Runway; titles: Rea
             style={{ left: air.x - pad, top: air.y - pad, width: air.w + pad * 2, height: air.h + pad * 2 }} />
         );
       })}
-    </div>
+    </>
+  );
+  return (
+    <>
+      <div className="sq-runway" ref={(el) => { runway.ref.current = el; }} data-stands={state.stands.length}
+        data-fly-past={state.flyPast?.since} data-overflow={overflow ? "true" : undefined}
+        role={overflow ? "region" : undefined} tabIndex={overflow ? 0 : undefined}
+        aria-label={overflow ? `Runway, ${state.stands.length} stands. Scroll horizontally to see every plane.` : undefined}
+        style={overflow ? undefined : { height: g.height }}>
+        {overflow ? <div className="sq-runway-scene" style={{ width: g.width, height: g.height }}>{scene}</div> : scene}
+      </div>
+      {overflow ? <p className="sq-runway-scroll-hint">Scroll the runway to see all {state.stands.length} stands.</p> : null}
+    </>
   );
 }
 
@@ -979,17 +992,20 @@ interface LandingPhase {
  * Which lanes are landing now. Each landing this view sees plays once, then the lane moves to Landed.
  * The fly-past is decided in the same read: `ready` is how many Ready rows show, or null while Ready is unread.
  */
-function useLandings(lanes: Lane[], ready: number | null): LandingPhase {
+function useLandings(lanes: Lane[], ready: number | null, lanesKnown: boolean): LandingPhase {
   const seen = useRef<Landings | null>(null);
   const flown = useRef<FlyPast | null>(null);
   // Folded in as each board arrives, so a lane never flashes into Landed before its burst.
   const read = useMemo(() => {
     const at = Date.now();
+    if (!lanesKnown) { seen.current = null; flown.current = null; }
     const before = seen.current;
-    const landings = (seen.current = nextLandings(before, lanes, at));
-    const fly = (flown.current = nextFlyPast(flown.current, { before, landings, lanes, ready }));
-    return { landings, flyPast: fly.since, at };
-  }, [lanes, ready]);
+    // An unread board is not an observed empty board. Seed only from real lanes,
+    // so the first RPC response and reloads cannot manufacture starts.
+    const landings = lanesKnown ? (seen.current = nextLandings(before, lanes, at)) : nextLandings(null, [], at);
+    const fly = lanesKnown ? (flown.current = nextFlyPast(flown.current, { before, landings, lanes, ready })) : flown.current;
+    return { landings, flyPast: fly?.since ?? null, at };
+  }, [lanes, ready, lanesKnown]);
   const landings = read.landings;
   const [tick, setNow] = useState(() => Date.now());
   // Never older than the board update itself, so a moment that starts in this update is judged from it.
@@ -1171,7 +1187,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
   }, [rootRef]);
   const items = needsYou(board);
   // The fly-past needs a read Ready: while it's unread (a notice, or before the first read), no landing counts as the last.
-  const phase = useLandings(board.lanes, notice || !lanesKnown ? null : board.ready.length);
+  const phase = useLandings(board.lanes, notice || !lanesKnown ? null : board.ready.length, lanesKnown);
   const flying = board.lanes.filter((l) => l.state !== "landed");
   const onLine = board.lanes.filter((l) => l.state !== "landed" || phase.landing(l));
   const landed = board.lanes.filter((l) => l.state === "landed" && !phase.landing(l));

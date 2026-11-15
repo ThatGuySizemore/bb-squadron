@@ -34,6 +34,9 @@ export interface FlyPastRead {
  * taken for an empty one.
  */
 export function nextFlyPast(previous: FlyPast | null, read: FlyPastRead): FlyPast {
+  // New real work takes precedence over a due or active celebration, even
+  // while Ready is unread. It also earns eligibility for a later clear.
+  if (read.lanes.some((lane) => lane.state !== "landed") || (read.ready !== null && read.ready > 0)) return { armed: true, since: null };
   if (read.ready === null) return previous ?? { armed: false, since: null };
   const clear = read.ready === 0 && read.lanes.every((lane) => lane.state === "landed");
   const since = previous?.since ?? null;

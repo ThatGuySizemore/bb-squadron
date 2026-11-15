@@ -81,7 +81,7 @@ export function runwayPlane(workKind: WorkKind = "spec"): { shape: readonly stri
 }
 
 /** A layout candidate: plane cell, stencil cell and gap, and whether the threshold bars stay. */
-interface Fit { cell: number; titleCell: number; titleGap: number; keys: boolean }
+interface Fit { cell: number; titleCell: number; titleGap: number; keys: boolean; gap?: number }
 const WIDE_FITS: Fit[] = [
   { cell: 4, titleCell: 4, titleGap: 1, keys: true },
   { cell: 3, titleCell: 4, titleGap: 1, keys: true },
@@ -112,7 +112,7 @@ export function runwayLabelWidth(text: string): number {
 }
 
 export function runwayLayout(width: number, narrow: boolean, slots: number, labelText: string): RunwayLayout {
-  const W = Math.max(1, Math.round(width));
+  let W = Math.max(1, Math.round(width));
   const height = narrow ? RUNWAY_HEIGHT.narrow : RUNWAY_HEIGHT.wide;
   const tarmacH = narrow ? 42 : 52;
   const tarmac = { y: height - tarmacH - 2, h: tarmacH };
@@ -123,7 +123,7 @@ export function runwayLayout(width: number, narrow: boolean, slots: number, labe
   const place = (fit: Fit, withTitle: boolean, force = false): RunwayLayout | null => {
     const { cell } = fit;
     const plane = { w: PLANE_COLS * cell, h: PLANE_ROWS * cell };
-    const gap = STAND_GAP[cell]!, right = RIGHT_MARGIN[cell]!;
+    const gap = fit.gap ?? STAND_GAP[cell]!, right = RIGHT_MARGIN[cell]!;
     const keys = fit.keys ? (narrow ? { x: pad, bars: 4, bar: 3, step: 6 } : { x: pad, bars: 4, bar: 4, step: 9 }) : null;
     const keysEnd = keys ? keys.x + (keys.bars - 1) * keys.step + keys.bar + (narrow ? 10 : 16) : pad;
     let title: RunwayLayout["title"] = null;
@@ -153,6 +153,18 @@ export function runwayLayout(width: number, narrow: boolean, slots: number, labe
     const small = { w: RUNWAY_WORK_PLANE[0]!.length * cell, h: RUNWAY_WORK_PLANE.length * cell };
     return { width: W, height, tarmac, cell, plane, small, keys, title, label, stands, trail: plane.w + gap - 10 };
   };
+
+  // Configured limits are 1–10; outside lanes are uncapped. Beyond ten, keep
+  // whole planes and separate padded controls on a horizontally scrollable
+  // runway instead of squeezing them into negative coordinates. The fixed fit
+  // makes the DOM and painter agree when the canvas reads the expanded width.
+  if (count > 10) {
+    const fit: Fit = { cell: 2, titleCell: 3, titleGap: 0, keys: false, gap: 26 };
+    const planeW = PLANE_COLS * fit.cell;
+    W = Math.max(W, pad + stencil.width * fit.titleCell + CLEAR + 10
+      + planeW + (count - 1) * (planeW + fit.gap!) + RIGHT_MARGIN[fit.cell]!);
+    return place(fit, true)!;
+  }
 
   const fits = [...(narrow ? NARROW_FITS : WIDE_FITS), ...LAST_FITS];
   for (const fit of fits) {
@@ -299,7 +311,8 @@ export function runwayState(lanes: ReadonlyArray<RunwayLane>, limit: number, wor
   const slots = Math.max(1, limit, lit.length);
   // A fly-past shows until its pass ends; its start counts toward the clock once it has come.
   const pass = moments?.flyPast ?? null;
-  const flyPast = pass !== null && moments && pass + FLYPAST_MS > moments.now ? { since: pass } : null;
+  const live = lit.some((stand) => stand.kind !== "landing");
+  const flyPast = !live && pass !== null && moments && pass + FLYPAST_MS > moments.now ? { since: pass } : null;
   const starts = [...lit.flatMap((stand) => "since" in stand ? [stand.since] : []),
     ...(flyPast && moments && flyPast.since <= moments.now ? [flyPast.since] : [])];
   // Nothing flying: the quiet hangar, every plane parked on its stand.
@@ -379,7 +392,7 @@ function pose(stand: Exclude<RunwayStand, { kind: "empty" } | { kind: "parked" }
     }
     case "holding": {
       const a = -Math.PI / 4 + seconds * (Math.PI * 2 / HOLD_LAP), r = g.cell * 2;
-      return { x: air.x + Math.cos(a) * r, y: air.y + Math.sin(a) * r, workKind, ink: inks.holding, trail: 0,
+      return { x: air.x + Math.cos(a) * r, y: air.y + Math.sin(a) * r, workKind, ink: inks.holding, trail: 0, brackets: stand.beacon !== null,
         ring: { cx: air.x + air.w / 2, cy: air.y + air.h / 2, r: air.w * 0.62 + r } };
     }
     case "takeoff":
@@ -506,7 +519,7 @@ export function runway({ state, narrow, label, inks }: { state: RunwayState; nar
     for (let x = from; x + 12 <= to; x += 22) rect(s, inks.line, x, centre, 12, 3);
 
     // The fly-past: while its pass plays, the whole formation is in the air and the stands stand empty.
-    if (state.flyPast) {
+    if (state.flyPast && !state.stands.some((stand) => stand.kind === "flying" || stand.kind === "takeoff" || stand.kind === "holding")) {
       const age = seconds + ((state.at ?? state.flyPast.since) - state.flyPast.since) / 1000;
       if (age >= 0 && age < FLYPAST_MS / 1000) { formationPass(s, g, age, T, speed, inks); return; }
     }

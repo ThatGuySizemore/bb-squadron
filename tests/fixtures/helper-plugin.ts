@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./provider-catalog.js";
 import type { TestContext } from "node:test";
 import { readFileSync } from "node:fs";
 import { setImmediate } from "node:timers/promises";
@@ -18,6 +19,7 @@ export async function helperFixture(t: TestContext, epoch: number, options: Para
   let mainCheck = async (_prNumber: number) => ({ passed: true, logPath: "/scratch/main.log", mergedCommit: "a".repeat(40), baseCommit: "b".repeat(40) });
   const fake = createFakePluginHost({ pluginId: "squadron", experimental_hostEntry: true,
     settings: { linearApiKey: "fake-wake-key" }, sdk: {
+      providers: fixtureProviders,
       projects: { list: async () => projects, get: async ({ projectId }) => ({ ...projects.find((p) => p.id === projectId)!,
         sources: [{ id: "source", projectId, hostId: "host", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }] }) },
       files: { read: async ({ path }) => { const content = readFileSync(path.endsWith("issue-tracker.md") ? "tests/fixtures/trackers/bb-squadron.md" : "tests/fixtures/squadron.md", "utf8");

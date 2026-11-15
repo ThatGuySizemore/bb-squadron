@@ -1,3 +1,4 @@
+import { fixtureProviderCatalog } from "./fixtures/provider-catalog.js";
 // SQD-202: the board teaches its own words. Every owner word it shows as a
 // label carries its one-line definition for hover and keyboard focus, and
 // nothing the owner reads on the board or in Doctor uses a retired word.
@@ -23,6 +24,7 @@ const files: ConfigurationFile[] = [
   { id: "machine-profile", name: "This machine", path: "/owner/.bb-squadron/machine.md", hostId: "host", exists: false },
 ];
 const report = doctor({
+  providerCatalog: fixtureProviderCatalog,
   skills: {}, setupFiles: [], settingsMarkdown: readFileSync("tests/fixtures/squadron.md", "utf8"), issueTrackerMarkdown: null,
   linearConnected: false, ghAuthenticated: false, configurationFiles: files,
 });

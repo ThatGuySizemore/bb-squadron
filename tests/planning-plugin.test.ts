@@ -1,3 +1,4 @@
+import { fixtureProviders } from "./fixtures/provider-catalog.js";
 // A6's end-to-end tests: the real server.ts on the SDK's fake plugin host, a
 // recorded Linear workspace behind fetch, and the board's Plan through RPC.
 import { test, mock } from "node:test";
@@ -35,6 +36,7 @@ function host(options: HostOptions = {}) {
     appUrl: options.appUrl === undefined ? "https://bb.example.test" : options.appUrl,
     settings: options.settings ?? { linearApiKey: "fake-planning-key" },
     sdk: {
+      providers: fixtureProviders,
       projects: { get: async ({ projectId }) => ({
         id: projectId, name: "Fixture", kind: "standard", gitRemoteUrl: null, createdAt: 0, updatedAt: 0,
         sources: [{ id: "source", projectId, hostId: "repo-machine", path: "/repo", isDefault: true, type: "local_path", createdAt: 0, updatedAt: 0 }],

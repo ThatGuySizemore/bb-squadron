@@ -1,3 +1,5 @@
+import { MODEL_ROLES } from "./squadron-settings.js";
+import { launchRouteSchema } from "./launch-route.js";
 import { z } from "zod";
 
 export const doctorReportSchema = z.object({
@@ -10,6 +12,11 @@ export const doctorReportSchema = z.object({
     id: z.enum(["repo-rules", "project-settings", "playbook", "machine-profile"]),
     name: z.string(), path: z.string(), hostId: z.string(), exists: z.boolean(),
   })),
+  /** Doctor's route view: what each role and label exception launches on. */
+  routes: z.array(z.object({
+    role: z.enum(MODEL_ROLES), category: z.string().nullable(),
+    route: launchRouteSchema.nullable(), problem: z.string().optional(),
+  })).optional(),
 });
 
 export const doctorContract = {

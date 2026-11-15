@@ -1,6 +1,7 @@
 import type { BbPluginApi } from "@get-bb/plugin-sdk";
 import { familyForProvider } from "./squadron-settings.js";
-import type { Route } from "./board-model.js";
+import type { LaunchView, Route } from "./board-model.js";
+import { launchView, readLaunchMetadata, reportedRoute, type ReportedRoute } from "./launch-record.js";
 import { STOP_MESSAGE } from "./lane-contract.js";
 import { isActiveProjectThread } from "./project-thread.js";
 
@@ -9,7 +10,10 @@ type BbThread = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["get"]>>;
 type Attention = Partial<Pick<Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], "hasPendingInteraction" | "queuedWork" | "updatedAt" | "activity">>;
 
 /** A child thread of a Lead: one of its workers, or its reviewer. */
-export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status" | "runtime"> & Attention;
+export type WorkerThread = Pick<BbThread, "id" | "title" | "createdAt" | "status" | "runtime"> & Attention & {
+  /** The launch record of a child started with squadron launch, beside BB's report. */
+  launch?: LaunchView;
+};
 
 /** BB owns these records. Squadron reads them afresh rather than storing lanes. */
 export interface LeadThread {
@@ -24,7 +28,10 @@ export interface LeadThread {
   asksOwner?: boolean;
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
+  /** What BB reports the Lead runs, including a substituted model. */
   route: Route;
+  /** The Lead's launch record beside BB's report; absent for Leads started before records. */
+  launch?: LaunchView;
   branch: string;
   /** The Lead's child threads that aren't archived or deleted. */
   workers?: WorkerThread[];
@@ -48,6 +55,13 @@ export function latestLeads(leads: LeadThread[]): LeadThread[] {
   return [...current.values()];
 }
 
+/** A board route from BB's report: provider, model, effort and service tier. */
+export function reportedThreadRoute(reported: ReportedRoute): Route {
+  // An unreported level keeps the board's earlier "default" wording; the launch view keeps it unknown.
+  return { family: familyForProvider(reported.providerId ?? ""), ...(reported.providerId ? { providerId: reported.providerId } : {}),
+    model: reported.model ?? "Unknown model", effort: reported.effort ?? "default", ...(reported.serviceTier ? { serviceTier: reported.serviceTier } : {}) };
+}
+
 /** The route BB actually runs on a thread, including its unavailable-model fallback. */
 export function threadRoute(providerId: string | null, execution: { model?: string | null; reasoningLevel?: string | null } | null): Route {
   return { family: familyForProvider(providerId ?? ""),
@@ -59,7 +73,11 @@ export async function readWorkers(bb: BbPluginApi, projectId: string, leadId: st
   const workers: WorkerThread[] = [];
   for (let offset = 0; ; offset += 200) {
     const threads = await bb.sdk.threads.list({ projectId, parentThreadId: leadId, archived: false, includeHidden: true, limit: 200, offset });
-    workers.push(...threads.filter((thread) => thread.parentThreadId === leadId && isActiveProjectThread(thread, thread.id, projectId)));
+    for (const thread of threads) {
+      if (thread.parentThreadId !== leadId || !isActiveProjectThread(thread, thread.id, projectId)) continue;
+      const record = readLaunchMetadata(await Promise.resolve().then(() => bb.sdk.threads.getPluginMetadata({ threadId: thread.id })).catch(() => null));
+      workers.push(record ? { ...thread, launch: launchView(record, await reportedRoute(bb, thread)) } : thread);
+    }
     if (threads.length < 200) return workers;
   }
 }
@@ -72,13 +90,15 @@ export async function readLeadThreads(bb: BbPluginApi, projectId: string): Promi
       if (!isActiveProjectThread(thread, thread.id, projectId)) continue;
       const metadata = await bb.sdk.threads.getPluginMetadata({ threadId: thread.id });
       if (metadata.role !== "lead" || typeof metadata.specId !== "string" || !metadata.specId) continue;
-      const execution = await bb.sdk.threads.defaultExecutionOptions({ threadId: thread.id });
+      const reported = await reportedRoute(bb, thread);
+      const record = readLaunchMetadata(metadata);
       const idleSince = await readIdleSince(bb, thread);
       leads.push({ ...(metadata.kind === "work-item" || metadata.kind === "spec" ? { kind: metadata.kind } : {}),
         ...(typeof metadata.previousLeadId === "string" ? { previousLeadId: metadata.previousLeadId } : {}), ...(idleSince !== undefined ? { idleSince } : {}), specId: metadata.specId, thread, branch: thread.environmentBranchName ?? "",
         asksOwner: idleSince !== undefined && await readOwnerQuestion(bb, thread.id),
         workers: await readWorkers(bb, projectId, thread.id),
-        route: threadRoute(thread.providerId, execution) });
+        route: reported ? reportedThreadRoute(reported) : threadRoute(thread.providerId, null),
+        ...(record ? { launch: launchView(record, reported) } : {}) });
     }
     if (threads.length < 200) return leads;
   }

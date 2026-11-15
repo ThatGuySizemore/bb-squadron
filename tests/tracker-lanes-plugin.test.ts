@@ -10,6 +10,7 @@ import { createDoctorHost } from "../host.js";
 import plugin from "../server.js";
 import type { Board } from "../lib/board-model.js";
 import { canMerge } from "../lib/board-model.js";
+import { withoutLaunch } from "./fixtures/launch.js";
 
 function git(root: string, ...args: string[]) {
   return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -109,7 +110,7 @@ test("Start in GitHub uses the recorded reader and seeds the Lead with the repo'
   const seed = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string; pluginMetadata: unknown };
   assert.match(seed.prompt, /Spec: https:\/\/github.example\/fixture\/repo\/issues\/1/);
   assert.match(seed.prompt, /docs\/agents\/issue-tracker\.md/);
-  assert.deepEqual(seed.pluginMetadata, { role: "lead", specId: "I_1", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(seed.pluginMetadata, { role: "Lead", launchedBy: "owner", specId: "I_1" }), { role: "lead", specId: "I_1", startedBy: "owner" });
   assert.deepEqual((await board()).lanes[0]?.tickets.map(({ id, state }) => [id, state]).sort((a, b) => a[0].localeCompare(b[0])),
     [["#2", "working"], ["#3", "done"], ["#4", "working"], ["#5", "blocked"]]);
 });

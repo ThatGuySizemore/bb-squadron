@@ -15,6 +15,8 @@ export interface ProjectCheckout {
   tracker: TrackerDetection;
   issueTrackerMarkdown: string | null;
   settingsMarkdown: string | null;
+  /** What BB advertises on the checkout's host for the settings' provider routes. */
+  providerCatalog: ProviderModels[];
 }
 
 /** Doctor may explicitly select an environment. An unusable explicit choice
@@ -74,6 +76,6 @@ export async function readProjectCheckout(bb: BbPluginApi, projectId: string, si
   const source = await selectProjectCheckout(bb, projectId, signal);
   if (!source) return null;
   const config = await readTrackerConfiguration(bb, source, signal);
-  const { settings } = await readResolvedSettings(bb, source, config, signal);
-  return { hostId: source.hostId, path: source.path, settings, ...config };
+  const { settings, providerCatalog } = await readResolvedSettings(bb, source, config, signal);
+  return { hostId: source.hostId, path: source.path, settings, providerCatalog, ...config };
 }

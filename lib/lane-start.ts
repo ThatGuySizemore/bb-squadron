@@ -3,7 +3,7 @@ import { laneContract, LOCAL_MERGE_MESSAGE, RESUME_MESSAGE, STOP_MESSAGE } from 
 import { deriveBoard } from "./board-derive.js";
 import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
-import { providerFor, resolveLeadRoute, resolveRoute } from "./squadron-settings.js";
+import { LAUNCH_METADATA_KEY, launchRoutes, requestedRoute, resolveLaunch, routeViewLine, spawnRoute, type LaunchRecord } from "./launch-record.js";
 import { workItemPrompt } from "./work-item-prompt.js";
 import type { DoctorReport } from "./doctor.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
@@ -62,14 +62,20 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
     const workItem = ready.kind === "work-item";
     // Autopilot never starts work items, even if a caller supplies one directly.
     if (workItem && startedBy === "autopilot") return null;
-    const route = (workItem ? resolveRoute : resolveLeadRoute)(checkout.settings.settings, spec.labels.map((label) => label.name));
+    const resolved = resolveLaunch(checkout.settings.settings, { role: workItem ? "Worker" : "Lead", labels: spec.labels.map((label) => label.name) });
+    const requested = requestedRoute(resolved.route);
     const { holdLabels } = checkout.settings.settings;
     const ownerPath = (id: "playbook" | "machine-profile") => doctor.configurationFiles.find((file) => file.id === id)?.path;
     if (allowed && !await allowed()) return null;
+    const launch: LaunchRecord = { version: 1, role: resolved.role, category: resolved.category, policyResolved: resolved.policyResolved,
+      overrideNote: resolved.overrideNote, specId: spec.id, tickets: workItem ? [{ id: spec.id, identifier: spec.identifier }] : [],
+      leadThreadId: null, launchedBy: startedBy, launchedAt: Date.now(), requested,
+      replacesThreadId: returning ? existing.thread.id : null, escalation: null };
     const thread = await bb.sdk.threads.spawn({
       projectId, title: `${workItem ? "Work item" : "Lead"} ${spec.identifier}`, visibility: "visible",
-      providerId: providerFor(route), model: route.model, ...(route.effort === "default" ? {} : { reasoningLevel: route.effort }), serviceTier: "default",
-      pluginMetadata: { role: "lead", specId: spec.id, startedBy, ...(workItem ? { kind: "work-item" } : {}), ...(returning ? { previousLeadId: existing.thread.id } : {}) },
+      ...spawnRoute(requested),
+      pluginMetadata: { role: "lead", specId: spec.id, startedBy, ...(workItem ? { kind: "work-item" } : {}), ...(returning ? { previousLeadId: existing.thread.id } : {}),
+        [LAUNCH_METADATA_KEY]: launch },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
       prompt: workItem ? workItemPrompt({ identifier: spec.identifier, url: spec.url, settings: checkout.settings.settings,
         houseRules: ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md",
@@ -84,6 +90,8 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
         `House rules: ${ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md"}`,
         `This machine: ${ownerPath("machine-profile") ?? "~/.bb-squadron/machine.md"}`,
         `Held tickets carry one of these labels or Status lines: ${holdLabels.join(", ")}.${holdLabels.some((label) => label.endsWith("*")) ? " A trailing * matches a prefix." : ""}`,
+        "Routes resolved at Start. Launch every worker, reviewer and helper thread with bb squadron launch so its route is recorded:",
+        ...launchRoutes(checkout.settings.settings).map(routeViewLine),
       ].join("\n"),
     });
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });

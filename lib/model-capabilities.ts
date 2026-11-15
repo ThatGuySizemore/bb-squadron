@@ -26,14 +26,18 @@ export async function readRouteCapabilities(bb: BbPluginApi, hostId: string, set
 /** Legacy family tables keep their existing behavior; provider routes must be advertised by BB. */
 export function validateRouteCapabilities(settings: SquadronSettings, catalog: readonly ProviderModels[]): SettingsIssue[] {
   return settings.routes.flatMap((route): SettingsIssue[] => {
-    if (!route.providerId) return [];
-    const name = route.role ?? route.label ?? "Worker";
-    const provider = catalog.find((entry) => entry.providerId === route.providerId);
-    const model = provider?.models.find((entry) => entry.id === route.model);
-    const problem = !provider ? `Unknown provider ${route.providerId}.`
-      : provider.error ? provider.error
-      : !model ? `Unknown model ${route.model} for provider ${route.providerId}.`
-      : route.effort !== "default" && !model.efforts.includes(route.effort) ? `Unknown effort ${route.effort} for ${route.providerId}/${route.model}.` : null;
-    return problem ? [{ section: "Routes", message: `Route ${name}: ${problem}` }] : [];
+    const problem = routeProblem(route, catalog);
+    return problem ? [{ section: "Routes", message: `Route ${route.role ?? route.label ?? "Worker"}: ${problem}` }] : [];
   });
+}
+
+/** Why BB can't run this provider route on the host, or null. Legacy family routes aren't checked. */
+export function routeProblem(route: { providerId?: string; model: string; effort: string }, catalog: readonly ProviderModels[]): string | null {
+  if (!route.providerId) return null;
+  const provider = catalog.find((entry) => entry.providerId === route.providerId);
+  const model = provider?.models.find((entry) => entry.id === route.model);
+  return !provider ? `Unknown provider ${route.providerId}.`
+    : provider.error ? provider.error
+    : !model ? `Unknown model ${route.model} for provider ${route.providerId}.`
+    : route.effort !== "default" && !model.efforts.includes(route.effort) ? `Unknown effort ${route.effort} for ${route.providerId}/${route.model}.` : null;
 }

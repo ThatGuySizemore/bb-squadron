@@ -5,12 +5,13 @@ import { helperCommands } from "./helper-cli.js";
 import type { registerHelper } from "./helper.js";
 import type { AutopilotControls } from "./autopilot.js";
 import type { registerPlanning } from "./planning.js";
+import type { registerLaunch } from "./launch-cli.js";
 import { oneLine, openNeeds, needLine, boardLink, unreadableProject as unreadable } from "./project-observation.js";
 
 const incomplete = (board: Board | null) => !board || board.tracker?.state !== "current";
 
 /** Board reads, shared lane and Autopilot controls, and Helper selection. */
-export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>, autopilot: AutopilotControls, planning: ReturnType<typeof registerPlanning>) {
+export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: string): Promise<Board> }, actions: LaneActions, helper: ReturnType<typeof registerHelper>, autopilot: AutopilotControls, planning: ReturnType<typeof registerPlanning>, launch: ReturnType<typeof registerLaunch>) {
   const options = {
     project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
     all: { type: "boolean", description: "Show every project." },
@@ -107,6 +108,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
     name: "squadron", summary: "See your projects and act on their specs and work items.",
     commands: {
       ...planning.commands,
+      ...launch.commands,
       ...helperCommands(helper, (selected) => actionProject(selected, undefined)),
       "autopilot on": autopilotCommand("on"),
       "autopilot off": autopilotCommand("off"),

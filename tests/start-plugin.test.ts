@@ -11,6 +11,7 @@ import plugin from "../server.js";
 import { needsYou, type Board } from "../lib/board-model.js";
 import { STOP_MESSAGE, RESUME_MESSAGE } from "../lib/lane-contract.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
+import { withoutLaunch } from "./fixtures/launch.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 const skillNames = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
@@ -89,7 +90,8 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
   assert.equal(args.serviceTier, "default");
   assert.equal(args.visibility, "visible");
   assert.equal(args.title, "Lead FIX-5");
-  assert.deepEqual(args.pluginMetadata, { role: "lead", specId: "fix-5", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(args.pluginMetadata, { role: "Lead", launchedBy: "owner", specId: "fix-5", tickets: [], escalation: null, policyResolved: false,
+    requested: { providerId: "codex", model: "gpt-6.1-sol", effort: "high", serviceTier: "default" } }), { role: "lead", specId: "fix-5", startedBy: "owner" });
   assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: {
     type: "managed-worktree", baseBranch: { kind: "default" },
   } });
@@ -98,6 +100,17 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
     "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
     "House rules: /owner/.bb-squadron/house-rules.md", "This machine: /owner/.bb-squadron/machine.md",
     "Held tickets carry one of these labels or Status lines: hold, needs-triage, needs-info, ready-for-human, wontfix.",
+    "Routes resolved at Start. Launch every worker, reviewer and helper thread with bb squadron launch so its route is recorded:",
+    "- Lead: codex gpt-6.1-sol, high effort, default tier",
+    "- Worker: codex gpt-6.1-sol, high effort, default tier",
+    "- Worker (hard): not set. Add a Worker (hard) row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
+    "- Planning: BB's default model, default effort, default tier",
+    "- Planning (hard): not set. Add a Planning (hard) row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
+    "- Review of claude-code: codex gpt-6.1-sol, high effort, default tier",
+    "- Review of codex: claude-code claude-opus-5-5, high effort, default tier",
+    "- Mechanical: not set. Add a Mechanical row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
+    "- Worker for ui tickets: claude-code claude-opus-5-5, high effort, default tier",
+    "- Worker for data tickets: codex gpt-6.1-sol, medium effort, default tier",
   ].join("\n"));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes.map(({ specId, state, leadThreadId }) => [specId, state, leadThreadId]), [["FIX-5", "flying", "thr_lead_1"]]);
@@ -222,7 +235,7 @@ test("the bundled Lead skill points to installed Matt skills and adds BB lane ru
   const skill = readFileSync("skills/squadron-lead/SKILL.md", "utf8");
   assert.match(skill, /^---\nname: squadron-lead\ndescription: .+\n---\n/);
   for (const pointer of ["`implement-spec`", "`tdd`", "`code-review`", "AGENTS.md", "docs/agents/squadron.md",
-    "House rules", "This machine", "parent-self", "accept:owner", "two strikes", "Stop", "Resume", "status mapping"]) {
+    "House rules", "This machine", "bb squadron launch", "--replaces", "--reason", "accept:owner", "two strikes", "Stop", "Resume", "status mapping"]) {
     assert.ok(skill.includes(pointer), `the Lead skill names ${pointer}`);
   }
   assert.ok(!/squadron_\w+/.test(skill), "the Lead names no Squadron agent tools");
@@ -536,14 +549,14 @@ test("Autopilot starts one Ready spec per watcher cycle through Start and stops 
   for (let i = 0; i < 200 && native.count === 0; i++) await new Promise((resolve) => setTimeout(resolve, 5));
   cycle.controller.abort(); await cycle.done;
   assert.equal(native.count, 1);
-  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_1"), { role: "Lead", launchedBy: "autopilot", specId: "fix-1" }), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.laneCapacity, 1);
   assert.equal(board.autoStart, true);
   // A manual start still uses precisely the same first message, and may exceed the limit.
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   assert.equal(native.count, 2);
-  assert.deepEqual(native.metadata.get("thr_lead_2"), { role: "lead", specId: "fix-5", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_2"), { role: "Lead", launchedBy: "owner", specId: "fix-5" }), { role: "lead", specId: "fix-5", startedBy: "owner" });
   const spawns = harness.inspection.sdk.callsTo("threads.spawn").map(([args]) => args as { prompt: string });
   assert.equal(spawns[0].prompt.replace("FIX-1", "FIX-5"), spawns[1].prompt);
 });
@@ -676,7 +689,7 @@ test("an enabled project restarts its watcher without opening the board", async 
   t.after(() => reloaded.harness.lifecycle.dispose());
   await watcherCycle(reloaded.harness);
   assert.equal(native.count, 1);
-  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_1"), { role: "Lead", launchedBy: "autopilot", specId: "fix-1" }), { role: "lead", specId: "fix-1", startedBy: "autopilot" });
 });
 
 
@@ -1010,7 +1023,7 @@ test("a landed spec with remaining un-held tickets returns Ready and starts a fr
   assert.equal(after.lanes[0].needs, undefined, "old worker failures never become this lane's questions");
   assert.ok(native.threads.has("old-worker"));
   assert.ok(native.threads.has("thr_lead_1"), "the old Lead and its environment remain attributable in BB");
-  assert.deepEqual(native.metadata.get("thr_lead_1"), { role: "lead", specId: "fix-5", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_1"), { role: "Lead", launchedBy: "owner", specId: "fix-5" }), { role: "lead", specId: "fix-5", startedBy: "owner" });
   assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_2" });
 });
 
@@ -1226,7 +1239,8 @@ test("work-item Start shares CLI and board dedupe, uses its labels over Lead, an
   assert.equal(args.parentThreadId, undefined);
   assert.equal(args.title, "Work item FIX-9");
   assert.equal(args.visibility, "visible");
-  assert.deepEqual(args.pluginMetadata, { role: "lead", specId: "fix-9", kind: "work-item", startedBy: "owner" });
+  assert.deepEqual(withoutLaunch(args.pluginMetadata, { role: "Worker", launchedBy: "owner", specId: "fix-9", tickets: [{ id: "fix-9", identifier: "FIX-9" }] }),
+    { role: "lead", specId: "fix-9", kind: "work-item", startedBy: "owner" });
   assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: {
     type: "managed-worktree", baseBranch: { kind: "default" },
   } });
@@ -1466,7 +1480,9 @@ test("Start uses any advertised provider and native default effort, and the boar
   const args = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as Record<string, unknown>;
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["fixture-provider", "fixture-model", undefined, "default"]);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(board.lanes[0].lead, { providerId: "fixture-provider", family: "unknown", model: "fixture-model", effort: "default" });
+  assert.deepEqual(board.lanes[0].lead, { providerId: "fixture-provider", family: "unknown", model: "fixture-model", effort: "default", serviceTier: "default" });
+  assert.deepEqual(board.lanes[0].launch?.requested, { providerId: "fixture-provider", model: "fixture-model", effort: "default", serviceTier: "default" });
+  assert.equal((args.pluginMetadata as { launch: { overrideNote: string } }).launch.overrideNote, "override: tooling task, owner approval on FIX-5");
 });
 
 test("Doctor's host reads only Model routes from House rules, falling back only when the file is absent", async (t) => {

@@ -102,6 +102,8 @@ _Avoid_: Lane state, Ticket state as separate entries → States
 
 **Model routes**: The role defaults in the owner's House rules. A repo opts in with `Defaults: House rules` and supplies explicit exceptions in its Routes section. Named roles include Lead, Worker, Worker (hard), Planning, Planning (hard), Review of claude-code, Review of codex and Mechanical.
 
+**Launch record**: The role, ticket, provider, model, effort and service tier a thread was launched with, plus any escalation reason. Squadron seeds it into the thread's own metadata at launch and never rewrites it; the board and reports set it beside what BB reports the thread runs.
+
 **Identity**: Who an agent appears as in Linear and in Git. It is set for each family, and Squadron never holds the credential.
 
 **Two strikes**: Work reported done that then fails its quick check or review, or a worker that is truly stuck, is a strike. After two strikes on one ticket the Lead stops the lane and asks the owner.

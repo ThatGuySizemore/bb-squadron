@@ -9,6 +9,7 @@ import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { end, ready } from "./fixtures/linear-mirror.js";
 import type { Board } from "../lib/board-model.js";
 import { elements, parse, visibleText } from "./fixtures/owner-text.js";
+import { withoutLaunch } from "./fixtures/launch.js";
 
 const buttonLabels = (html: string) => elements(parse(html)).filter((element) => element.tag === "button").map(visibleText);
 
@@ -93,7 +94,7 @@ test("Plan on an Open issue opens a planning thread in the project checkout, see
   assert.equal(args.projectId, "proj-one");
   assert.equal(args.visibility, "visible", "the owner can see and steer the planning thread");
   assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: { type: "unmanaged", path: "/repo" } });
-  assert.deepEqual(args.pluginMetadata, { role: "planning", issueId: "fix-9" });
+  assert.deepEqual(withoutLaunch(args.pluginMetadata, { role: "Planning", launchedBy: "owner", specId: "fix-9", policyResolved: false }), { role: "planning", issueId: "fix-9" });
   assert.equal(args.title, "Plan FIX-9: Linear webhooks");
   for (const text of ["squadron-planner", "FIX-9", "fix-9", "Linear webhooks", "https://linear.app/fixture/issue/FIX-9"]) {
     assert.ok(args.prompt.includes(text), `the seed names ${text}`);
@@ -261,7 +262,7 @@ test("New spec starts a planning thread from nothing: grill-with-docs, then to-s
   const { harness } = await setup(t);
   const started = await harness.behavior.callRpc("planning.start", { projectId: "proj-one" }) as { threadId: string };
   const [args] = harness.inspection.sdk.callsTo("threads.spawn")[0] as [{ title: string; prompt: string; pluginMetadata: unknown }];
-  assert.deepEqual([started.threadId, args.title, args.pluginMetadata], ["thr_plan_1", "New spec", { role: "planning" }]);
+  assert.deepEqual([started.threadId, args.title, withoutLaunch(args.pluginMetadata, { role: "Planning", specId: null })], ["thr_plan_1", "New spec", { role: "planning" }]);
   assert.match(args.prompt, /grill-with-docs[\s\S]*to-spec[\s\S]*to-tickets/);
   assert.ok(args.prompt.includes("docs/agents/issue-tracker.md"), "it publishes as the repo's tracker instructions say");
 });
@@ -283,7 +284,7 @@ test("Plan tickets on a Shaping spec opens a planning thread that plans that spe
   assert.equal(started.threadId, "thr_plan_1");
   const { title, prompt, pluginMetadata } = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { title: string; prompt: string; pluginMetadata: unknown };
   assert.equal(title, "Plan tickets for FIX-1: The board reads Linear");
-  assert.deepEqual(pluginMetadata, { role: "planning", issueId: "fix-1" });
+  assert.deepEqual(withoutLaunch(pluginMetadata, { role: "Planning", specId: "fix-1" }), { role: "planning", issueId: "fix-1" });
   assert.ok(prompt.includes("This spec already exists"), "the planner doesn't write a new spec");
   assert.match(prompt, /`to-tickets`/);
   assert.ok(prompt.includes("`ready-for-agent`"), "the planner finishes by marking the spec ready");

@@ -45,7 +45,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
     return cliCommand({
       summary,
       options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." } },
-      positionals: [{ name: "spec", description: "Spec identifier.", required: true }],
+      positionals: [{ name: "spec", description: "Spec or work item identifier.", required: true }],
       async run({ options, positionals }, context) {
         try {
           const projectId = await actionProject(options.project, context.projectId);
@@ -103,7 +103,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
     });
   }
   bb.cli.register(defineCli({
-    name: "squadron", summary: "See your projects and act on their specs.",
+    name: "squadron", summary: "See your projects and act on their specs and work items.",
     commands: {
       ...helperCommands(helper, (selected) => actionProject(selected, undefined)),
       "autopilot on": autopilotCommand("on"),
@@ -111,7 +111,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
       "autopilot lanes": autopilotCommand("lanes"),
       "autopilot resume": autopilotCommand("resume"),
       "autopilot pause": autopilotCommand("pause"),
-      start: actionCommand("start", "Start a spec's Lead."),
+      start: actionCommand("start", "Start a spec or work item."),
       stop: actionCommand("stop", "Ask a spec's Lead to wind down."),
       resume: actionCommand("resume", "Ask a spec's Lead to carry on."),
       merge: actionCommand("merge", "Merge where the board offers Merge. Only the owner's own words approve."),

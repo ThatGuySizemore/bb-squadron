@@ -65,8 +65,8 @@ const readyMarked = (issue: TrackerIssue) => labelNames(issue).includes(READY_FO
 const heldBy = (holdLabels: readonly string[]) => (issue: TrackerIssue) => isOpenIssue(issue) &&
   [...labelNames(issue), issue.state.name].some((name) => isHoldLabel(holdLabels, name));
 
-/** Open specs: top-level open issues with tickets, including completed tickets. */
-export function openSpecs(snapshot: TrackerSnapshot, planningIssueIds: ReadonlySet<string>): TrackerIssue[] {
+/** Open top-level lane candidates: specs, ready work items, and issues being planned. */
+export function openLaneCandidates(snapshot: TrackerSnapshot, planningIssueIds: ReadonlySet<string>): TrackerIssue[] {
   const open = snapshot.issues.filter((issue) => issue.inProject && isOpenIssue(issue)).sort(byIdentifier);
   return open.filter((issue) => issue.parentId === null &&
     (readyMarked(issue) || planningIssueIds.has(issue.id) || (issue.childCount ?? 0) > 0 ||
@@ -110,7 +110,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
   const workItems = open.filter((issue) => issue.parentId === null &&
     totalTicketsOf(issue) === 0);
   const workItemIds = new Set(workItems.map((issue) => issue.id));
-  const specs = openSpecs(snapshot, new Set(planning.keys())).filter((issue) => !workItemIds.has(issue.id));
+  const specs = openLaneCandidates(snapshot, new Set(planning.keys())).filter((issue) => !workItemIds.has(issue.id));
   const specIds = new Set(specs.map((spec) => spec.id));
   const byId = new Map(snapshot.issues.map((issue) => [issue.id, issue]));
   const project = snapshot.project;
@@ -137,7 +137,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     return "blocked";
   }
   function lane(spec: TrackerIssue, lead: LeadThread): Lane {
-    const workItem = lead.kind === "work-item";
+    // Outside threads have no Squadron kind metadata; use the tracker's full child count.
+    const workItem = lead.outside ? spec.parentId === null && totalTicketsOf(spec) === 0 : lead.kind === "work-item";
     const noRemote = input.repository?.hasRemote === false;
     // An outside lane's branch is the first of its candidates that could be read.
     const branch = input.branches?.[spec.id] ?? lead.branch;

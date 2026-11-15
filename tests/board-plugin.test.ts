@@ -14,6 +14,18 @@ import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 
+/** Render the public board with inert controls; each test owns its literal expectations. */
+async function boardDocument(board: Board, placement: "page" | "panel" = "page") {
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { BoardView } = await import("../board/Board.js");
+  const { JSDOM } = await import("jsdom");
+  return new JSDOM(renderToStaticMarkup(createElement(BoardView, {
+    board, placement, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
+  }))).window.document;
+}
+
 function host(settings: Record<string, string> = { linearApiKey: "fake-board-e2e-key" }) {
   return createFakePluginHost({
     pluginId: "squadron",
@@ -79,20 +91,12 @@ test("Ready includes standalone ready work items beside specs, without promoting
 });
 
 test("Ready rows label specs with their ticket count and work items without a ticket list at both placements", async () => {
-  await import("./fixtures/app-runtime.js");
-  const { createElement } = await import("react");
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const { BoardView } = await import("../board/Board.js");
-  const { JSDOM } = await import("jsdom");
   const board: Board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, lanes: [], shaping: [], openIssues: [], ready: [
     { id: "FIX-1", title: "A spec", kind: "spec", ticketCount: 5, routes: [], blockedBy: [], acceptOwner: false },
     { id: "FIX-2", title: "A work item", kind: "work-item", ticketCount: 0, routes: [], blockedBy: [], acceptOwner: false },
   ] };
   for (const placement of ["page", "panel"] as const) {
-    const html = renderToStaticMarkup(createElement(BoardView, {
-      board, placement, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
-    }));
-    const document = new JSDOM(html).window.document;
+    const document = await boardDocument(board, placement);
     const rows = document.querySelectorAll(".sq-ready");
     const tag = rows[0].querySelector(".sq-work-kind")!;
     assert.equal(tag?.textContent?.replace(/A plan whose tickets are its sub-issues\./g, "").replace(/One piece of a spec\./g, ""), "Spec · 5 tickets");
@@ -117,14 +121,7 @@ test("a Ready spec counts completed tickets in its tag while keeping the open co
   const spec = board.ready.find((row) => row.id === "FIX-5")!;
   assert.equal(spec.ticketCount, 1);
   assert.equal((spec as { totalTicketCount?: number }).totalTicketCount, 2);
-  await import("./fixtures/app-runtime.js");
-  const { createElement } = await import("react");
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const { BoardView } = await import("../board/Board.js");
-  const { JSDOM } = await import("jsdom");
-  const document = new JSDOM(renderToStaticMarkup(createElement(BoardView, {
-    board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
-  }))).window.document;
+  const document = await boardDocument(board);
   const tag = document.querySelectorAll(".sq-ready .sq-work-kind")[1].cloneNode(true) as Element;
   tag.querySelectorAll('[role="tooltip"]').forEach((tip) => tip.remove());
   assert.equal(tag.textContent, "Spec · 2 tickets");
@@ -160,14 +157,7 @@ test("held, unfinished and actively planned work items stay in Open issues with 
     ["FIX-13", "work-item"], ["FIX-14", "work-item"], ["FIX-15", "work-item"], ["FIX-16", "work-item"], ["FIX-17", "work-item"],
   ]);
   assert.deepEqual(board.shaping.map((row) => [row.id, row.totalTicketCount]), [["FIX-18", 1]], "a spec with completed tickets remains a spec");
-  await import("./fixtures/app-runtime.js");
-  const { createElement } = await import("react");
-  const { renderToStaticMarkup } = await import("react-dom/server");
-  const { BoardView } = await import("../board/Board.js");
-  const { JSDOM } = await import("jsdom");
-  const document = new JSDOM(renderToStaticMarkup(createElement(BoardView, {
-    board, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
-  }))).window.document;
+  const document = await boardDocument(board);
   assert.equal(document.querySelectorAll(".sq-open-issue").length, 9);
   for (const row of document.querySelectorAll(".sq-open-issue")) {
     assert.equal(row.querySelector(".sq-row-actions button")?.textContent, "Plan");
@@ -384,4 +374,51 @@ test("the plugin exposes no Linear write tools or OAuth controls", async (t) => 
     await assert.rejects(harness.behavior.callRpc(rpc, null), /has no rpc method/);
   }
   assert.deepEqual(Object.keys(harness.registrations.settingsDescriptors), ["linearApiKey", "dailySummaryTime"]);
+});
+
+
+test("an outside ready work item keeps its kind and read-only controls through the board reader", async (t) => {
+  const linear = workspace({ issues: () => Response.json({ data: { issues: {
+    ...workspaceIssues.data.issues, nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-9"
+      ? { ...node, labels: { ...node.labels, nodes: [{ id: "ready", name: "ready-for-agent", color: "#000000" }] } } : node),
+  } } }) });
+  const fetch = mock.method(globalThis, "fetch", linear.fetch);
+  const { bb, harness } = host();
+  harness.sdk.stub("threads.list", async ({ originPluginId, parentThreadId }) => originPluginId || parentThreadId ? [] : [
+    makeThreadResponse({ id: "outside", originPluginId: null, projectId: "proj-one", title: "Fix FIX-9", status: "active" }),
+  ]);
+  harness.sdk.stub("threads.getPluginMetadata", async () => ({}));
+  harness.sdk.stub("threads.defaultExecutionOptions", async () => ({ model: "fixture", reasoningLevel: "medium" }));
+  t.after(async () => { fetch.mock.restore(); await harness.lifecycle.dispose(); });
+  await plugin(bb);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes[0].kind, "work-item");
+  assert.equal(board.lanes[0].outside, true);
+  assert.deepEqual(board.lanes[0].tickets, []);
+  assert.ok(!board.ready.some((row) => row.id === "FIX-9"));
+  const document = await boardDocument(board);
+  const lane = document.querySelector(".sq-lane-row")!;
+  assert.ok(lane.querySelector('[data-term="Work item"]'));
+  assert.equal(lane.querySelector('[data-term="Spec"]'), null);
+  assert.match(lane.textContent ?? "", /Read-only: Squadron didn't start this lane/);
+  assert.ok(![...lane.querySelectorAll("button")].some((button) => ["Start", "Stop", "Resume", "Merge"].includes(button.textContent ?? "")));
+  for (const action of ["start", "stop", "resume", "merge"]) {
+    await assert.rejects(harness.behavior.callRpc(`lane.${action}`, { projectId: "proj-one", specId: "FIX-9" }), /started outside Squadron/);
+  }
+  assert.equal(harness.inspection.sdk.callsTo("threads.send").length, 0);
+});
+
+test("Landed rows retain each work kind and the spec's total ticket count at both placements", async () => {
+  const lane = { specId: "FIX-1", title: "Delivered", lead: { family: "gpt" as const, model: "fixture", effort: "medium" as const },
+    leadThreadId: "delivered", acceptOwner: false, branch: "delivered", state: "landed" as const, minutes: 12, tickets: [], totalTicketCount: 5 };
+  const board: Board = { tick: 0, laneCapacity: 3, workersPerLane: 2, autoStart: false, ready: [], shaping: [], openIssues: [],
+    lanes: [{ ...lane, kind: "spec" }, { ...lane, specId: "FIX-2", kind: "work-item", totalTicketCount: 0 }] };
+  for (const placement of ["page", "panel"] as const) {
+    const document = await boardDocument(board, placement);
+    const rows = [...document.querySelectorAll(".sq-landed-row")];
+    assert.equal(rows.length, 2);
+    for (const row of rows) row.querySelectorAll('[role="tooltip"]').forEach((tip) => tip.remove());
+    assert.equal(rows[0].querySelector(".sq-work-kind")?.textContent, "Spec · 5 tickets");
+    assert.equal(rows[1].querySelector(".sq-work-kind")?.textContent, "Work item");
+  }
 });

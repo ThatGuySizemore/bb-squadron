@@ -1238,7 +1238,8 @@ test("work-item Start shares CLI and board dedupe, uses its labels over Lead, an
   assert.match(prompt, /accept:owner.*wait/i);
   const { harness: reloaded } = await harness.lifecycle.reload(plugin);
   t.after(() => reloaded.lifecycle.dispose());
-  assert.deepEqual(await reloaded.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" }), rpc);
+  await assert.rejects(reloaded.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" }),
+    { message: "FIX-9 already has a lane. Open its thread or use Resume if it is stopped." });
   assert.equal(reloaded.inspection.sdk.callsTo("threads.spawn").length, 0);
 });
 
@@ -1303,3 +1304,96 @@ test("work-item CLI and RPC share Start refusals for unready, held, blocked, pla
     });
   }
 });
+
+test("later work-item Start refuses through CLI and RPC, including a fresh hold and plugin reload", async (t) => {
+  let held = false;
+  const { harness, native } = await setup(t, () => {
+    const response = readyWorkItem();
+    if (!held) return response;
+    return Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+      nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-9"
+        ? { ...node, labels: { ...node.labels, nodes: [
+          { id: "ready", name: "ready-for-agent", color: "#000000" },
+          { id: "hold", name: "hold", color: "#000000" },
+        ] } } : node),
+    } } });
+  });
+  const start = () => harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" });
+  assert.deepEqual(await Promise.all([start(), start()]), [{ threadId: "thr_lead_1" }, { threadId: "thr_lead_1" }]);
+  let current = harness;
+  for (const heldNow of [false, true]) {
+    held = heldNow;
+    const { harness: fresh } = await current.lifecycle.reload(plugin);
+    current = fresh;
+    t.after(() => fresh.lifecycle.dispose());
+    const board = await fresh.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+    assert.ok(!board.ready.some((row) => row.id === "FIX-9"));
+    const result = await fresh.behavior.runCli(["start", "FIX-9"], { projectId: "proj-one" });
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stderr.trim(), "FIX-9 already has a lane. Open its thread or use Resume if it is stopped.");
+    await assert.rejects(fresh.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" }), { message: result.stderr.trim() });
+    assert.equal(native.count, 1);
+  }
+});
+
+for (const reason of ["hold or blocker", "two strikes", "time limit"]) {
+  test(`a work item's ${reason} wind-down uses shared Stop and remains Stopped after normal completion`, async (t) => {
+    const { harness, native } = await setup(t, readyWorkItem);
+    await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-9" });
+    const prompt = (harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string }).prompt;
+    const running = native.threads.get("thr_lead_1")!;
+    type Events = Awaited<ReturnType<import("@get-bb/plugin-sdk").BbPluginApi["sdk"]["threads"]["events"]["list"]>>;
+    const events: Events = [];
+    let sequence = 0;
+    const readEvents = async ({ threadId, types, limit }: { threadId: string; types?: string[]; limit?: string }) => threadId === running.id
+      ? events.filter((event) => !types || types.includes(event.type)).slice(0, Number(limit ?? 100)) : [];
+    const send = async ({ threadId, input }: Parameters<import("@get-bb/plugin-sdk").BbPluginApi["sdk"]["threads"]["send"]>[0]) => {
+      events.unshift({ id: `request-${++sequence}`, threadId, seq: sequence, createdAt: Date.now(), scope: { kind: "thread" },
+        type: "client/turn/requested", data: { direction: "outbound", execution: { model: "fixture", permissionMode: "auto", reasoningLevel: "medium", serviceTier: "default", source: "client/turn/requested" },
+          source: "tell", initiator: "agent", senderThreadId: running.id, input,
+          request: { method: "turn/start", params: {} }, requestId: `request-${sequence}`, target: { kind: "auto", expectedTurnId: null } } });
+      return { ok: true, delivery: "sent" as const };
+    };
+    harness.sdk.stub("threads.events.list", readEvents);
+    harness.sdk.stub("threads.send", send);
+    const completeNormally = () => {
+      events.unshift({ id: `end-${++sequence}`, threadId: running.id, seq: sequence, createdAt: Date.now(), scope: { kind: "thread" },
+        type: "turn/completed", data: { status: "completed", providerThreadId: null } });
+      native.threads.set(running.id, { ...running, status: "idle", runtime: { displayStatus: "idle" } });
+    };
+    completeNormally();
+    const board = async () => await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+    assert.equal((await board()).lanes[0].state, "flying", "ordinary completion supplies no stop signal");
+    native.threads.set(running.id, running);
+    // Follow the actual seeded policy instruction through the public CLI, not a private state flag.
+    const command = prompt.match(/`bb squadron stop '(FIX-9)'`/);
+    assert.ok(command, `${reason} must direct the agent to the canonical Stop control`);
+    const result = await harness.behavior.runCli(["stop", command[1]], { projectId: "proj-one" });
+    assert.equal(result.exitCode, 0);
+    const sent = harness.inspection.sdk.callsTo("threads.send").at(-1)![0] as { threadId: string; mode: string; input: { text: string }[] };
+    assert.deepEqual([sent.threadId, sent.mode, sent.input[0].text], [running.id, "steer-if-active", STOP_MESSAGE]);
+    assert.equal((await board()).lanes[0].state, "flying", "the active wind-down keeps its capacity until it finishes");
+    completeNormally();
+    let stopped = await board();
+    assert.equal(stopped.lanes[0].state, "stopped");
+    assert.deepEqual(needsYou(stopped).map((need) => need.kind), ["stopped"]);
+    const { harness: reloaded } = await harness.lifecycle.reload(plugin);
+    t.after(() => reloaded.lifecycle.dispose());
+    reloaded.sdk.stub("threads.events.list", readEvents);
+    reloaded.sdk.stub("threads.send", send);
+    stopped = await reloaded.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+    assert.equal(stopped.lanes[0].state, "stopped", "BB lifecycle history reconstructs Stop after reload");
+    assert.deepEqual(needsYou(stopped).map((need) => need.kind), ["stopped"]);
+    const refused = await reloaded.behavior.runCli(["start", "FIX-9"], { projectId: "proj-one" });
+    assert.equal(refused.exitCode, 1, "Start cannot bypass a policy Stop");
+    const resumedControl = await reloaded.behavior.runCli(["resume", "FIX-9"], { projectId: "proj-one" });
+    assert.equal(resumedControl.exitCode, 0);
+    completeNormally();
+    const resumed = await reloaded.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+    assert.equal(resumed.lanes[0].state, "flying", "Resume supersedes the fixed Stop request");
+    assert.deepEqual(needsYou(resumed), []);
+    assert.match(prompt, /Resume doesn't reset strikes or the time budget/);
+    assert.match(prompt, /Start and Resume grant no release, deploy, deletion or other held action/);
+    assert.match(prompt, /Track cumulative elapsed time across Stop\/Resume/);
+  });
+}

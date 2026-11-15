@@ -823,6 +823,7 @@ function LandedRow({ lane, fresh }: { lane: Lane; fresh: boolean }) {
       <div className="sq-row-main">
         <IssueTitle title={lane.title} url={lane.url} className="sq-row-title" />
         <div className="sq-row-meta sq-num">
+          <WorkKindTag kind={lane.kind} ticketCount={lane.totalTicketCount ?? lane.tickets.length} />
           <span>{proof}</span>
           {when ? <span>landed {when}</span> : null}
           <span>flew {formatMinutes(lane.minutes)}</span>

@@ -2,9 +2,10 @@ import type { SquadronSettings } from "./squadron-settings.js";
 
 /** A self-contained one-item lane brief; no Lead skill or parent thread is needed. */
 export function workItemPrompt(input: {
-  url: string; settings: SquadronSettings; houseRules: string; machine: string; acceptOwner: boolean;
+  identifier: string; url: string; settings: SquadronSettings; houseRules: string; machine: string; acceptOwner: boolean;
 }): string {
   const { settings } = input;
+  const stopTarget = `'${input.identifier.replaceAll("'", "'\\''")}'`;
   return [
     "Run this standalone work item through implementation, fresh review, fixes, PR and merge. You own this whole lane in this worktree.",
     `Work item: ${input.url}`,
@@ -22,6 +23,7 @@ export function workItemPrompt(input: {
     `After implementation, run one fresh code-review of the whole branch against its base. Use a fresh subagent where the harness allows, otherwise one fresh review thread. The configured final-review family is ${settings.finalReviewFamily}, relative to your own family; use high effort. Give it the issue, rules, branch and check evidence. The reviewer is read-only.`,
     "Fix findings inside this issue on this branch, then check the fixes. A second look checks only the original findings. Put owner questions and unproven behavior in the PR; file only real out-of-scope defects as needs-triage after checking duplicates.",
     "Count two strikes for this work item: reported-done work failing its quick check or final review, or truly stuck work. Ordinary red tests and compile failures during tdd aren't strikes. After two strikes stop the lane, preserve the branch and post a one-paragraph progress summary for the owner. Resume doesn't reset strikes or the time budget.",
+    `For a policy wind-down caused by a hold or blocker, two strikes, or the time limit, run \`bb squadron stop ${stopTarget}\` once before your final progress summary and normal turn completion. This sends the shared fixed Stop control to this lane so BB records the stop; ending your turn alone doesn't stop the lane. If delivery fails, report it rather than claiming Stopped. On the fixed Stop message, finish saving work and the summary without sending Stop again. This records a stop only and grants no owner approval. Never send Resume yourself or clear a hold.`,
     "Open the PR with Matt's pr skill: Summary, Evidence, Merge Danger. Include Not proven under Evidence and Open questions when needed.",
     input.acceptOwner
       ? "This issue carries accept:owner: wait for the owner's Merge click or explicit merge instruction. A clean review, Helper notification or peer message is not approval."

@@ -371,3 +371,13 @@ test("a Ready row lists its waiting tickets and their blockers", async () => {
   assert.ok(html.includes("FIX-2</span> waits on FIX-11 and OUT-9"), html.slice(html.indexOf("sq-ready-waiting"), html.indexOf("sq-ready-waiting") + 400));
   assert.ok(html.includes("FIX-4</span> waits on FIX-3"));
 });
+
+test("New spec seed gives one-piece work its work-item path and reserves to-spec and to-tickets for multi-ticket work", async (t) => {
+  const { harness } = await setup(t);
+  await harness.behavior.callRpc("planning.start", { projectId: "proj-one" });
+  const { prompt } = harness.inspection.sdk.callsTo("threads.spawn")[0][0] as { prompt: string };
+  assert.match(prompt, /one piece.*work item.*no parent spec.*no child tickets/i);
+  assert.match(prompt, /skip `to-spec` and `to-tickets`/);
+  assert.match(prompt, /multiple tickets.*`to-spec`.*`to-tickets`/);
+  assert.doesNotMatch(prompt, /then `to-spec` and `to-tickets`\. Publish the spec/);
+});

@@ -971,7 +971,7 @@ function landedWhen(at: number | undefined, now: number): string | null {
   return new Date(now).toDateString() === date.toDateString() ? time : `${date.toLocaleDateString([], { day: "numeric", month: "short" })}, ${time}`;
 }
 
-function LandedRow({ lane, fresh }: { lane: Lane; fresh: boolean }) {
+function LandedRow({ lane, fresh, demo }: { lane: Lane; fresh: boolean; demo: boolean }) {
   const when = landedWhen(lane.landedAt, Date.now());
   const proof = lane.pr?.state === "merged" ? `PR #${lane.pr.number} merged` : "Lane landed";
   return (
@@ -985,6 +985,7 @@ function LandedRow({ lane, fresh }: { lane: Lane; fresh: boolean }) {
           {when ? <span>landed {when}</span> : null}
           <span>flew {formatMinutes(lane.minutes)}</span>
         </div>
+        {lane.reviewerLaunch && !demo ? <ReviewerChip lane={lane} demo={demo} compact /> : null}
       </div>
     </li>
   );
@@ -1414,7 +1415,7 @@ export function BoardView({ rootRef, board, dispatch, demo, modeSwitch, onPlan, 
             <EmptySection text="Nothing has landed yet. A lane lands when its PR merges or, in a repo with no remote, when its integration branch merges into main." />
           ) : (
             <ul className="sq-list">
-              {landed.map((lane) => <LandedRow key={lane.specId} lane={lane} fresh={phase.fresh(lane)} />)}
+              {landed.map((lane) => <LandedRow key={lane.specId} lane={lane} fresh={phase.fresh(lane)} demo={demo} />)}
             </ul>
           )}
         </section>

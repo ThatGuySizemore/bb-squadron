@@ -67,3 +67,19 @@ test("an ordinary Flying lane flags a reviewer that ran on a different model, th
     assert.equal(chips[0]!.getAttribute("data-substituted"), "true");
   }
 });
+
+test("a Landed lane still flags its reviewer's substitution", async () => {
+  const board = laneWithReview({ providerId: "codex", model: "gpt-fallback", effort: "medium", serviceTier: "priority" });
+  const landed = { ...board, lanes: [{ ...board.lanes[0]!, state: "landed" as const, landedAt: 200 }] } as Board;
+  await import("./fixtures/app-runtime.js");
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { JSDOM } = await import("jsdom");
+  const { BoardView } = await import("../board/Board.js");
+  for (const placement of ["page", "panel"] as const) {
+    const html = renderToStaticMarkup(createElement(BoardView, { board: landed, placement, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined }));
+    const chips = [...new JSDOM(html).window.document.querySelectorAll(".sq-landed-row .sq-ai")].filter((chip) => chip.getAttribute("title")?.includes("instead of the requested gpt-6.1-sol"));
+    assert.ok(chips.length > 0, `the Landed lane shows its reviewer's substitution (${placement})`);
+    assert.equal(chips[0]!.getAttribute("data-substituted"), "true");
+  }
+});

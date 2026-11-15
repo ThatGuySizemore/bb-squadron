@@ -7,6 +7,9 @@ import { fbm, fieldIn, rect, type Painter, type Surface } from "./dither.js";
 import { layoutPixels } from "./pixels.js";
 import { windSpeed } from "./working-agents.js";
 import { LANDING_MS, TAKEOFF_MS, type Landings } from "./board-model.js";
+import { FLYPAST_MS } from "./fly-past.js";
+
+export { FLYPAST_MS };
 
 /** The banner's height in CSS pixels: a full page, and the narrow layout (the side panel). */
 export const RUNWAY_HEIGHT = { wide: 164, narrow: 140 } as const;
@@ -137,6 +140,43 @@ export function runwayLayout(width: number, narrow: boolean, slots: number, labe
   return place(smallest, false) ?? place(smallest, false, true)!;
 }
 
+/** The fly-past's formation, resting at the middle of its pass. */
+export interface RunwayFormation {
+  /** The formation's sprite cell: the stands' own, or smaller when a V of that size won't fit the sky. */
+  cell: number;
+  /** One plane per stand. The lead is first, at the right; then each rank, one above and one below, steps back and out. */
+  planes: Box[];
+  /** How far each contrail reaches behind its engine: variant A's long V trails. */
+  trail: number;
+}
+
+/**
+ * The fly-past's long V (comp variant A), fitted into the banner's sky. Each
+ * rank steps out by more than a plane's height, so no contrail runs through the
+ * plane behind it, and the whole V sits clear of the tarmac's text.
+ */
+export function runwayFormation(g: RunwayLayout): RunwayFormation {
+  const n = g.stands.length, narrow = g.height === RUNWAY_HEIGHT.narrow;
+  const up = Math.ceil((n - 1) / 2), down = Math.floor((n - 1) / 2);
+  const top = 6, room = g.tarmac.y - 8 - top;
+  const fits = (cell: number) => PLANE_ROWS * cell + (up + down) * (PLANE_ROWS * cell + Math.max(2, cell)) <= room;
+  let cell = g.cell;
+  while (cell > 1 && !fits(cell)) cell--;
+  const w = PLANE_COLS * cell, h = PLANE_ROWS * cell;
+  // Even the smallest planes can't keep a full plane's height between ranks: share out what the sky has.
+  const step = fits(cell) ? h + Math.max(2, cell) : Math.max(1, Math.floor((room - h) / Math.max(1, up + down)));
+  const span = h + (up + down) * step;
+  const leadY = top + Math.round((room - span) / 2) + up * step;
+  const back = w + cell * (narrow ? 4 : 6);
+  const ranks = up;
+  const leadX = Math.round((g.width + ranks * back + w) / 2) - w;
+  const planes = Array.from({ length: n }, (_, i): Box => {
+    const rank = Math.ceil(i / 2), side = i === 0 ? 0 : i % 2 === 1 ? -1 : 1;
+    return { x: leadX - rank * back, y: leadY + side * rank * step, w, h };
+  });
+  return { cell, planes, trail: narrow ? 150 : 280 };
+}
+
 // ---------- state ----------
 
 /**
@@ -148,6 +188,8 @@ export function runwayLayout(width: number, narrow: boolean, slots: number, labe
  */
 export type RunwayStand =
   | { kind: "empty" }
+  /** The quiet hangar: nothing is on the Flying line, so every stand holds its plane, parked and unlit. */
+  | { kind: "parked" }
   | { kind: "flying"; laneId: string; beacon: string | null }
   | { kind: "takeoff"; laneId: string; since: number; beacon: string | null }
   | { kind: "holding"; laneId: string; beacon: string | null }
@@ -164,6 +206,12 @@ export interface RunwayState {
    * Absent while no moment plays.
    */
   at?: number;
+  /**
+   * The fly-past, while it is due or playing: when the last Ready spec lands,
+   * the whole formation passes once in a long V, starting as the landing ends,
+   * in Date.now() milliseconds. Absent otherwise.
+   */
+  flyPast?: { since: number };
 }
 
 /** What the board view knows beyond the lanes, read in the same update: its Needs you rows and the moments it has seen. */
@@ -173,6 +221,8 @@ export interface RunwayMoments {
   /** nextLandings() for this update. */
   landings: Landings | null;
   now: number;
+  /** nextFlyPast().since for this update: when the view's latest fly-past starts, or null. */
+  flyPast?: number | null;
 }
 
 type RunwayLane = { specId: string; state: string; stopped?: boolean };
@@ -203,17 +253,27 @@ function standFor(lane: RunwayLane, moments: RunwayMoments | undefined): RunwayS
 export function runwayState(lanes: ReadonlyArray<RunwayLane>, limit: number, working: number, moments?: RunwayMoments): RunwayState {
   const lit = lanes.map((lane) => standFor(lane, moments)).filter((stand): stand is RunwayStand => stand !== null);
   const slots = Math.max(1, limit, lit.length);
-  const starts = lit.flatMap((stand) => "since" in stand ? [stand.since] : []);
+  // A fly-past shows until its pass ends; its start counts toward the clock once it has come.
+  const pass = moments?.flyPast ?? null;
+  const flyPast = pass !== null && moments && pass + FLYPAST_MS > moments.now ? { since: pass } : null;
+  const starts = [...lit.flatMap((stand) => "since" in stand ? [stand.since] : []),
+    ...(flyPast && moments && flyPast.since <= moments.now ? [flyPast.since] : [])];
+  // Nothing flying: the quiet hangar, every plane parked on its stand.
+  const free: RunwayStand = lit.length ? { kind: "empty" } : { kind: "parked" };
   return {
-    stands: Array.from({ length: slots }, (_, i): RunwayStand => lit[i] ?? { kind: "empty" }),
+    stands: Array.from({ length: slots }, (_, i): RunwayStand => lit[i] ?? free),
     working: Math.max(0, working),
     ...(starts.length ? { at: Math.max(...starts) } : {}),
+    ...(flyPast ? { flyPast } : {}),
   };
 }
 
 /** Whether the banner moves, and the still frame drawn under reduced motion: late enough that every moment shows its end. */
 export function runwayMotion(state: RunwayState): { animated: boolean; stillAt: number } {
-  return { animated: windSpeed(state.working) > 0 || state.stands.some((stand) => stand.kind !== "empty"), stillAt: 2.4 };
+  const moving = state.stands.some((stand) => stand.kind !== "empty" && stand.kind !== "parked");
+  // A due fly-past moves the banner; its still frame is after the pass, with the formation parked.
+  const pass = state.flyPast ? (state.flyPast.since - (state.at ?? state.flyPast.since) + FLYPAST_MS) / 1000 + 0.1 : 0;
+  return { animated: windSpeed(state.working) > 0 || moving || state.flyPast !== undefined, stillAt: Math.max(2.4, pass) };
 }
 
 // ---------- the painter ----------
@@ -261,7 +321,7 @@ interface Pose { x: number; y: number; ink: number; trail: number; ring?: { cx: 
  * turns the plane amber with blinking brackets. At the reduced-motion still
  * frame each moment is at its end and each mark is lit.
  */
-function pose(stand: Exclude<RunwayStand, { kind: "empty" }>, g: RunwayLayout, i: number, seconds: number, age: number, inks: RunwayInks): Pose | null {
+function pose(stand: Exclude<RunwayStand, { kind: "empty" } | { kind: "parked" }>, g: RunwayLayout, i: number, seconds: number, age: number, inks: RunwayInks): Pose | null {
   const { park, air } = g.stands[i]!;
   const phase = i * 1.7;
   const bob = { x: Math.sin(seconds * 0.7 + phase) * 0.8, y: Math.sin(seconds * 1.3 + phase) * 1.2 };
@@ -349,6 +409,21 @@ function dotted(s: Surface, ink: number, x: number, y: number, cell: number): vo
 }
 
 /**
+ * One pass of the whole formation in its long V, lit, from off the left edge
+ * to off the right, trails and all, at `age` seconds into the pass. The trails
+ * blow on the board's wind and stay in the sky.
+ */
+function formationPass(s: Surface, g: RunwayLayout, age: number, T: number, speed: number, inks: RunwayInks): void {
+  const f = runwayFormation(g);
+  const xs = f.planes.map((box) => box.x);
+  const from = -(Math.max(...xs) + f.planes[0]!.w) - 8, to = s.cssW - Math.min(...xs) + f.trail;
+  const dx = Math.round(from + (to - from) * easeInOut(clamp01(age / (FLYPAST_MS / 1000))));
+  const sized = { ...g, cell: f.cell };
+  f.planes.forEach((box, i) => runwayTrails(s, inks.trail, box.x + dx, box.y, sized, f.trail, T, speed, i * 5.3));
+  for (const box of f.planes) sprite(s, inks.plane, box.x + dx, box.y, f.cell);
+}
+
+/**
  * The runway banner. Clouds drift right to left over the sky only, at the
  * working-agent pace; the tarmac is flat under the stencil and the label so no
  * text sits on moving dither. Empty stands are dotted; each lit stand draws its
@@ -383,11 +458,18 @@ export function runway({ state, narrow, label, inks }: { state: RunwayState; nar
     const centre = g.tarmac.y + Math.round(g.tarmac.h / 2) - 1;
     for (let x = from; x + 12 <= to; x += 22) rect(s, inks.line, x, centre, 12, 3);
 
+    // The fly-past: while its pass plays, the whole formation is in the air and the stands stand empty.
+    if (state.flyPast) {
+      const age = seconds + ((state.at ?? state.flyPast.since) - state.flyPast.since) / 1000;
+      if (age >= 0 && age < FLYPAST_MS / 1000) { formationPass(s, g, age, T, speed, inks); return; }
+    }
+
     // Stands and planes: empty stands dotted, then every lit plane's trails, then its marks and the plane on top.
     const poses: Pose[] = [];
     g.stands.forEach(({ park }, i) => {
       const stand = state.stands[i];
       if (!stand || stand.kind === "empty") { dotted(s, inks.stand, park.x, park.y, g.cell); return; }
+      if (stand.kind === "parked") { sprite(s, inks.stand, park.x, park.y, g.cell); return; }
       const age = seconds + ("since" in stand && state.at !== undefined ? (state.at - stand.since) / 1000 : 0);
       const p = pose(stand, g, i, seconds, age, inks);
       if (p) poses.push(p);

@@ -456,7 +456,7 @@ test("an empty board shows how to get started: every section says how work arriv
     board: emptyBoard, demo: false, modeSwitch: null, dispatch: () => undefined, onPlan: () => undefined,
   })).replace(/&#x27;/g, "'");
   for (const text of [
-    "Nothing is flying. Start a Ready spec or work item to launch its lane.",
+    "Nothing is flying. Plan the next spec with New spec.",
     "Nothing is Ready. Specs need the ready-for-agent label and a ticket that can start. Work items need the label and no hold.",
     "No spec is being shaped. Plan an open issue, or start a new spec from nothing.",
     "No open issues. Issues that need planning wait here for Plan.",

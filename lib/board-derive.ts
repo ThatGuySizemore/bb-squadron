@@ -1,8 +1,8 @@
 // Derives the board from a tracker snapshot and project settings.
-import { canMerge, dependencyColumns, reviewerFor, type Blocker, type Board, type Lane, type TrackerStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
+import { canMerge, dependencyColumns, type Blocker, type Board, type Lane, type TrackerStatus, type ReadySpec, type Route, type Ticket, type OpenIssue, type ShapingSpec } from "./board-model.js";
 import type { TrackerIssue, TrackerSnapshot } from "./tracker-contract.js";
 import { readingProblem } from "./linear-reading.js";
-import { DEFAULT_HOLD_LABELS, isHoldLabel, resolveRoute, type SettingsResult } from "./squadron-settings.js";
+import { DEFAULT_HOLD_LABELS, isHoldLabel, resolveRoute, type SettingsResult, type SquadronSettings } from "./squadron-settings.js";
 import { ACCEPT_OWNER, READY_FOR_AGENT, isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
 import type { DoctorReport } from "./doctor.js";
 import { latestLeads, isRunningThread, type LeadThread, type WorkerThread } from "./lead-threads.js";
@@ -11,6 +11,8 @@ import { isActiveProjectThread } from "./project-thread.js";
 import { trackerName } from "./tracker-detection.js";
 import type { LaneProgress } from "./lane-progress.js";
 import { escapeRegExp } from "./issue-text.js";
+import type { ProviderModels } from "./model-capabilities.js";
+import { chooseFinalReviewer, leadRouteFromRecord, type LaneLaunch, type LaneTicket } from "./final-reviewer.js";
 
 /** An unarchived planning thread for one tracker issue, including finished planning. */
 export interface PlanningThread { issueId: string; threadId: string; done?: boolean }
@@ -21,6 +23,8 @@ export interface BoardInput extends LaneProgress {
   planning?: PlanningThread[];
   connection: { status: "connected" | "disconnected" | "failed"; message: string };
   settings: SettingsResult | null;
+  /** BB's advertised capabilities on the checkout's host, for the final reviewer's route checks. */
+  providerCatalog?: readonly ProviderModels[];
   doctor?: DoctorReport;
   leads?: LeadThread[];
   /** Rows from BB's pull-request plugin, keyed by environment id. */
@@ -94,6 +98,32 @@ export function sortQueue(issues: readonly TrackerIssue[], snapshot: TrackerSnap
   });
 }
 
+/** Tracker ticket states; only Linear uses the configured status mapping. */
+export function trackerTicketState(issue: TrackerIssue, kind: TrackerSnapshot["kind"], settings: SquadronSettings | null): Ticket["state"] {
+  if (kind !== "linear") {
+    if (issue.state.type === "completed") return "done";
+    return issue.state.type === "started" ? "working" : "blocked";
+  }
+  const mapping = settings?.statusMapping.ticket;
+  if (issue.state.type === "completed" || issue.state.name === mapping?.done) return "done";
+  if (issue.state.name === mapping?.inBranch) return "branch";
+  if (issue.state.name === mapping?.working) return "working";
+  return "blocked";
+}
+
+/**
+ * The tickets a final review weighs: a spec's tickets in the integration branch or done, and its open
+ * tickets that aren't held. Declined tickets never count. A work item stands for itself.
+ */
+export function finalReviewTickets(spec: TrackerIssue, snapshot: TrackerSnapshot, settings: SquadronSettings, workItem: boolean): LaneTicket[] {
+  if (workItem) return [{ id: spec.id, identifier: spec.identifier, labels: labelNames(spec), integrated: false }];
+  const held = heldBy(settings.holdLabels);
+  return snapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue)).sort(byIdentifier).flatMap((issue) => {
+    const integrated = ["branch", "done"].includes(trackerTicketState(issue, snapshot.kind, settings));
+    return integrated || (isOpenIssue(issue) && !held(issue)) ? [{ id: issue.id, identifier: issue.identifier, labels: labelNames(issue), integrated }] : [];
+  });
+}
+
 export function deriveBoard(input: BoardInput): DerivedBoard {
   const { snapshot } = input;
   const usesLinear = snapshot.kind === "linear";
@@ -127,18 +157,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     const lead = leads.get(spec.id);
     return lead ? [lane(spec, lead)] : [];
   });
-  /** Tracker ticket states; only Linear uses the configured status mapping. */
-  function ticketState(issue: TrackerIssue): Ticket["state"] {
-    if (!usesLinear) {
-      if (issue.state.type === "completed") return "done";
-      return issue.state.type === "started" ? "working" : "blocked";
-    }
-    const mapping = settings?.statusMapping.ticket;
-    if (issue.state.type === "completed" || issue.state.name === mapping?.done) return "done";
-    if (issue.state.name === mapping?.inBranch) return "branch";
-    if (issue.state.name === mapping?.working) return "working";
-    return "blocked";
-  }
+  function ticketState(issue: TrackerIssue): Ticket["state"] { return trackerTicketState(issue, snapshot.kind, settings); }
   function lane(spec: TrackerIssue, lead: LeadThread): Lane {
     // Outside threads have no Squadron kind metadata; use the tracker's full child count.
     const workItem = lead.outside ? spec.parentId === null && totalTicketsOf(spec) === 0 : lead.kind === "work-item";
@@ -215,6 +234,18 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       !needs.length && lead.asksOwner === true && lead.idleSince !== undefined && input.now - lead.idleSince >= 300_000) {
       needs.push({ threadId: lead.thread.id, kind: "waiting", text: "The Lead is waiting on you" });
     }
+    /** The reviewer the one resolver chooses from this lane's builders; omitted when none can be chosen. */
+    function finalReview(): Pick<Lane, "reviewer" | "finalReview"> {
+      // A work item's own thread is its builder; a spec Lead only coordinates.
+      const self: LaneLaunch[] = lead.record && lead.record.role !== "Lead"
+        ? [{ threadId: lead.thread.id, createdAt: lead.thread.createdAt, providerId: lead.thread.providerId ?? null, record: lead.record }] : [];
+      const launches = lead.launches ?? workers.map((worker) =>
+        ({ threadId: worker.id, createdAt: worker.createdAt, providerId: worker.providerId ?? null, record: worker.record ?? null }));
+      const laneTickets = finalReviewTickets(spec, laneSnapshot, settings!, workItem);
+      const own = lead.record ? leadRouteFromRecord(lead.record.requested) : null;
+      const choice = chooseFinalReviewer(settings!, { lead: own ?? lead.route, tickets: laneTickets, launches: [...self, ...launches], projectRoutes: true, catalog: input.providerCatalog });
+      return { ...(choice.route ? { reviewer: choice.route } : {}), finalReview: choice.statement };
+    }
     return {
       ...(workItem ? { kind: "work-item" as const } : {}),
       specId: spec.identifier, title: spec.title, url: spec.url, lead: lead.route, leadThreadId: lead.thread.id,
@@ -234,10 +265,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
       ...(pr && checks ? { pr: { number: pr.number, state: pr.state, url: pr.url, checks } } : {}),
       ...(landedAt !== undefined ? { landedAt } : {}),
-      ...(settings ? { reviewer: reviewerFor(lead.route, settings.finalReviewFamily,
-        // The default row speaks for its family before label-specific rows.
-        [...settings.routes].sort((a, b) => Number(b.label === null) - Number(a.label === null))
-          .map(({ family, model, effort }) => ({ family, model, effort }))) } : {}),
+      ...(settings ? finalReview() : {}),
       acceptOwner, tickets: dependencyColumns(tickets).flat(),
       unmatchedThreads: workers.filter((child) => !matched.has(child.id))
         .map((child) => ({ threadId: child.id, title: child.title ?? "" })),

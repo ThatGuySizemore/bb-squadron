@@ -96,7 +96,7 @@ export function resolveLaunch(settings: SquadronSettings, request: { role: Model
  * Squadron policy's Low effort setting: off refuses every low route; mechanical only allows low for Mechanical alone.
  * A `default` effort counts as low when BB advertises low as the model's native default. An unknown default isn't refused.
  */
-function lowEffortProblem(settings: SquadronSettings, role: ModelRole, route: Route, catalog?: readonly ProviderModels[]): string | null {
+export function lowEffortProblem(settings: SquadronSettings, role: ModelRole, route: Route, catalog?: readonly ProviderModels[]): string | null {
   if (effectiveEffort({ providerId: route.providerId, model: route.model, effort: route.effort }, catalog) !== "low") return null;
   const what = route.effort === "default" ? `${providerFor(route)} ${route.model}'s default effort (low, as BB advertises it)` : "low effort";
   if (settings.policy.lowEffort === "off") return `Low effort is off in House rules Squadron policy, so the ${role} route (${what}) is refused. Set Low effort to mechanical only to allow it for Mechanical, or name a higher effort.`;

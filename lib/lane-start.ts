@@ -5,6 +5,7 @@ import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js
 import { readProjectCheckout } from "./project-checkout.js";
 import { LAUNCH_METADATA_KEY, launchRoutes, policyBriefLines, requestedRoute, resolveLaunch, routeViewLine, spawnRoute, type LaunchRecord } from "./launch-record.js";
 import { workItemPrompt } from "./work-item-prompt.js";
+import { leadFinalReviewLine, workItemFinalReviewLine } from "./final-reviewer-brief.js";
 import type { DoctorReport } from "./doctor.js";
 import { boardChanged, publishSquadronSignal } from "./realtime-contract.js";
 import { PULL_REQUEST_PLUGIN, readPullRequests } from "./pull-requests.js";
@@ -78,6 +79,7 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
         [LAUNCH_METADATA_KEY]: launch },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "default" } } },
       prompt: workItem ? workItemPrompt({ identifier: spec.identifier, url: spec.url, settings: checkout.settings.settings,
+        finalReview: workItemFinalReviewLine(checkout.settings.settings, spec, snapshot, requested, checkout.providerCatalog),
         houseRules: ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md",
         machine: ownerPath("machine-profile") ?? "~/.bb-squadron/machine.md", acceptOwner: ready.acceptOwner,
       }) : ["Use the squadron-lead skill for this spec.", "", `Spec: ${spec.url}`,
@@ -90,9 +92,10 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
         `House rules: ${ownerPath("playbook") ?? "~/.bb-squadron/house-rules.md"}`,
         `This machine: ${ownerPath("machine-profile") ?? "~/.bb-squadron/machine.md"}`,
         `Held tickets carry one of these labels or Status lines: ${holdLabels.join(", ")}.${holdLabels.some((label) => label.endsWith("*")) ? " A trailing * matches a prefix." : ""}`,
-        "Routes resolved at Start. Launch every worker, reviewer and helper thread with bb squadron launch so its route is recorded:",
+        "Routes resolved at Start. Launch every worker, reviewer, research and merger thread with bb squadron launch so its route is recorded:",
         ...launchRoutes(checkout.settings.settings, checkout.providerCatalog).map(routeViewLine),
         ...policyBriefLines(checkout.settings.settings),
+        leadFinalReviewLine(checkout.settings.settings),
       ].join("\n"),
     });
     publishSquadronSignal(bb.realtime, boardChanged, { projectId });

@@ -1,4 +1,4 @@
-// The one documented way a Lead launches workers, reviewers and helper threads.
+// The one documented way a Lead launches workers, reviewers, research and merger threads.
 // It resolves the route with the same resolver as Start, Doctor and the board,
 // refuses an unrunnable route rather than substituting, and records the launch.
 import { cliCommand, PluginCliError, type BbPluginApi } from "@get-bb/plugin-sdk";
@@ -7,6 +7,9 @@ import { isOpenIssue } from "./linear-issues.js";
 import { DEFAULT_EFFORT_UNPROVED, effectiveEffort, routeProblem } from "./model-capabilities.js";
 import type { ModelRole } from "./squadron-settings.js";
 import type { TrackerReader } from "./tracker-contract.js";
+import { finalReviewTickets } from "./board-derive.js";
+import { chooseFinalReviewer, leadRouteFromRecord, type FinalReviewer, type LaneLaunch } from "./final-reviewer.js";
+import { readLaneLaunches, reportedThreadRoute, threadRoute } from "./lead-threads.js";
 import { compareEffort, LAUNCH_METADATA_KEY, readLaunchMetadata, reportedRoute, requestedRoute, resolveLaunch, routeMismatch,
   routeText, spawnRoute, type LaunchRecord } from "./launch-record.js";
 
@@ -14,7 +17,10 @@ export const LAUNCH_ROLES = {
   worker: "Worker", "worker-hard": "Worker (hard)", planning: "Planning", "planning-hard": "Planning (hard)",
   "review-of-claude-code": "Review of claude-code", "review-of-codex": "Review of codex", mechanical: "Mechanical",
 } as const satisfies Record<string, Exclude<ModelRole, "Lead">>;
-type LaunchRoleName = keyof typeof LAUNCH_ROLES;
+/** The lane's one final review, on the review route its builders choose. */
+export const FINAL_REVIEW = "final-review";
+type LaunchRoleName = keyof typeof LAUNCH_ROLES | typeof FINAL_REVIEW;
+const ROLE_NAMES = [...Object.keys(LAUNCH_ROLES), FINAL_REVIEW];
 const NEEDS_TICKET: readonly ModelRole[] = ["Worker", "Worker (hard)"];
 const HARD: Partial<Record<ModelRole, ModelRole>> = { "Worker (hard)": "Worker", "Planning (hard)": "Planning" };
 
@@ -38,20 +44,41 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
       return fail("Run squadron launch inside a Squadron Lead thread in this project.");
     }
     const specId = callerMetadata.specId;
-    const role = LAUNCH_ROLES[input.role];
     const checkout = await readProjectCheckout(bb, projectId);
     if (!checkout) return fail("This BB project has no default checkout to launch in.");
     if (!checkout.settings?.ok) return fail(checkout.settings ? checkout.settings.issues.map((issue) => issue.message).join(" ") : "Fix docs/agents/squadron.md, then launch again.");
     const snapshot = await tracker.getSnapshot(projectId);
     const spec = snapshot.issues.find((issue) => issue.id === specId);
     const specName = spec?.identifier ?? "this spec";
+    // A final review's role comes from who built the branch: recorded launches, never the Lead's family or row order.
+    let finalReview: FinalReviewer | null = null;
+    if (input.role === FINAL_REVIEW) {
+      if (input.ticket !== undefined) return fail("A final review covers the whole branch: leave out --ticket.");
+      if (input.effort !== undefined || input.reason !== undefined) return fail("A final review runs on its review route: leave out --effort and --reason.");
+      if (!spec) return fail("This lane's spec isn't in the tracker snapshot. Read the board again.");
+      const settings = checkout.settings.settings;
+      const own = readLaunchMetadata(callerMetadata);
+      // A work item's own thread is its builder; a spec Lead only coordinates.
+      const self: LaneLaunch[] = own && own.role !== "Lead" ? [{ threadId: callerThreadId, createdAt: caller.createdAt, providerId: caller.providerId ?? null, record: own }] : [];
+      // Final review same repeats the Lead's own route: its record's request, else what BB reports it runs.
+      const reported = await reportedRoute(bb, { id: callerThreadId, providerId: caller.providerId ?? null });
+      const lead = (own ? leadRouteFromRecord(own.requested) : null) ?? (reported ? reportedThreadRoute(reported) : threadRoute(caller.providerId ?? null, null));
+      finalReview = chooseFinalReviewer(settings, { lead,
+        tickets: finalReviewTickets(spec, snapshot, settings, callerMetadata.kind === "work-item"),
+        launches: [...self, ...await readLaneLaunches(bb, projectId, callerThreadId)], catalog: checkout.providerCatalog });
+      if (!finalReview.route || !finalReview.role) return fail(finalReview.statement);
+    }
+    const role = finalReview?.role ?? LAUNCH_ROLES[input.role as keyof typeof LAUNCH_ROLES];
     let ticket: (typeof snapshot.issues)[number] | undefined;
     if (input.ticket !== undefined) {
       ticket = snapshot.issues.find((issue) => issue.identifier.toLowerCase() === input.ticket!.toLowerCase() && issue.inProject && isOpenIssue(issue)
         && (issue.parentId === specId || issue.id === specId));
       if (!ticket) return fail(`${input.ticket} isn't an open ticket of ${specName}. Read the tickets again.`);
     } else if (NEEDS_TICKET.includes(role)) return fail(`Name the ticket a ${role} builds with --ticket.`);
-    const resolved = (() => {
+    const resolved = finalReview?.route ? {
+      // The reviewer's route as chosen: a review row, or with Final review same the Lead's own route.
+      role, category: null, policyResolved: checkout.settings.settings.routeDefaults === "house-rules", overrideNote: null, route: finalReview.route,
+    } : (() => {
       try { return resolveLaunch(checkout.settings.settings, { role, labels: ticket?.labels.map((label) => label.name) ?? [] }, checkout.providerCatalog); }
       catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
     })();
@@ -116,15 +143,16 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
       // No `role` key: a launched child is never read as a Lead or planning thread.
       pluginMetadata: { [LAUNCH_METADATA_KEY]: record },
       environment: { type: "host", hostId: checkout.hostId, workspace: { type: "managed-worktree", baseBranch: { kind: "named", name: input.baseBranch } } },
-      prompt: input.prompt,
+      // The reviewer states the same boundary in its review.
+      prompt: finalReview ? `${input.prompt}\n\n${finalReview.statement}` : input.prompt,
     });
     const reported = await reportedRoute(bb, { id: thread.id, providerId: thread.providerId ?? requested.providerId });
     const unproved = requested.effort === "default" && !!requested.providerId && effectiveEffort({ providerId: requested.providerId, model: requested.model, effort: requested.effort }, checkout.providerCatalog) === null;
-    return { thread, record, reported, mismatch: routeMismatch(requested, reported), unproved };
+    return { thread, record, reported, mismatch: routeMismatch(requested, reported), unproved, finalReview };
   }
 
   const command = cliCommand({
-    summary: "Launch a worker, reviewer or helper thread from a Lead on its recorded route.",
+    summary: "Launch a worker, reviewer, research or merger thread from a Lead on its recorded route.",
     options: {
       ticket: { type: "string", description: "Ticket identifier the thread builds; required for worker and worker-hard." },
       "base-branch": { type: "string", required: true, description: "The integration branch the new worktree starts from." },
@@ -134,17 +162,18 @@ export function registerLaunch(bb: BbPluginApi, tracker: TrackerReader) {
       effort: { type: "string", description: "Effort-only escalation: a higher effort the route's model supports. Needs --replaces and --reason." },
       reason: { type: "string", description: "Why this replacement escalates. Only with a raised effort or a hard route." },
     },
-    positionals: [{ name: "role", description: `One of ${Object.keys(LAUNCH_ROLES).join(", ")}.`, required: true }],
+    positionals: [{ name: "role", description: `One of ${ROLE_NAMES.join(", ")}. final-review picks the review route from who built the branch.`, required: true }],
     async run({ options, positionals }, context) {
       try {
         if (!context.threadId || !context.projectId) throw new PluginCliError("Run squadron launch inside a Squadron Lead thread in this project.");
-        if (!(positionals.role in LAUNCH_ROLES)) throw new PluginCliError(`Choose a role: ${Object.keys(LAUNCH_ROLES).join(", ")}.`);
+        if (!ROLE_NAMES.includes(positionals.role)) throw new PluginCliError(`Choose a role: ${ROLE_NAMES.join(", ")}.`);
         if (!options.prompt?.trim()) throw new PluginCliError("Give the thread's brief with --prompt or --prompt-stdin.");
         const result = await launch(context.projectId, context.threadId, {
           role: positionals.role as LaunchRoleName, ticket: options.ticket, baseBranch: options["base-branch"], prompt: options.prompt,
           title: options.title, replaces: options.replaces, effort: options.effort, reason: options.reason,
         });
         const lines = [`Launched ${result.thread.title ?? result.record.role} on ${routeText(result.record.requested)} @thread:${result.thread.id}`];
+        if (result.finalReview) lines.push(result.finalReview.statement);
         if (result.mismatch.length && result.reported) lines.push(`BB reports a different ${result.mismatch.join(", ")} than requested: ${result.mismatch.map((field) => `${field} ${result.reported![field] ?? "unknown"}`).join(", ")}. The launch record keeps the request.`);
         if (result.unproved) lines.push(DEFAULT_EFFORT_UNPROVED);
         if (!result.reported) lines.push("BB's report of the route couldn't be read yet; the launch record keeps the request.");

@@ -6,6 +6,6 @@ Every thread Squadron or a Lead launches carries a launch record in its own Squa
 
 What BB actually runs is read live from the thread's execution options, with a later provider model fallback winning. It is never stored over the request. A field BB doesn't report stays unknown. Only a known differing field is a mismatch, and the board says "substituted" rather than hiding it.
 
-Leads launch workers, reviewers and helper threads through `bb squadron launch`. It resolves the route with the same resolver Start, Doctor's route view and the board use, and refuses an unrunnable route by name. An effort counts as raised only when BB advertises it for the model and its rank is settled. Unranked levels are refused, not substituted.
+Leads launch workers, reviewers, research and merger threads through `bb squadron launch`. It resolves the route with the same resolver Start, Doctor's route view and the board use, and refuses an unrunnable route by name. An effort counts as raised only when BB advertises it for the model and its rank is settled. Unranked levels are refused, not substituted.
 
 No ledger or database is added (ADR-0005). `readLaunchRecords` derives attempts, including archived ones, on demand, for builder-based review choice and the run report.

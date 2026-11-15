@@ -129,6 +129,8 @@ test("Start records the Lead's route as passed to BB, and Doctor, the Start brie
   assert.match(String(args.prompt), /- Lead: claude-code claude-sonnet-5-5, high effort, default tier/);
   assert.match(String(args.prompt), /- Worker for ui tickets: claude-code claude-opus-5-5, high effort, default tier/);
   assert.match(String(args.prompt), /bb squadron launch/);
+  // SQD-258: the brief names the one final-review launch and the reviewer today's ticket routes project.
+  assert.match(String(args.prompt), /Final review: once every ticket is integrated, launch it once with `bb squadron launch final-review --base-branch <branch> --prompt-stdin`\. It runs on the Review of <provider> route above for the family that built the most integrated tickets/);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes[0].launch?.requested, lead);
   assert.deepEqual(board.lanes[0].launch?.reported, lead);
@@ -402,6 +404,93 @@ test("effort-only escalation refuses a changed role, provider or model and an un
     assert.match(refused.stderr, named);
   }
   assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 3, "no refused escalation launched a thread");
+});
+
+// SQD-258: the final review launches on the review route its recorded builders choose.
+test("final-review: a Claude-built branch launches the GPT review route, and the board shows the same reviewer and boundary", async (t) => {
+  const { harness, native, spawnArgs, launch } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  assert.equal((await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"])).exitCode, 0);
+  // Finished workers are archived; their records still say who built the ticket.
+  native.threads.set("thr_2", { ...native.threads.get("thr_2")!, archivedAt: 5000 });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  const boundary = "Claude builds 1 of 1 ticket so far, so the Review of claude-code route reviews. Independent of FIX-6.";
+  assert.deepEqual(board.lanes[0].reviewer, { family: "gpt", providerId: "codex", model: "gpt-6.1-sol", effort: "high", role: "Review of claude-code" });
+  assert.equal(board.lanes[0].finalReview, `Final review: codex gpt-6.1-sol, high effort, default tier. ${boundary}`);
+  const reviewed = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review the whole branch."]);
+  assert.equal(reviewed.exitCode, 0, reviewed.stderr);
+  assert.match(reviewed.stdout, /Launched Review FIX-5 on codex gpt-6.1-sol, high effort, default tier @thread:thr_3/);
+  assert.ok(reviewed.stdout.includes(boundary), reviewed.stdout);
+  const args = spawnArgs(2);
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["codex", "gpt-6.1-sol", "high", "default"]);
+  assert.equal(args.prompt, `Review the whole branch.\n\nFinal review: codex gpt-6.1-sol, high effort, default tier. ${boundary}`);
+  const record = args.pluginMetadata.launch;
+  assert.deepEqual([record.role, record.tickets, record.escalation, record.leadThreadId], ["Review of claude-code", [], null, "thr_1"]);
+});
+
+test("final-review: a GPT Lead with a Claude worker still launches the GPT review route", async (t) => {
+  const gptLead = shared.replace("| Label | Provider | Model | Effort |", "| Label | Provider | Model | Effort | Note |")
+    .replace("|---|---|---|---|", "|---|---|---|---|---|")
+    .replace("| ui | claude-code | claude-opus-5-5 | high |", "| Lead | codex | gpt-6.1-sol | medium | override: FIX-5 lane, Josh fixture approval |");
+  const { harness, spawnArgs, launch } = await setup(t, gptLead);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  assert.equal(spawnArgs(0).providerId, "codex");
+  assert.equal((await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"])).exitCode, 0);
+  assert.equal(spawnArgs(1).providerId, "claude-code");
+  const reviewed = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review."]);
+  assert.equal(reviewed.exitCode, 0, reviewed.stderr);
+  assert.deepEqual([spawnArgs(2).providerId, spawnArgs(2).model, spawnArgs(2).reasoningLevel], ["codex", "gpt-6.1-sol", "high"]);
+  assert.equal(spawnArgs(2).pluginMetadata.launch.role, "Review of claude-code");
+});
+
+test("final-review with Final review same launches on the Lead's own Sonnet high route, not the Opus review row", async (t) => {
+  const { harness, spawnArgs, launch } = await setup(t, shared.replace(/## Final review\s+other/, "## Final review\n\nsame"));
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  assert.equal((await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"])).exitCode, 0);
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes[0].reviewer, { family: "claude", providerId: "claude-code", model: "claude-sonnet-5-5", effort: "high" });
+  const reviewed = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review."]);
+  assert.equal(reviewed.exitCode, 0, reviewed.stderr);
+  assert.match(reviewed.stdout, /Launched Review FIX-5 on claude-code claude-sonnet-5-5, high effort, default tier @thread:thr_3/);
+  assert.ok(reviewed.stdout.includes("Final review is set to same, so it runs on the Lead's own route. Not independent of FIX-6: its builder is in the reviewer's family."), reviewed.stdout);
+  const args = spawnArgs(2);
+  assert.deepEqual([args.providerId, args.model, args.reasoningLevel, args.serviceTier], ["claude-code", "claude-sonnet-5-5", "high", "default"]);
+  const record = args.pluginMetadata.launch;
+  assert.deepEqual([record.role, record.requested, record.tickets], ["Review of claude-code",
+    { providerId: "claude-code", model: "claude-sonnet-5-5", effort: "high", serviceTier: "default" }, []]);
+});
+
+test("final-review: a legacy GPT-built lane launches the Claude row its Family table names, checked against BB's catalogue", async (t) => {
+  const { harness, spawnArgs, launch } = await setup(t, legacySettings, null);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  const worker = await launch(["worker", "--ticket", "FIX-6", "--base-branch", "spec/fix-5", "--prompt", "p"]);
+  assert.equal(worker.exitCode, 0, worker.stderr);
+  assert.deepEqual([spawnArgs(1).providerId, spawnArgs(1).model, spawnArgs(1).reasoningLevel], ["codex", "gpt-6.1-sol", "high"]);
+  const reviewed = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review."]);
+  assert.equal(reviewed.exitCode, 0, reviewed.stderr);
+  assert.deepEqual([spawnArgs(2).providerId, spawnArgs(2).model, spawnArgs(2).reasoningLevel], ["claude-code", "claude-opus-5-5", "high"]);
+  const record = spawnArgs(2).pluginMetadata.launch;
+  assert.deepEqual([record.role, record.policyResolved], ["Review of codex", false]);
+  assert.ok(reviewed.stdout.includes("GPT builds 1 of 1 ticket so far, so the Review of codex route reviews. Independent of FIX-6."), reviewed.stdout);
+});
+
+test("final-review refuses, launching nothing, when no ticket has a recorded builder: unrecorded threads are never synthesised", async (t) => {
+  const { harness, native, launch } = await setup(t);
+  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
+  native.threads.set("thr_manual", makeThreadResponse({ id: "thr_manual", projectId: "proj-one", parentThreadId: "thr_1", providerId: "codex", createdAt: 9000 }));
+  native.threads.set("thr_manual_done", makeThreadResponse({ id: "thr_manual_done", projectId: "proj-one", parentThreadId: "thr_1", providerId: "claude-code", createdAt: 9500, archivedAt: 9900 }));
+  const refused = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review."]);
+  assert.equal(refused.exitCode, 1);
+  assert.match(refused.stderr, /no reviewer chosen\. No ticket has a recorded builder, and 2 threads in this lane have no launch record\./);
+  for (const extra of [["--ticket", "FIX-6"], ["--effort", "xhigh"], ["--reason", "why"]]) {
+    const wrong = await launch(["final-review", "--base-branch", "spec/fix-5", "--prompt", "Review.", ...extra]);
+    assert.equal(wrong.exitCode, 1, extra.join(" "));
+    assert.match(wrong.stderr, /final review/i);
+  }
+  assert.equal(harness.inspection.sdk.callsTo("threads.spawn").length, 1, "only the Lead was ever launched");
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.equal(board.lanes[0].reviewer, undefined, "the board shows no placeholder reviewer either");
+  assert.match(board.lanes[0].finalReview ?? "", /no reviewer chosen/);
 });
 
 test("a valid legacy Family worker launch uses the discovered catalogue without substituting or joining the policy cohort", async (t) => {

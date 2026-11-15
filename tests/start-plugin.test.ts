@@ -102,7 +102,7 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
     "Repo rules: AGENTS.md and docs/agents/", "Project settings: docs/agents/squadron.md",
     "House rules: /owner/.bb-squadron/house-rules.md", "This machine: /owner/.bb-squadron/machine.md",
     "Held tickets carry one of these labels or Status lines: hold, needs-triage, needs-info, ready-for-human, wontfix.",
-    "Routes resolved at Start. Launch every worker, reviewer and helper thread with bb squadron launch so its route is recorded:",
+    "Routes resolved at Start. Launch every worker, reviewer, research and merger thread with bb squadron launch so its route is recorded:",
     "- Lead: codex gpt-6.1-sol, high effort, default tier",
     "- Worker: codex gpt-6.1-sol, high effort, default tier",
     "- Worker (hard): not set. Add a Worker (hard) row to the Routes table in docs/agents/squadron.md, or opt in with Defaults: House rules.",
@@ -115,6 +115,7 @@ test("Start spawns one visible Lead on the spec's default route with metadata, a
     "- Worker for data tickets: codex gpt-6.1-sol, medium effort, default tier",
     "Squadron policy resolved at Start (follow these values, and the squadron-lead skill's text for each mode):",
     "- Escalation: retry", "- Low effort: off", "- Checkpoint: none",
+    "Final review: once every ticket is integrated, launch it once with `bb squadron launch final-review --base-branch <branch> --prompt-stdin`. It runs on the Review of <provider> route above for the family that built the most integrated tickets, never your own family by default, and it prints which work the reviewer is independent of.",
   ].join("\n"));
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes.map(({ specId, state, leadThreadId }) => [specId, state, leadThreadId]), [["FIX-5", "flying", "thr_lead_1"]]);
@@ -144,7 +145,8 @@ test("Start uses the Lead row even on a ui spec and keeps ticket routes separate
   assert.deepEqual([args.providerId, args.model, args.reasoningLevel], ["codex", "gpt-6.1-sol", "medium"]);
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.deepEqual(board.lanes[0].tickets[0].route, { family: "claude", model: "claude-opus-5-5", effort: "high" });
-  assert.deepEqual(board.lanes[0].reviewer, { family: "claude", model: "claude-opus-5-5", effort: "high" });
+  // A GPT Lead with Claude-built tickets still gets the GPT reviewer: the Lead only coordinates.
+  assert.deepEqual(board.lanes[0].reviewer, { family: "gpt", model: "gpt-6.1-sol", effort: "high" });
 });
 
 test("a ready-marked spec with open planning is Shaping in the board and picker and cannot Start through RPC", async (t) => {
@@ -1251,12 +1253,14 @@ test("work-item Start shares CLI and board dedupe, uses its labels over Lead, an
   const prompt = String(args.prompt);
   for (const text of ["https://linear.app/fixture/issue/FIX-9", "AGENTS.md", "GLOSSARY.md", "docs/agents/",
     "docs/agents/squadron.md", "/owner/.bb-squadron/house-rules.md", "/owner/.bb-squadron/machine.md",
-    "implement", "fresh", "code-review", "subagent", "review thread", "fix", "pr", "accept:owner",
+    "implement", "fresh", "code-review", "bb squadron launch final-review", "independent of", "fix", "pr", "accept:owner",
     "5400000 ms", "whole lane", "two strikes", "Stop", "Resume", "In Progress", "Done",
     "hold, needs-triage, needs-info, ready-for-human, wontfix", "identity", "read back"]) {
     assert.ok(prompt.includes(text), `prompt includes ${text}`);
   }
   assert.match(prompt, /accept:owner.*wait/i);
+  // SQD-258: this thread builds the work item on Claude, so the GPT review route reviews it.
+  assert.ok(prompt.includes("From today's route: codex gpt-6.1-sol, high effort, default tier. Claude builds 1 of 1 ticket so far, so the Review of claude-code route reviews. Independent of FIX-9 (not launched yet)."), prompt);
   assert.match(prompt, /Treat the test approach named in the issue's acceptance criteria as the confirmed seam for tdd\./);
   assert.match(prompt, /Ask the owner about test seams only when the issue names none\./);
   const { harness: reloaded } = await harness.lifecycle.reload(plugin);

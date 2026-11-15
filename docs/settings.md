@@ -28,7 +28,7 @@ Every tracker needs these sections before Start:
 | Stop list | A bullet list of problems that stop a merge. |
 | Time limits | A Setting / Value table with positive Lane time limit and Worker time limit durations, such as `8 h` and `3 h`. |
 | Routes | `Defaults: House rules` plus optional label exceptions, or a legacy table with one `(default)` row. |
-| Final review | `other` or `same`, relative to the Lead's model family. |
+| Final review | `other` reviews with the family that didn't build most of the branch; `same` reviews on the Lead's own route. |
 
 ## Quick check
 

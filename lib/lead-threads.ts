@@ -33,6 +33,8 @@ export interface LeadThread {
   stopReason?: "two-strikes" | "time-limit" | "stop";
   /** What the Lead declared it waits on, from a fixed control input; never from reply prose. */
   declaredWait?: string;
+  /** The Lead's history couldn't be read. That is a read error to surface, never evidence of a Stop. */
+  unreadable?: string;
   thread: Pick<BbThread,
     "id" | "projectId" | "environmentId" | "providerId" | "createdAt" | "archivedAt" | "deletedAt" | "status" | "runtime" | "parentThreadId"> & Attention;
   /** What BB reports the Lead runs, including a substituted model. */
@@ -177,8 +179,12 @@ async function readOwnerQuestion(bb: BbPluginApi, threadId: string): Promise<boo
 
 /** Unknown history retains the existing Stopped fallback. No assistant text is classified.
  * `newestChild` is when the Lead last started a child thread; a wait doesn't survive new work. */
-async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], newestChild = -1): Promise<Pick<LeadThread, "idleSince" | "stopReason" | "declaredWait">> {
-  if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle" || isRunningThread(thread)) return {};
+async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["list"]>>[number], newestChild = -1): Promise<Pick<LeadThread, "idleSince" | "stopReason" | "declaredWait" | "unreadable">> {
+  if (isRunningThread(thread)) return {};
+  // A thread BB reports as failed is recorded evidence of a stop.
+  if (thread.status === "error" || thread.runtime.displayStatus === "error") return {};
+  // Not running and not idle (for example status idle with another display status): say so rather than fall to Stopped.
+  if (thread.status !== "idle" || thread.runtime.displayStatus !== "idle") return { unreadable: `status ${thread.status}, display ${thread.runtime.displayStatus}` };
   try {
     const [terminal, request] = await Promise.all([
       bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1", types: ["turn/completed", "system/thread/interrupted", "turn/started"] }),
@@ -192,16 +198,30 @@ async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbP
       if (texts.includes(TWO_STRIKES_STOP_MESSAGE)) return { stopReason: "two-strikes" };
       if (texts.includes(TIME_LIMIT_STOP_MESSAGE)) return { stopReason: "time-limit" };
       if (texts.includes(STOP_MESSAGE)) return { stopReason: "stop" };
-      // A message from another thread isn't the Lead's own work: look past it for a wait it left in place.
+      // A message from another thread isn't the Lead's own work: look past it for a Stop or wait it left in place.
       const control = isPeerMessage(request) ? await readLatestControl(bb, thread.id, true) : request;
+      if (control && control !== request && control.type === "client/turn/requested") {
+        const texts = inputTexts(control);
+        const stop = texts.includes(TWO_STRIKES_STOP_MESSAGE) ? "two-strikes" as const : texts.includes(TIME_LIMIT_STOP_MESSAGE) ? "time-limit" as const
+          : texts.includes(STOP_MESSAGE) ? "stop" as const : undefined;
+        // Only a turn of the Lead's own (or a child it launched) is work again; a reply to a peer, or the wind-down itself, isn't.
+        if (stop && newestChild < control.createdAt && !await workedSince(bb, thread.id, control, true)) return { stopReason: stop };
+      }
       const declared = control?.type === "client/turn/requested"
         ? inputTexts(control).flatMap((text) => { const target = readWaitTarget(text); return target === null ? [] : [target]; })[0] : undefined;
       // A wait is steered into the Lead's own turn, so no turn starts after it. A later turn of the Lead's own, or a child it launched, means work began again.
-      if (control && declared && completed && newestChild < control.createdAt && !await workedSince(bb, thread.id, control.seq))
+      if (control && declared && completed && newestChild < control.createdAt && !await workedSince(bb, thread.id, control, false))
         return { declaredWait: declared, idleSince: end.createdAt }; // an owner question in the reply still counts
     }
     if (completed && Number.isFinite(end.createdAt)) return { idleSince: end.createdAt };
-  } catch { /* Unreadable lifecycle isn't evidence of a normal idle Lead. */ }
+    // A finished turn that was interrupted or failed is recorded evidence of a stop. No turn boundary at all is not.
+    // A thread with no history at all keeps the Stopped fallback.
+    if (end?.type !== "turn/completed" && end?.type !== "system/thread/interrupted" &&
+      (end || (await bb.sdk.threads.events.list({ threadId: thread.id, order: "desc", limit: "1" })).length)) return { unreadable: "no finished turn is recorded" };
+  } catch (error) {
+    // A failed read says nothing about the lane. Surface it, with why, instead of letting it read as a Stop.
+    return { unreadable: (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").slice(0, 120) || "the read failed" };
+  }
   return {};
 }
 
@@ -213,7 +233,8 @@ const isPeerMessage = (control: Control) => inputTexts(control).some((text) => t
 
 /** Whether the Lead did work of its own after `seq`: a turn nobody's message started, or file changes in any turn.
  * A turn a peer's message started that only replies is not work. */
-async function workedSince(bb: BbPluginApi, threadId: string, seq: number): Promise<boolean> {
+async function workedSince(bb: BbPluginApi, threadId: string, control: ThreadEvent, stop: boolean): Promise<boolean> {
+  const seq = control.seq;
   const after: ThreadEvent[] = [];
   for (let beforeSeq: string | undefined; ;) {
     const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested", "turn/started", "item/completed"] });
@@ -222,11 +243,18 @@ async function workedSince(bb: BbPluginApi, threadId: string, seq: number): Prom
     beforeSeq = String(events[events.length - 1].seq);
   }
   // Oldest first, so each turn's start is read against the request just before it, whichever page it fell on.
-  let asked: ThreadEvent | undefined;
+  // After a Stop, the wind-down (its own turn, saved files, worker outcomes) isn't the Lead running again.
+  let asked: ThreadEvent | undefined = stop ? control : undefined;
+  // Whose request started the turn being read; a Stop's own wind-down may save files, any other turn's file changes are work.
+  let turn: ThreadEvent | undefined;
+  const automatic = (event: ThreadEvent) => event.type === "client/turn/requested" && !!event.data.systemMessageKind && event.data.systemMessageKind !== "unlabeled";
   for (const event of after.sort((a, b) => a.seq - b.seq)) {
-    if (event.type === "client/turn/requested") asked = event;
-    else if (event.type === "item/completed" && event.data.item.type === "fileChange") return true;
-    else if (event.type === "turn/started" && (!asked || !isPeerMessage(asked))) return true;
+    if (event.type === "client/turn/requested") { if (!stop || !automatic(event)) asked = event; }
+    else if (event.type === "item/completed" && event.data.item.type === "fileChange") { if (!stop || (turn !== undefined && turn !== control)) return true; }
+    else if (event.type === "turn/started") {
+      turn = asked;
+      if (!asked || !(isPeerMessage(asked) || (stop && asked === control))) return true;
+    }
   }
   return false;
 }

@@ -364,8 +364,10 @@ test("genuine stops and busy workers never become quiet Questions", async (t) =>
   f.threads.set("worker", makeThreadResponse({ id: "worker", projectId: "one", parentThreadId: lead.id, status: "active", title: "Worker FIX-6" }));
   await assertNoQuestion("flying");
   f.threads.delete("worker");
+  // A history that can't be read isn't a Stop (SQD-275): the lane stays Flying, says it couldn't read, and never asks a quiet Question.
   f.harness.sdk.stub("threads.events.list", async () => { throw new Error("offline"); });
-  await assertNoQuestion("stopped");
+  await assertNoQuestion("flying");
+  assert.deepEqual((await f.board()).lanes[0].needs?.map((need) => need.text), ["Squadron couldn't read the Lead for FIX-5 (offline). Open it to check."]);
 });
 
 test("owner merge waits wake once and suppress a quiet Question; delivery never merges the PR", async (t) => {

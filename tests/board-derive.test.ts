@@ -568,3 +568,15 @@ test("a merged PR with every ticket done or in branch reads Landed", () => {
   ]), { leads: [landedLead()], pullRequests: mergedPr }));
   assert.deepEqual(board.lanes.map((row) => [row.specId, row.state]), [["FIX-20", "landed"]]);
 });
+
+// SQD-279: Clean up reads open tickets from the lane's own snapshot, as the board does, never from main.
+test("open lane tickets come from the lane's snapshot: a ticket main shows Done but the lane branch reopens is open", async () => {
+  const { openLaneTickets } = await import("../lib/board-derive.js");
+  const main = snapshot([issue("FIX-20", { labels: ["ready-for-agent"] }), issue("FIX-21", { parent: "FIX-20", done: true }), issue("FIX-22", { parent: "FIX-20", labels: ["hold"] })]);
+  const lane = snapshot([issue("FIX-20", { labels: ["ready-for-agent"] }), issue("FIX-21", { parent: "FIX-20" }), issue("FIX-22", { parent: "FIX-20", labels: ["hold"] })]);
+  const spec = main.issues[0];
+  assert.deepEqual([...openLaneTickets(spec as never, main as never, null)], [], "held and done tickets aren't open");
+  assert.deepEqual([...openLaneTickets(spec as never, lane as never, null)], ["FIX-21"]);
+  const item = snapshot([issue("FIX-30", { labels: ["ready-for-agent"] })]);
+  assert.deepEqual([...openLaneTickets(item.issues[0] as never, item as never, null)], ["FIX-30"], "a work item is its own ticket");
+});

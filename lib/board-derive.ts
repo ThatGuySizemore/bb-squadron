@@ -114,6 +114,19 @@ export function trackerTicketState(issue: TrackerIssue, kind: TrackerSnapshot["k
 }
 
 /**
+ * Identifiers of a lane's tickets still open, held and declined ones aside. A work item stands for itself.
+ * The board and Clean up both read this from the lane's own snapshot (a local-markdown lane's integration branch), never from main.
+ */
+export function openLaneTickets(spec: TrackerIssue, laneSnapshot: TrackerSnapshot, settings: SquadronSettings | null): ReadonlySet<string> {
+  const held = heldBy(settings?.holdLabels ?? DEFAULT_HOLD_LABELS);
+  const children = laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue));
+  const own = laneSnapshot.issues.find((issue) => issue.id === spec.id) ?? spec;
+  return new Set((children.length ? children : [own])
+    .filter((issue) => isOpenIssue(issue) && !held(issue) && !["branch", "done"].includes(trackerTicketState(issue, laneSnapshot.kind, settings)))
+    .map((issue) => issue.identifier));
+}
+
+/**
  * The tickets a final review weighs: a spec's tickets in the integration branch or done, and its open
  * tickets that aren't held. Declined tickets never count. A work item stands for itself.
  */

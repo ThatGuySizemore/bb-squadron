@@ -7,6 +7,7 @@ import type { AutopilotControls } from "./autopilot.js";
 import type { registerPlanning } from "./planning.js";
 import type { registerLaunch } from "./launch-cli.js";
 import { oneLine, openNeeds, needLine, boardLink, unreadableProject as unreadable } from "./project-observation.js";
+import { checkTicketResult } from "./result-check.js";
 import { formatRunReport, readRunReport, type ReportSources } from "./run-report.js";
 
 /** A --since value: a UTC calendar date, or an ISO date-time with its timezone. */
@@ -168,6 +169,23 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
             if (!project) throw new PluginCliError(`No project matches "${selected}".`);
             const value = await readRunReport(bb, report, project, { since });
             return { exitCode: 0, stdout: options.json ? `${JSON.stringify(value, null, 2)}\n` : formatRunReport(value) };
+          } catch (error) {
+            return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
+          }
+        },
+      }),
+      result: cliCommand({
+        summary: "Check a ticket's latest result block, as bb squadron report will read it. Exits non-zero when it is missing or invalid.",
+        options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." } },
+        positionals: [{ name: "ticket", description: "Ticket or work item identifier.", required: true }],
+        async run({ options, positionals }, context) {
+          try {
+            const selected = options.project ?? context.projectId;
+            if (selected === undefined) throw new PluginCliError("Choose a project with --project.");
+            const [project] = await projects(selected);
+            if (!project) throw new PluginCliError(`No project matches "${selected}".`);
+            const checked = await checkTicketResult(report.history, project.id, positionals.ticket);
+            return checked.ok ? { exitCode: 0, stdout: checked.text } : { exitCode: 1, stderr: `${oneLine(checked.problem)}\n` };
           } catch (error) {
             return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
           }

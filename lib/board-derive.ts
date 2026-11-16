@@ -173,7 +173,8 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // belongs to the previous Lead, never to one started after that evidence.
     const returningLead = lead.previousLeadId !== undefined || (input.leads ?? []).some((previous) =>
       previous.specId === spec.id && previous.thread.id !== lead.thread.id && previous.thread.createdAt <= lead.thread.createdAt);
-    const specLanded = !returningLead && spec.state.type === "completed";
+    // A replacement Lead inherits the spec's completion; only a spec that came back with new open tickets starts over.
+    const specLanded = spec.state.type === "completed" && (!returningLead || ticketsOf(spec).length === 0);
     const localLanded = noRemote && (mergedLaneWork || specLanded);
     const laneSnapshot = input.laneSnapshots?.[spec.id] ?? snapshot;
     const issues = workItem ? [] : laneSnapshot.issues.filter((issue) => issue.parentId === spec.id && !isDeclinedIssue(issue));

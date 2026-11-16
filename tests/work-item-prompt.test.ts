@@ -48,12 +48,13 @@ test("the work-item brief names who produces a required status, the wait step an
   assert.match(brief, /only a required status with no named tool or owner[^\n]*`Needs you:`/i);
 });
 
-test("the Lead skill's merge step says the same about required statuses", async () => {
-  const skill = await readFile("skills/squadron-lead/SKILL.md", "utf8");
-  assert.match(skill, /required statuses[^\n]*AGENTS\.md or docs\/agents/);
+test("the Lead skill's merge step points to merge.md, which says the same about required statuses", async () => {
+  assert.match(await readFile("skills/squadron-lead/SKILL.md", "utf8"), /Read \[merging\]\(merge\.md\) before merging/);
+  const skill = await readFile("skills/squadron-lead/merge.md", "utf8");
+  assert.match(skill, /required statuses[^\n]*AGENTS\.md` or `docs\/agents/);
   assert.match(skill, /required status that no CI posts is this lane's to produce[^\n]*final reviewed head/);
   assert.match(skill, /Never post a status for work that didn't pass, and never skip one/);
-  assert.match(skill, /bb squadron wait <ID> --on '<reason>'/);
+  assert.match(skill, /bb squadron wait <ID> --on '<reason>'[^\n]*don't just go idle/);
   assert.match(skill, /only a required status with no named tool or owner[^\n]*`Needs you:`/i);
 });
 

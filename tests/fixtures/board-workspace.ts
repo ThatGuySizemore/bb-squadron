@@ -1,6 +1,6 @@
 // A synthetic Linear workspace served as recorded GraphQL responses, in the
 // shapes of tests/fixtures/linear-mirror.ts. Invented issues; fake credentials only.
-import { end, openExternalBlocker, ready, vocabularyResponse } from "./linear-mirror.js";
+import { done, end, openExternalBlocker, ready, vocabularyResponse } from "./linear-mirror.js";
 
 const readyLabel = { id: "label-ready", name: "ready-for-agent", color: "#00aa00" };
 const uiLabel = { id: "label-ui", name: "ui", color: "#0000aa" };
@@ -58,6 +58,8 @@ export async function remember(seen: Map<string, { team?: { id: string }; projec
 /** Answers Squadron's read-only queries. Every mutation fails the test. */
 export function workspace(options: {
   issues?: () => Response; vocabulary?: () => Response;
+  /** SQD-279: identifiers of the default fixture's tickets that are Done now. Read on every call, so a test can add one when its PR merges. */
+  done?: ReadonlySet<string>;
   /** A lane spec read by id, with its completed sub-issues. Defaults to the open fixture spec and none. */
   laneSpec?: (id: string) => Response;
   /** A ticket read by ID for the run report and checkpoint. Defaults to Linear's answer for an unknown ID. */
@@ -70,9 +72,11 @@ export function workspace(options: {
   const revisions = new Map<string, { content: string; at: number }>();
   // Custom scenarios change issue fields through a callback. Model Linear's
   // corresponding updatedAt change so delta reads can observe those changes.
+  const issues = options.issues ?? (options.done ? () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
+    nodes: workspaceIssues.data.issues.nodes.map((node) => options.done!.has(node.identifier) ? { ...node, state: done } : node) } } }) : undefined);
   async function issueResponse() {
-    const response = options.issues ? options.issues() : Response.json(workspaceIssues);
-    if (!options.issues || !response.ok) return response;
+    const response = issues ? issues() : Response.json(workspaceIssues);
+    if (!issues || !response.ok) return response;
     const body = await response.clone().json().catch(() => null);
     if (!Array.isArray(body?.data?.issues?.nodes)) return response;
     for (const node of body.data.issues.nodes) {
@@ -103,7 +107,9 @@ export function workspace(options: {
       case "SquadronLaneSpec": {
         const id = String(variables?.id);
         if (options.laneSpec) return options.laneSpec(id);
-        const spec = workspaceIssues.data.issues.nodes.find((issue) => issue.id === id);
+        // A test that serves its own issues serves the same ones here, so a ticket it closed reads as closed.
+        const served = issues ? ((await issues().clone().json().catch(() => null))?.data?.issues?.nodes ?? []) as typeof workspaceIssues.data.issues.nodes : workspaceIssues.data.issues.nodes;
+        const spec = served.find((issue) => issue.id === id);
         return Response.json({ data: { issue: spec ? { ...spec, children: none } : null } });
       }
       case "SquadronTicketHistory": return options.ticketHistory

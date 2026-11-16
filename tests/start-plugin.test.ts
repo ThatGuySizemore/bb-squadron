@@ -1,4 +1,4 @@
-import { test, mock } from "node:test";
+import { test, mock, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { experimental_createHostEntryHarness } from "@get-bb/plugin-sdk/testing/host";
@@ -13,6 +13,12 @@ import { STOP_MESSAGE, RESUME_MESSAGE } from "../lib/lane-contract.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { fixtureProviders } from "./fixtures/provider-catalog.js";
 import { withoutLaunch } from "./fixtures/launch.js";
+import { done } from "./fixtures/linear-mirror.js";
+
+// SQD-279: a merged PR lands a lane only once its tickets are done. A test adds a ticket here when its lane merges.
+const closed = new Set<string>();
+beforeEach(() => closed.clear());
+const close = <T extends { identifier: string }>(node: T) => closed.has(node.identifier) ? { ...node, state: done } : node;
 
 const settingsFile = readFileSync("tests/fixtures/squadron.md", "utf8");
 const skillNames = ["grill-with-docs", "to-spec", "to-tickets", "implement-spec", "tdd", "code-review"];
@@ -579,8 +585,8 @@ function twoReady() {
 
 function readyWorkItem() {
   return Response.json({ data: { issues: { ...workspaceIssues.data.issues,
-    nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-9"
-      ? { ...node, labels: { ...node.labels, nodes: [{ id: "ready", name: "ready-for-agent", color: "#000000" }] } } : node),
+    nodes: workspaceIssues.data.issues.nodes.map((node) => close(node.identifier === "FIX-9"
+      ? { ...node, labels: { ...node.labels, nodes: [{ id: "ready", name: "ready-for-agent", color: "#000000" }] } } : node)),
   } } });
 }
 
@@ -629,8 +635,19 @@ test("work-item PR review and landing use the shared policy without child ticket
   assert.equal(board.lanes[0].state, "pr-open");
   assert.deepEqual(board.lanes[0].tickets, []);
   merged = true;
+  closed.add("FIX-9");
+  const next = await harness.lifecycle.reload(plugin);
+  t.after(() => next.harness.lifecycle.dispose());
+  const h = next.harness;
+  h.sdk.stub("threads.events.list", async () => []);
+  h.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: { outcome: "available", pullRequest: {
+    number: 99, state: "merged", url: "https://example.invalid/pull/99",
+    updatedAt: new Date(Date.now()).toISOString(), checks: { state: "passing" },
+  } } }));
+  // Reload can show the saved reading at once; wait for the live refresh that carries the closed ticket.
+  await h.behavior.callRpc("board.projectCounts", null);
   native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
-  board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  board = await h.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.lanes[0].state, "landed");
   assert.equal(board.lanes[0].kind, "work-item");
   assert.deepEqual(needsYou(board), []);
@@ -855,7 +872,7 @@ function fourReady() {
     } : node), ...[7, 10].flatMap((id) => [
       { ...base[3], id: `fix-${id}`, identifier: `FIX-${id}` },
       { ...base[4], id: `fix-${id + 1}`, identifier: `FIX-${id + 1}`, parent: { id: `fix-${id}` } },
-    ])],
+    ])].map(close),
   } } });
 }
 
@@ -922,22 +939,29 @@ test("a Landed lane between stops resets the count even when several outcomes ar
   for (const specId of ["FIX-1", "FIX-5", "FIX-7"]) await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId });
   await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
   // Completion order differs from board/spec order: FIX-5 stopped, FIX-7 landed, FIX-1 stopped.
+  closed.add("FIX-8");
+  const next = await harness.lifecycle.reload(plugin);
+  t.after(() => next.harness.lifecycle.dispose());
+  const h = next.harness;
+  // Reload can show the saved reading at once; wait for the live refresh that carries the closed ticket.
+  await h.behavior.callRpc("board.projectCounts", null);
   native.threads.set("thr_lead_2", { ...native.threads.get("thr_lead_2")!, status: "error", updatedAt: 100 });
   native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle", updatedAt: 300 });
-  harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_3: { outcome: "available", pullRequest: {
+  h.sdk.stub("plugins.callRpc", async () => ({ env_lead_3: { outcome: "available", pullRequest: {
     number: 7, title: "FIX-7", state: "merged", url: "https://github.com/fixture/repo/pull/7", baseRefName: "main",
     headRefName: "spec/fix-7", updatedAt: "1970-01-01T00:00:00.200Z", autoMerge: false, inMergeQueue: null,
     checks: { state: "passing", totalCount: 1, passedCount: 1, failedCount: 0, pendingCount: 0 },
     review: { state: "none", reviewRequestCount: 0 },
     mergeability: { state: "unknown", mergeStateStatus: null, mergeable: null }, attention: "none",
   } } }));
-  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  const board = await h.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(board.lanes.find((lane) => lane.specId === "FIX-7")?.state, "landed");
   assert.equal(board.autopilot?.status, "on");
   assert.equal(board.autopilot?.consecutiveStops, 1);
 });
 
 test("Outside outcomes never increment or reset the Squadron brake, and owner questions keep their slot", async (t) => {
+  closed.add("FIX-8");
   const { harness, native } = await setup(t, fourReady);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-1" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
@@ -1000,41 +1024,20 @@ test("accept:owner waiting on a merge stays in Needs you while the next Ready sp
   assert.ok(needsYou(board).some((need) => need.kind === "merge" && need.threadId === "thr_lead_1"));
 });
 
-test("a landed spec with remaining un-held tickets returns Ready and starts a fresh Lead without reusing its landed branch", async (t) => {
+// SQD-279 replaces "a landed spec with remaining un-held tickets returns Ready and starts a fresh Lead": a merged PR with
+// un-held tickets still open is part of a lane that carries on, so it never lands and its Lead isn't replaced.
+test("a merged PR with un-held tickets still open keeps its lane Flying and starts no fresh Lead", async (t) => {
   const { harness, native } = await setup(t);
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
-  native.threads.set("old-worker", makeThreadResponse({ id: "old-worker", title: "Worker FIX-6", projectId: "proj-one",
-    parentThreadId: "thr_lead_1", status: "error" }));
+  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "active" });
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
-  native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
-  const before = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(before.ready.map((spec) => spec.id), ["FIX-1", "FIX-5"]);
-  assert.equal(before.lanes[0].state, "landed");
-  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
+  assert.deepEqual(board.lanes.map((lane) => [lane.specId, lane.state, lane.leadThreadId]), [["FIX-5", "flying", "thr_lead_1"]]);
+  assert.ok(!board.ready.some((spec) => spec.id === "FIX-5"));
+  await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 2 });
   await watcherCycle(harness);
-  assert.equal(native.count, 2);
-  assert.equal(native.metadata.get("thr_lead_2")?.specId, "fix-5");
-  const spawns = harness.inspection.sdk.callsTo("threads.spawn");
-  const args = spawns[1][0] as { environment: unknown; prompt: string };
-  assert.deepEqual(args.environment, { type: "host", hostId: "repo-machine", workspace: {
-    type: "managed-worktree", baseBranch: { kind: "default" },
-  } });
-  assert.match(args.prompt, /fresh integration branch/);
-  assert.match(args.prompt, /spec\/fix-5/);
-  // BB assigns each newly managed worktree its own branch. Return newest first to
-  // prove selection does not depend on SDK list ordering.
-  harness.sdk.stub("threads.list", async () => [...native.threads.values()].reverse().map((thread) => ({
-    ...thread, environmentBranchName: thread.id === "thr_lead_1" ? "spec/fix-5" : "spec/fix-5-returned",
-  })));
-  const after = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.deepEqual(after.lanes.map((lane) => [lane.leadThreadId, lane.branch, lane.state, lane.pr]),
-    [["thr_lead_2", "spec/fix-5-returned", "flying", undefined]]);
-  assert.equal(after.lanes[0].tickets[0].threadId, undefined, "old workers never become the returning lane's workers");
-  assert.equal(after.lanes[0].needs, undefined, "old worker failures never become this lane's questions");
-  assert.ok(native.threads.has("old-worker"));
-  assert.ok(native.threads.has("thr_lead_1"), "the old Lead and its environment remain attributable in BB");
-  assert.deepEqual(withoutLaunch(native.metadata.get("thr_lead_1"), { role: "Lead", launchedBy: "owner", specId: "fix-5" }), { role: "lead", specId: "fix-5", startedBy: "owner" });
-  assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_2" });
+  assert.ok(![...native.metadata.values()].some((meta) => meta.previousLeadId), "no replacement Lead is started");
+  assert.deepEqual(await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" }), { threadId: "thr_lead_1" });
 });
 
 test("Autopilot leaves a just-landed spec alone while its tickets wait in branch, but the owner can still Start it", async (t) => {
@@ -1058,7 +1061,7 @@ test("Autopilot leaves a just-landed spec alone while its tickets wait in branch
   assert.equal(native.count, 1);
 });
 
-test("a landed spec stays Landed while every remaining ticket is held, then returns when the hold clears", async (t) => {
+test("a merged spec stays Landed while every remaining ticket is held, and reads Flying again when the hold clears (SQD-279)", async (t) => {
   let held = true;
   const { harness, native } = await setup(t, () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
     nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-6" && held ? {
@@ -1082,14 +1085,12 @@ test("a landed spec stays Landed while every remaining ticket is held, then retu
   const next = await harness.lifecycle.reload(plugin);
   t.after(() => next.harness.lifecycle.dispose());
   next.harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
-  // Reload can show the saved reading immediately. Wait for the live refresh
-  // before checking that Linear's newly cleared hold has reached the board.
   await next.harness.behavior.callRpc("board.projectCounts", null);
   const unheld = await next.harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
-  assert.ok(unheld.ready.some((spec) => spec.id === "FIX-5"));
+  assert.notEqual(unheld.lanes.find((lane) => lane.specId === "FIX-5")?.state, "landed", "an open ticket keeps the lane from Landed");
+  assert.ok(!unheld.ready.some((spec) => spec.id === "FIX-5"));
   await watcherCycle(next.harness);
-  assert.equal(native.count, 1);
-  assert.equal(native.metadata.get("thr_lead_1")?.specId, "fix-5");
+  assert.equal(native.count, 0, "no fresh Lead replaces the merged one");
 });
 
 test("an un-held spec with an open PR keeps its existing Lead and never returns Ready", async (t) => {
@@ -1121,6 +1122,7 @@ test("merged main failure pauses before any next start, links its host log, and 
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
   await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
+  closed.add("FIX-6");
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
   await harness.behavior.callRpc("board", { projectId: "proj-one" });
   await Promise.race([checking, new Promise((_, reject) => setTimeout(() => reject(new Error("main check never started")), 2000))]);
@@ -1191,8 +1193,12 @@ test("a returning Lead cannot hide the previous lane's unchecked merge from the 
   await harness.behavior.callRpc("autopilot.set", { projectId: "proj-one", status: "on", laneLimit: 1 });
   harness.sdk.stub("plugins.callRpc", async () => ({ env_lead_1: lanePr("merged") }));
   native.threads.set("thr_lead_1", { ...native.threads.get("thr_lead_1")!, status: "idle" });
-  await harness.behavior.callRpc("lane.start", { projectId: "proj-one", specId: "FIX-5" });
-  assert.equal(native.count, 2);
+  // A replacement Lead already runs for the spec. The old Lead's merged PR still counts for the shared main.
+  native.threads.set("thr_lead_2", makeThreadResponse({ id: "thr_lead_2", projectId: "proj-one", providerId: "codex",
+    environmentId: "env_lead_2", status: "active", createdAt: Date.now() + 1 }));
+  native.metadata.set("thr_lead_2", { role: "lead", specId: "fix-5", startedBy: "owner", previousLeadId: "thr_lead_1" });
+  native.routes.set("thr_lead_2", native.routes.get("thr_lead_1")!);
+  native.count = 2;
   const board = await harness.behavior.callRpc("board", { projectId: "proj-one" }) as Board;
   assert.equal(checks, 1);
   assert.equal(board.autopilot?.status, "paused");

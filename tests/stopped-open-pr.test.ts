@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {makeThreadResponse} from '@get-bb/plugin-sdk/testing';
 import {helperFixture,settle} from './fixtures/helper-plugin.js';
 import {workspaceIssues} from './fixtures/board-workspace.js';
+import {done} from './fixtures/linear-mirror.js';
 const epoch=Date.parse('2026-11-14T12:00:00Z');
 test('two failed lanes with open PRs pause Autopilot before another start',async t=>{
  const base=workspaceIssues.data.issues.nodes;
@@ -37,7 +38,7 @@ for (const outcome of ['owner-question', 'owner-merge', 'outside', 'landed'] as 
  test(`a confirmed stop with an open PR preserves the ${outcome} exclusion`, async t => {
   const nodes = workspaceIssues.data.issues.nodes.map(node=>node.identifier==='FIX-5' && outcome==='owner-merge' ? {
     ...node,labels:{...node.labels,nodes:[...node.labels.nodes,{id:'accept',name:'accept:owner',color:'#aaaaaa'}]},
-   } : node);
+   } : node.identifier==='FIX-6' ? {...node,state:done} : node);
   const f = await helperFixture(t,epoch,{
    issues:()=>Response.json({data:{issues:{...workspaceIssues.data.issues,nodes}}}),
    laneSpec:()=>Response.json({data:{issue:{...nodes.find(node=>node.identifier==='FIX-5')!,children:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}}),

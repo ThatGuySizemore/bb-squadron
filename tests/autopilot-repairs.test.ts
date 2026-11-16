@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { helperFixture, settle } from './fixtures/helper-plugin.js';
 import { workspaceIssues } from './fixtures/board-workspace.js';
+import { done } from './fixtures/linear-mirror.js';
 
 const epoch = Date.parse('2026-11-14T12:00:00Z');
 const skills = ['codex', 'claude-code'].flatMap(provider => ['grill-with-docs', 'to-spec', 'to-tickets', 'implement-spec', 'tdd', 'code-review'].map(name => ({
@@ -32,7 +33,12 @@ test('Autopilot refuses the selected spec held while Doctor awaits', async t => 
 });
 
 test('a main check holds only its project while observation and discovery continue', async t => {
-  const f = await helperFixture(t, epoch);
+  // SQD-279: FIX-5's lane lands only once its ticket is Done, and FIX-7 is the next Ready spec the barrier holds back.
+  const base = workspaceIssues.data.issues.nodes;
+  const f = await helperFixture(t, epoch, { issues: () => Response.json({ data: { issues: { ...workspaceIssues.data.issues, nodes: [
+    ...base.map(node => node.identifier === 'FIX-6' ? {...node, state: done} : node),
+    {...base[3], id: 'fix-7', identifier: 'FIX-7'}, {...base[4], id: 'fix-8', identifier: 'FIX-8', parent: {id: 'fix-7'}},
+  ] } } }) });
   const completed = f.lead('one', 'Lead');
   f.threads.set(completed.id, {...completed,status:'idle'});
   let merged = false;

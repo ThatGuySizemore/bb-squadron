@@ -11,7 +11,7 @@ export const OWNER_WORDS = Object.freeze({
   Shaping: "A spec that still needs planning or has no ticket that can start now.",
   Lane: "Work on one spec or work item, from Start to a merged pull request.",
   Flying: "A spec or work item whose lane is underway.",
-  Landed: "A spec or work item whose work has merged into the main branch.",
+  Landed: "A spec or work item whose work has merged into the main branch, with no open tickets left. A lane that merged only part of its spec stays Flying; held tickets do not count as open.",
   Held: "A ticket set aside until its hold is cleared.",
   "Needs you": "Questions, setup problems and work that needs your approval.",
   Helper: "The optional agent thread you talk to about your project and ask to act for you.",

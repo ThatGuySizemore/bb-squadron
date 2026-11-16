@@ -4,7 +4,7 @@ import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { helperFixture, settle } from "./fixtures/helper-plugin.js";
 import { workspace, workspaceIssues } from "./fixtures/board-workspace.js";
 import { STOP_MESSAGE } from "../lib/lane-contract.js";
-import { end, openExternalBlocker } from "./fixtures/linear-mirror.js";
+import { done, end, openExternalBlocker } from "./fixtures/linear-mirror.js";
 import { needsYou } from "../lib/board-model.js";
 
 const epoch = Date.parse("2026-11-14T12:00:00Z");
@@ -219,7 +219,7 @@ test("an idle lane blocked outside itself stays quiet, but an explicit owner que
 });
 
 test("a fresh PR landing and another project question reach only their Helpers and never replay", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { done: new Set(["FIX-6"]) });
   await secondHelper(f);
   f.lead("one", "Lead");
   let merged = false;
@@ -375,7 +375,7 @@ test("owner merge waits wake once and suppress a quiet Question; delivery never 
   const ownerSpec = { ...spec, labels: { ...spec.labels, nodes: [...spec.labels.nodes, { id: "owner", name: "accept:owner", color: "#000000" }] } };
   const f = await fixture(t, {
     issues: () => Response.json({ data: { issues: { ...workspaceIssues.data.issues,
-      nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-5" ? ownerSpec : node) } } }),
+      nodes: workspaceIssues.data.issues.nodes.map((node) => node.identifier === "FIX-5" ? ownerSpec : node.identifier === "FIX-6" ? { ...node, state: done } : node) } } }),
     laneSpec: () => Response.json({ data: { issue: { ...ownerSpec, children: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } }),
   });
   const lead = f.lead("one", "Lead");
@@ -485,7 +485,7 @@ test("the two-stop brake sends the Helper one Autopilot pause with its reason an
 });
 
 test("a failed merged-main check reaches the Helper once with its reason, log on the board, and owner-only Resume", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { done: new Set(["FIX-6"]) });
   f.lead("one", "Lead");
   let merged = false;
   f.harness.sdk.stub("plugins.callRpc", async () => ({ "env-one": { outcome: "available", pullRequest: {

@@ -126,6 +126,17 @@ export function registerHelperNotifier(bb: BbPluginApi, helper: { read(projectId
         }
         state.lanes[id] = landed;
       }
+      // A stalled lane with a Helper gets one plain notice per PR head. It is not Needs you and never repeats for a reported key.
+      // A notice still waiting when its stall clears is withdrawn, so the Helper is never told to wake a Lead that has moved on.
+      if (complete && board) {
+        const stalls = new Map<string, string>();
+        for (const lane of board.lanes) if (lane.stall && !lane.stall.owner && lane.pr)
+          stalls.set(NOTICE_PREFIX + `stall:${lane.leadThreadId}:${lane.stall.key}`,
+            `${oneLine(projectName)} | Stalled | ${oneLine(lane.specId)} | ${oneLine(lane.stall.text)} | ${lane.pr.url}`);
+        for (const [id, event] of Object.entries(state.pending))
+          if (event.projectId === projectId && event.key.startsWith(NOTICE_PREFIX + "stall:") && !stalls.has(event.key)) delete state.pending[id];
+        for (const [key, line] of stalls) added = enqueue(state, projectId, key.slice(NOTICE_PREFIX.length), line) || added;
+      }
       if (!Object.keys(state.pending).length) state.firstAt = state.lastAt = null;
       else if (added) { state.firstAt ??= Date.now(); state.lastAt = Date.now(); }
       await save();
@@ -147,15 +158,20 @@ export function registerHelperNotifier(bb: BbPluginApi, helper: { read(projectId
     return serial(async () => {
       if (disposed) return;
       const state = projects[projectId] ??= emptyState();
-      const key = NOTICE_PREFIX + name;
-      const id = JSON.stringify([projectId, key]);
-      if (state.reported[projectId]?.includes(key) || state.pending[id]) return;
-      state.pending[id] = { projectId, key, line, notice: true };
-      state.firstAt ??= Date.now();
-      state.lastAt = Date.now();
+      if (!enqueue(state, projectId, name, line)) return;
       await save();
       schedule(projectId);
     });
+  }
+  /** Queue a notice unless its key was reported or is already pending; true when it was added. The caller saves and schedules. */
+  function enqueue(state: DeliveryState, projectId: string, name: string, line: string): boolean {
+    const key = NOTICE_PREFIX + name;
+    const id = JSON.stringify([projectId, key]);
+    if (state.reported[projectId]?.includes(key) || state.pending[id]) return false;
+    state.pending[id] = { projectId, key, line, notice: true };
+    state.firstAt ??= Date.now();
+    state.lastAt = Date.now();
+    return true;
   }
   return { observe, noticed, notice };
 }

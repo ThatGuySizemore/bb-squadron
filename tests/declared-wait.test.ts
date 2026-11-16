@@ -408,3 +408,30 @@ test("an unread Lead says so even when another thread's blocked line is already 
   assert.ok(texts.some((text) => text.includes("couldn't read the Lead for FIX-5 (history unavailable)")), texts.join(" | "));
   assert.ok(texts.some((text) => text.includes("couldn't deliver a queued message")), texts.join(" | "));
 });
+
+test("a wait sent to a stopped, idle Lead starts a turn that only saves and ends, and the lane reads Waiting", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  // A parked lane: an owner Stop and its wind-down, then a wait whose own turn only saves and ends.
+  f.events.set(lead.id, [
+    row(lead.id, 7, "completed"), row(lead.id, 6, "started"), row(lead.id, 5, "request", waitMessage("FIX-9")),
+    row(lead.id, 4, "completed"), row(lead.id, 3, "started"), row(lead.id, 2, "request", "Stop."), row(lead.id, 1, "request", "Go."),
+  ] as never);
+  idle(f, lead.id);
+  const board = await f.board();
+  assert.deepEqual(board.lanes[0].waitingOn, ["FIX-9"]);
+  assert.equal(board.lanes[0].stopped, false);
+  assert.deepEqual(needsYou(board), []);
+});
+
+test("a wait whose turn was interrupted clears when the Lead later runs a turn of its own", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  const interrupted = { id: "e7", threadId: lead.id, seq: 7, createdAt: epoch + 7, scope: { kind: "thread" as const }, type: "system/thread/interrupted" as const, data: {} };
+  f.events.set(lead.id, [
+    row(lead.id, 9, "completed"), row(lead.id, 8, "started"), interrupted, row(lead.id, 6, "started"),
+    row(lead.id, 5, "request", waitMessage("FIX-9")), row(lead.id, 4, "completed"), row(lead.id, 3, "started"), row(lead.id, 1, "request", "Go."),
+  ] as never);
+  idle(f, lead.id);
+  assert.equal((await f.board()).lanes[0].waitingOn, undefined);
+});

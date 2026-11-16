@@ -24,7 +24,7 @@ _Avoid_: story → Ticket; task for a piece of a spec → Ticket
 
 **Flying**: A spec or work item whose lane is underway.
 
-**Landed**: A spec or work item whose work has merged into the main branch.
+**Landed**: A spec or work item whose work has merged into the main branch, with no open tickets left. A lane that merged only part of its spec stays Flying; held tickets don't count as open.
 
 **Held**: A ticket set aside until its hold is cleared.
 _Avoid_: paused, skipped ticket → Held; blocked for a hold → Held

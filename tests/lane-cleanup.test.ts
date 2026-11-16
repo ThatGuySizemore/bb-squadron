@@ -96,3 +96,19 @@ test("reviewers, threads without a launch record and threads in the Lead's own w
   ])]), d);
   assert.deepEqual([archived, result.kept], [[], []]);
 });
+
+// SQD-279: a merged PR on a lane with open tickets left doesn't land it.
+const onTicket = (id: string, identifier: string) => worker(id, { record: { role: "Worker", tickets: [{ id: `t-${id}`, identifier }] } } as Partial<WorkerThread>);
+
+test("a merged PR with open tickets left keeps the open-ticket worker and archives a finished one", async () => {
+  const { archived, deps: d } = deps({ a: saved, b: saved });
+  const result = await cleanUpLanes({ ...lanes([lead([onTicket("a", "WW-72"), onTicket("b", "WW-69")])]), openTickets: () => new Set(["WW-72"]) }, d);
+  assert.deepEqual(archived, ["b"]);
+  assert.deepEqual(result, { archived: ["b"], kept: [] });
+});
+
+test("a merged PR with no open tickets left archives every saved worker, as before", async () => {
+  const { archived, deps: d } = deps({ a: saved });
+  await cleanUpLanes({ ...lanes([lead([onTicket("a", "WW-72")])]), openTickets: () => new Set() }, d);
+  assert.deepEqual(archived, ["a"]);
+});

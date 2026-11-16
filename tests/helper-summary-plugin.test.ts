@@ -53,7 +53,7 @@ test("time changes apply immediately, Off and no Helper send nothing, and the lo
 });
 
 test("failed sends preserve observed landings across reload even when their Lead disappears", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { done: new Set(["FIX-6"]) });
   await f.harness.behavior.setSettings({ dailySummaryTime: "00:00" });
   f.lead("one", "Lead");
   const run = () => f.harness.behavior.runSchedule("helper-daily-summary");
@@ -111,7 +111,7 @@ test("default time follows server-local DST, including a skipped time and a repe
 });
 
 test("shared unattended observation retains a landing while summary is Off and the lane later disappears", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { done: new Set(["FIX-6"]) });
   await f.harness.behavior.setSettings({ dailySummaryTime: "Off" });
   f.lead("one", "Lead");
   await f.startWatcher();
@@ -130,7 +130,7 @@ test("shared unattended observation retains a landing while summary is Off and t
 });
 
 test("turning summary Off during board reads cancels delivery without consuming landing history", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { done: new Set(["FIX-6"]) });
   await f.harness.behavior.setSettings({ dailySummaryTime: "00:00" });
   f.lead("one", "Lead");
   f.harness.sdk.stub("plugins.callRpc", async () => {
@@ -149,7 +149,7 @@ test("turning summary Off during board reads cancels delivery without consuming 
 });
 
 test("a failed summary leaves only that project's boundary pending across reload", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { done: new Set(["FIX-6"]) });
   await f.harness.behavior.setSettings({ dailySummaryTime: "00:00" });
   f.threads.set("helper-two", makeThreadResponse({ id: "helper-two", projectId: "two", status: "active" }));
   await f.harness.behavior.callRpc("helper.use", { projectId: "two", threadId: "helper-two" });
@@ -183,7 +183,7 @@ test("a failed summary leaves only that project's boundary pending across reload
 });
 
 test("a project with no Helper retains its landing when another project's summary succeeds", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { done: new Set(["FIX-6"]) });
   await f.harness.behavior.setSettings({ dailySummaryTime: "00:00" });
   f.lead("two", "Lead");
   f.harness.sdk.stub("plugins.callRpc", async () => ({ "env-two": { outcome: "available", pullRequest: {

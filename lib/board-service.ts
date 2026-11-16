@@ -8,7 +8,9 @@ import type { registerLaneStart } from "./lane-start.js";
 import type { Board } from "./board-model.js";
 import { boardContract, type ProjectCounts } from "./board-contract.js";
 import { boardChanged, publishSquadronSignal, onSquadronSignal } from "./realtime-contract.js";
-import { deriveBoard, type BoardInput, type PlanningThread } from "./board-derive.js";
+import { deriveBoard, heldBy, trackerTicketState, type BoardInput, type PlanningThread } from "./board-derive.js";
+import { isDeclinedIssue, isOpenIssue } from "./linear-issues.js";
+import { DEFAULT_HOLD_LABELS } from "./squadron-settings.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { ProviderModels } from "./model-capabilities.js";
@@ -140,7 +142,17 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
     });
     const cleanUpOn = entry.settings.value?.ok === true && entry.settings.value.settings.cleanUp === "after landing";
     // Every Lead counts, including older ones a returning lane hides: a merged PR on its own environment is its landing.
-    entry.cleanup = cleanUpOn ? { leads, identify: (specId) => snapshot.issues.find((issue) => issue.id === specId)?.identifier ?? specId,
+    const cleanupSettings = entry.settings.value?.ok === true ? entry.settings.value.settings : null;
+    // A merged PR lands a lane only when no tickets are open, so Clean up keeps the workers of open tickets.
+    const openTickets = (specId: string): ReadonlySet<string> => {
+      const spec = snapshot.issues.find((issue) => issue.id === specId);
+      const children = snapshot.issues.filter((issue) => issue.parentId === specId && !isDeclinedIssue(issue));
+      const heldOut = heldBy(cleanupSettings?.holdLabels ?? DEFAULT_HOLD_LABELS);
+      return new Set((children.length || !spec ? children : [spec])
+        .filter((issue) => isOpenIssue(issue) && !heldOut(issue) && !["branch", "done"].includes(trackerTicketState(issue, snapshot.kind, cleanupSettings)))
+        .map((issue) => issue.identifier));
+    };
+    entry.cleanup = cleanUpOn ? { leads, openTickets, identify: (specId) => snapshot.issues.find((issue) => issue.id === specId)?.identifier ?? specId,
       merged: new Set(leads.flatMap(({ thread, outside }) => {
         const row = thread.environmentId ? pullRequests?.[thread.environmentId] : undefined;
         return !outside && row?.outcome === "available" && row.pullRequest.state === "merged" ? [thread.id] : [];

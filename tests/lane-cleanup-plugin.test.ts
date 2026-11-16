@@ -4,13 +4,18 @@ import { test, type TestContext } from "node:test";
 import { makeThreadResponse } from "@get-bb/plugin-sdk/testing";
 import { helperFixture, settle } from "./fixtures/helper-plugin.js";
 import { needsYou } from "../lib/board-model.js";
+import { workspaceIssues } from "./fixtures/board-workspace.js";
+import { done } from "./fixtures/linear-mirror.js";
 
 const epoch = Date.parse("2026-11-14T12:00:00Z");
 const route = { providerId: "codex", model: "gpt-6.1-sol", effort: "medium", serviceTier: "default" };
 
-async function landedLane(t: TestContext, settingsExtra: string, state: "merged" | "open" = "merged") {
+async function landedLane(t: TestContext, settingsExtra: string, state: "merged" | "open" = "merged", tickets: "done" | "open" = "done") {
   const worktrees: Record<string, { clean: boolean; pushed: boolean } | "offline"> = {};
-  const f = await helperFixture(t, epoch, {}, undefined, undefined, undefined, { settingsExtra, worktree: (path) => {
+  // SQD-279: a merged PR lands a lane only when its spec's tickets are done, so FIX-5's ticket is Done unless a test keeps it open.
+  const issues = () => Response.json({ data: { issues: { ...workspaceIssues.data.issues, nodes: workspaceIssues.data.issues.nodes
+    .map((node) => node.identifier === "FIX-6" && tickets === "done" ? { ...node, state: done } : node) } } });
+  const f = await helperFixture(t, epoch, { issues }, undefined, undefined, undefined, { settingsExtra, worktree: (path) => {
     const value = worktrees[path];
     if (!value || value === "offline") throw new Error("host offline");
     return value;
@@ -116,4 +121,15 @@ test("an unreadable worktree keeps the worker and says it couldn't be checked", 
   const board = await pass();
   assert.deepEqual(archived, []);
   assert.deepEqual(board.cleanup?.map((item) => item.text), ["Unsaved work in FIX-a's worker. Its worktree couldn't be checked."]);
+});
+
+// SQD-279: a merged PR with open tickets left doesn't land the lane, so Clean up keeps the workers on them.
+test("a merged PR with an open ticket left keeps the lane Flying and its open-ticket worker; a finished worker is archived", async (t) => {
+  const { f, worker, archived, pass } = await landedLane(t, "\n## Clean up\n\nAfter landing\n", "merged", "open");
+  worker("6", { clean: true, pushed: true });
+  worker("a", { clean: true, pushed: true });
+  const board = await pass();
+  assert.equal(board.lanes[0].state, "flying");
+  assert.deepEqual(archived, ["w-a"]);
+  assert.equal(f.threads.get("w-6")?.archivedAt ?? null, null);
 });

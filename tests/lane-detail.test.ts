@@ -20,11 +20,12 @@ function lead(children: { id: string; title: string; createdAt?: number }[] = []
   };
 }
 
-const laneIssues = () => [
+// SQD-279: a merged PR lands a lane only once its tickets are done, so a test that merges passes `closed`.
+const laneIssues = (closed = false) => [
   issue("FIX-1", { title: "Lane spec", labels: ["ready-for-agent"] }),
-  issue("FIX-2", { title: "First slice", parent: "FIX-1" }),
-  issue("FIX-3", { title: "Second slice", parent: "FIX-1", labels: ["ui"] }),
-  issue("FIX-12", { title: "Third slice", parent: "FIX-1" }),
+  issue("FIX-2", { title: "First slice", parent: "FIX-1", done: closed }),
+  issue("FIX-3", { title: "Second slice", parent: "FIX-1", labels: ["ui"], done: closed }),
+  issue("FIX-12", { title: "Third slice", parent: "FIX-1", done: closed }),
 ];
 
 test("a lane's motion counts running Lead and child threads even when every ticket is Waiting", async () => {
@@ -110,8 +111,8 @@ function pr(state: "draft" | "open" | "merged" | "closed", checks: "passing" | "
 }
 
 test("a lane is Flying with no PR, In review while its PR is open, and Landed when the PR merges", () => {
-  const lanes = (pullRequests?: Record<string, unknown>) =>
-    deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], pullRequests })).board.lanes[0];
+  const lanes = (pullRequests?: Record<string, unknown>, closed = false) =>
+    deriveBoard(input(snapshot(laneIssues(closed)), { leads: [lead()], pullRequests })).board.lanes[0];
   const none = lanes();
   assert.equal(none.state, "flying");
   assert.equal(none.pr, undefined);
@@ -127,13 +128,13 @@ test("a lane is Flying with no PR, In review while its PR is open, and Landed wh
   assert.deepEqual(open.pr, { number: 42, state: "open", checks: "failing", url: "https://github.com/fixture/repo/pull/42" });
   assert.equal(lanes({ env_lead: pr("open", "no_checks") }).pr?.checks, "none");
 
-  const merged = lanes({ env_lead: pr("merged") });
+  const merged = lanes({ env_lead: pr("merged") }, true);
   assert.equal(merged.state, "landed");
   assert.equal(merged.landedAt, Date.parse("2026-11-13T19:50:00Z"));
   assert.equal(merged.minutes, 20, "a landed lane's time stops at the merge");
   assert.equal(merged.url, "https://linear.app/fixture/issue/FIX-1");
 
-  assert.equal(lanes({ other_env: pr("merged") }).state, "flying", "PRs are keyed by the Lead's environment");
+  assert.equal(lanes({ other_env: pr("merged") }, true).state, "flying", "PRs are keyed by the Lead's environment");
 });
 
 test("a lane's tickets come in dependency order", () => {
@@ -186,11 +187,11 @@ test("the lane row links the Lead, the spec and the PR, labels In review, and li
 
 test("an open or merged PR outranks a quiet Lead, which otherwise reads as stopped", () => {
   const quiet = { ...lead(), thread: { ...lead().thread, status: "idle" as const } };
-  const state = (pullRequests?: Record<string, unknown>) =>
-    deriveBoard(input(snapshot(laneIssues()), { leads: [quiet], pullRequests })).board.lanes[0].state;
+  const state = (pullRequests?: Record<string, unknown>, closed = false) =>
+    deriveBoard(input(snapshot(laneIssues(closed)), { leads: [quiet], pullRequests })).board.lanes[0].state;
   assert.equal(state(), "stopped");
   assert.equal(state({ env_lead: pr("open") }), "pr-open");
-  assert.equal(state({ env_lead: pr("merged") }), "landed");
+  assert.equal(state({ env_lead: pr("merged") }, true), "landed");
 });
 
 test("Merge shows only for an open PR with passing checks, and an accept:owner PR ready to merge is in Needs you", async () => {
@@ -242,7 +243,7 @@ test("the lane row shows Merge for an open PR with passing checks and not otherw
 
 test("the landing animation plays once, when the board sees a lane turn Landed", async () => {
   const { LANDING_MS, nextLandings } = await import("../lib/board-model.js");
-  const landedBoard = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;
+  const landedBoard = deriveBoard(input(snapshot(laneIssues(true)), { leads: [lead()], pullRequests: { env_lead: pr("merged") } })).board;
   const flyingBoard = deriveBoard(input(snapshot(laneIssues()), { leads: [lead()], pullRequests: { env_lead: pr("open") } })).board;
   const at = SYNCED_AT + 5 * 60_000;
 
@@ -384,7 +385,7 @@ test("a stopped Lead with an open PR stays In review and in Needs you until it r
   const quiet = { ...lead(), thread: { ...lead().thread, status: "idle" as const } };
   const board = (currentLead: LeadThread, checks: "pending" | "failing" | "passing" = "pending",
     state: "open" | "merged" = "open", owner = false) => {
-    const [spec, ...tickets] = laneIssues();
+    const [spec, ...tickets] = laneIssues(state === "merged");
     if (owner) spec.labels.push({ id: "owner", name: "accept:owner", color: "#888888" });
     return deriveBoard(input(snapshot([spec, ...tickets]), {
       leads: [currentLead], pullRequests: { env_lead: pr(state, checks) },

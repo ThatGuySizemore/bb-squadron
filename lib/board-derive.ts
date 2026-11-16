@@ -69,7 +69,7 @@ const readyMarked = (issue: TrackerIssue) => labelNames(issue).includes(READY_FO
   || issue.state.name.trim().toLowerCase() === READY_FOR_AGENT;
 
 /** An open ticket a hold label keeps from agents, or a matching `Status:` line in trackers without labels. */
-const heldBy = (holdLabels: readonly string[]) => (issue: TrackerIssue) => isOpenIssue(issue) &&
+export const heldBy = (holdLabels: readonly string[]) => (issue: TrackerIssue) => isOpenIssue(issue) &&
   [...labelNames(issue), issue.state.name].some((name) => isHoldLabel(holdLabels, name));
 
 /** Open top-level lane candidates: specs, ready work items, and issues being planned. */
@@ -219,7 +219,11 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     });
     const row = lead.thread.environmentId ? input.pullRequests?.[lead.thread.environmentId] : undefined;
     const pr = row?.outcome === "available" ? row.pullRequest : undefined;
-    const landedAt = pr?.state === "merged" ? Date.parse(pr.updatedAt)
+    // Tickets still open, held ones aside. A work item is its own single ticket.
+    const remaining = (workItem ? [laneById.get(spec.id) ?? spec] : issues)
+      .filter((issue) => !held(issue) && !["branch", "done"].includes(ticketState(issue)));
+    // A merged PR lands the lane only once the spec has no open tickets left: a lane can merge part of its spec and carry on.
+    const landedAt = pr?.state === "merged" && remaining.length === 0 ? Date.parse(pr.updatedAt)
       : specLanded ? Date.parse(spec.updatedAt)
       : localLanded ? input.repository!.mainUpdatedAt ?? Date.parse(spec.updatedAt) : undefined;
     const checks = pr?.checks.state === "no_checks" ? "none" as const : pr?.checks.state;
@@ -234,8 +238,6 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
     // Squadron holds nothing for an outside lane: it never merges, stops or resumes one.
     const inReview = acceptOwner && localMerge ? "merge-waits"
       : pr?.state === "open" ? (!outside && acceptOwner && checks && canMerge({ pr: { state: pr.state, checks } }) ? "merge-waits" : "pr-open") : null;
-    const remaining = (workItem ? [laneById.get(spec.id) ?? spec] : issues)
-      .filter((issue) => !held(issue) && !["branch", "done"].includes(ticketState(issue)));
     const outsideBlockers = remaining.map((issue) => laneSnapshot.relations
       .filter((relation) => relation.relatedIssueId === issue.id && !ids.has(relation.issueId) && relation.issueId !== spec.id)
       .flatMap((relation) => {

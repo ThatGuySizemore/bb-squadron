@@ -14,6 +14,8 @@ export interface CleanupLanes {
   merged: ReadonlySet<string>;
   /** The spec's identifier as the owner reads it. */
   identify(specId: string): string;
+  /** Identifiers of the spec's tickets still open, held ones aside. A lane with any is not Landed, so its workers on them stay. */
+  openTickets?(specId: string): ReadonlySet<string>;
 }
 
 export interface CleanupDeps {
@@ -38,9 +40,12 @@ export async function cleanUpLanes(lanes: CleanupLanes, deps: CleanupDeps): Prom
     // Only a merged PR proves the lane's work is on main.
     if (lead.outside || !lanes.merged.has(lead.thread.id)) continue;
     const specId = lanes.identify(lead.specId);
+    const openTickets = lanes.openTickets?.(lead.specId) ?? new Set<string>();
     for (const worker of lead.workers ?? []) {
       if (!worker.record || !WORKER_ROLES.includes(worker.record.role)) continue;
       const name = worker.record.tickets[0]?.identifier ?? specId;
+      // A lane still open keeps any worker on an open ticket, and one that names no ticket: it can't be shown finished.
+      if (openTickets.size && (!worker.record.tickets.length || worker.record.tickets.some((ticket) => openTickets.has(ticket.identifier)))) continue;
       const keep = (why: string) => result.kept.push({ specId, threadId: worker.id, text: `Unsaved work in ${name}'s worker. ${why}` });
       // A worker that shares the Lead's worktree would take it away with the Lead.
       if (!worker.environmentId || worker.environmentId === lead.thread.environmentId) continue;

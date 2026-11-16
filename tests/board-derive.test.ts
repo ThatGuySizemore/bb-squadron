@@ -495,13 +495,16 @@ test("a lane that just landed offers its spec only to the owner while every tick
   assert.deepEqual(board.ready.map((row) => [row.id, row.justLanded]), [["FIX-20", true]]);
 });
 
-test("a landed spec that gains a new open ticket still returns", () => {
+// SQD-279 replaces "a landed spec that gains a new open ticket still returns": a merged PR with an open ticket left
+// never lands the lane, so the spec stays in its Flying lane rather than returning to Ready.
+test("a merged PR with an open ticket left keeps the spec in its Flying lane, not in Ready", () => {
   const { board } = deriveBoard(input(snapshot([
     issue("FIX-20", { labels: ["ready-for-agent"] }),
     issue("FIX-21", { parent: "FIX-20", status: "In Review" }),
     issue("FIX-23", { parent: "FIX-20" }),
-  ]), { leads: [landedLead()], pullRequests: mergedPr }));
-  assert.deepEqual(board.ready.map((row) => [row.id, row.justLanded]), [["FIX-20", undefined]]);
+  ]), { leads: [{ ...landedLead(), thread: makeThreadResponse({ id: "old-lead", projectId: "proj-one", environmentId: "old-env", status: "active" }) }], pullRequests: mergedPr }));
+  assert.deepEqual(board.lanes.map((row) => [row.specId, row.state]), [["FIX-20", "flying"]]);
+  assert.deepEqual(board.ready.map((row) => row.id), []);
 });
 
 test("an unreadable Lead history raises Needs you on a returning spec that is Done but still Flying, and not on a landed one", () => {
@@ -538,4 +541,30 @@ test("a completed spec that returns with a new open ticket still reads Flying un
     thread: makeThreadResponse({ id: "new-lead", projectId: "proj-one", environmentId: "new-env", status: "active",
       createdAt: Date.parse("2026-11-15T15:00:00Z") }) }], pullRequests: mergedPr }));
   assert.deepEqual(board.lanes.map((row) => [row.specId, row.state, row.leadThreadId]), [["FIX-20", "flying", "new-lead"]]);
+});
+
+// SQD-279: a merged PR lands the lane only when the spec has no open tickets left.
+test("a merged PR with open tickets left reads Flying; held tickets don't keep it open", () => {
+  const working = { ...landedLead(), thread: makeThreadResponse({ id: "old-lead", projectId: "proj-one", environmentId: "old-env", status: "active" }) };
+  const open = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"] }),
+    issue("FIX-21", { parent: "FIX-20", done: true }),
+    issue("FIX-22", { parent: "FIX-20" }),
+  ]), { leads: [working], pullRequests: mergedPr })).board;
+  assert.deepEqual(open.lanes.map((row) => [row.specId, row.state]), [["FIX-20", "flying"]]);
+  const held = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"] }),
+    issue("FIX-21", { parent: "FIX-20", done: true }),
+    issue("FIX-22", { parent: "FIX-20", labels: ["hold"] }),
+  ]), { leads: [landedLead()], pullRequests: mergedPr })).board;
+  assert.deepEqual(held.lanes.map((row) => [row.specId, row.state]), [["FIX-20", "landed"]]);
+});
+
+test("a merged PR with every ticket done or in branch reads Landed", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"] }),
+    issue("FIX-21", { parent: "FIX-20", done: true }),
+    issue("FIX-22", { parent: "FIX-20", status: "In Review" }),
+  ]), { leads: [landedLead()], pullRequests: mergedPr }));
+  assert.deepEqual(board.lanes.map((row) => [row.specId, row.state]), [["FIX-20", "landed"]]);
 });

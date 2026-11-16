@@ -106,7 +106,7 @@ for (const kind of ['linear', 'github', 'local-markdown'] as const) {
     const merged = noRemote
       ? deriveBoard({...laneInput,repository:{...repository,mainUpdatedAt:started+2000,
         mergedBranchUpdatedAt:{...repository.mergedBranchUpdatedAt,'spec/returned':started+2000}}}).board
-      : deriveBoard({...laneInput,pullRequests:{'env-old':{outcome:'available',pullRequest:{number:1,state:'merged',url:'https://example.invalid/pr/old',updatedAt:'2026-11-14T12:00:01Z',checks:{state:'passing'}}},
+      : deriveBoard({...laneInput,snapshot:laneSnapshot,pullRequests:{'env-old':{outcome:'available',pullRequest:{number:1,state:'merged',url:'https://example.invalid/pr/old',updatedAt:'2026-11-14T12:00:01Z',checks:{state:'passing'}}},
         'env-returned':{outcome:'available',pullRequest:{number:2,state:'merged',url:'https://example.invalid/pr/new',updatedAt:'2026-11-14T12:00:02Z',checks:{state:'passing'}}}}}).board;
     assert.equal(merged.lanes[0].state,'landed');
     assert.equal(merged.lanes[0].landedAt,started+2000);

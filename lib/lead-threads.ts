@@ -245,11 +245,16 @@ async function workedSince(bb: BbPluginApi, threadId: string, control: ThreadEve
   // Oldest first, so each turn's start is read against the request just before it, whichever page it fell on.
   // After a Stop, the wind-down (its own turn, saved files, worker outcomes) isn't the Lead running again.
   let asked: ThreadEvent | undefined = stop ? control : undefined;
+  // Whose request started the turn being read; a Stop's own wind-down may save files, any other turn's file changes are work.
+  let turn: ThreadEvent | undefined;
   const automatic = (event: ThreadEvent) => event.type === "client/turn/requested" && !!event.data.systemMessageKind && event.data.systemMessageKind !== "unlabeled";
   for (const event of after.sort((a, b) => a.seq - b.seq)) {
     if (event.type === "client/turn/requested") { if (!stop || !automatic(event)) asked = event; }
-    else if (event.type === "item/completed" && event.data.item.type === "fileChange") { if (!stop) return true; }
-    else if (event.type === "turn/started" && (!asked || !(isPeerMessage(asked) || (stop && asked === control)))) return true;
+    else if (event.type === "item/completed" && event.data.item.type === "fileChange") { if (!stop || (turn !== undefined && turn !== control)) return true; }
+    else if (event.type === "turn/started") {
+      turn = asked;
+      if (!asked || !(isPeerMessage(asked) || (stop && asked === control))) return true;
+    }
   }
   return false;
 }

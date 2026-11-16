@@ -387,3 +387,24 @@ test("a Lead that is neither running nor idle by BB's own words is surfaced with
   assert.deepEqual(needsYou(board).map(({ kind, text }) => ({ kind, text })),
     [{ kind: "blocked", text: "Squadron couldn't read the Lead for FIX-5 (status idle, display provisioning). Open it to check." }]);
 });
+
+test("a Stop, then a peer turn that edits files, is not stopped", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  recordControl(f, lead.id);
+  await f.harness.behavior.runCli(["stop", "FIX-5"], { projectId: "one", threadId: lead.id });
+  peerTurn(f, lead.id, [{ id: "edit", threadId: lead.id, seq: 8.5, createdAt: epoch + 1, scope: { kind: "thread" }, type: "item/completed",
+    data: { providerThreadId: "p", item: { id: "edit", type: "fileChange", changes: [], status: "completed" } } } as never], PEER);
+  idle(f, lead.id);
+  assert.equal((await f.board()).lanes[0].stopped, false);
+});
+
+test("an unread Lead says so even when another thread's blocked line is already showing", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  f.threads.set(lead.id, { ...f.threads.get(lead.id)!, status: "idle", runtime: { displayStatus: "idle" }, queuedWork: "failed" } as never);
+  f.events.set(lead.id, Object.assign([], { filter() { throw new Error("history unavailable"); } }) as never);
+  const texts = needsYou(await f.board()).map(({ text }) => text);
+  assert.ok(texts.some((text) => text.includes("couldn't read the Lead for FIX-5 (history unavailable)")), texts.join(" | "));
+  assert.ok(texts.some((text) => text.includes("couldn't deliver a queued message")), texts.join(" | "));
+});

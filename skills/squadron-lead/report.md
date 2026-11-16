@@ -15,4 +15,6 @@
 - `strikes`: qualifying strikes with their reasons. TDD red runs, compile errors and provider outages aren't strikes.
 - `ownerInterventions`: Needs you items the owner answered for this ticket.
 
-Routes, escalations and replacements come from launch records, and token usage from BB, so don't repeat them here. A ticket that is reopened and completed again gets a new block; the latest one counts.
+Routes, escalations and replacements come from launch records, and token usage from BB, so leave them out of the block. Count every strike, not only the first; each one is an entry with only a `reason`. `checks` is an array of `{command, result}`, never an object. A ticket that is reopened and completed again gets a new block; the latest one counts.
+
+After posting the completion comment, run `bb squadron result <ID>` right away. It reads the latest block the way the report will and names each wrong field.

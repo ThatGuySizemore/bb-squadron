@@ -42,7 +42,7 @@ export function parseResultBlock(comment: ResultComment): ResultEvidence | null 
   try { json = JSON.parse(rest.slice(0, close)); }
   catch { return { state: "invalid", ...where, problem: "The result block isn't valid JSON." }; }
   const parsed = ticketResultSchema.safeParse(json);
-  if (!parsed.success) return { state: "invalid", ...where, problem: `The result block doesn't match version 1: ${parsed.error.issues[0]?.path.join(".") || "root"}.` };
+  if (!parsed.success) return { state: "invalid", ...where, problem: `The result block doesn't match version 1: ${[...new Set(parsed.error.issues.map((issue) => issue.path.join(".") || "root"))].join(", ")}.` };
   return { state: "known", result: parsed.data, ...where };
 }
 

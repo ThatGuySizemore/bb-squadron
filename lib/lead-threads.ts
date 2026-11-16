@@ -240,7 +240,7 @@ async function workedSince(bb: BbPluginApi, threadId: string, control: ThreadEve
   const seq = control.seq;
   const after: ThreadEvent[] = [];
   for (let beforeSeq: string | undefined; ;) {
-    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: String(EVENT_PAGE), beforeSeq, types: ["client/turn/requested", "turn/started", "turn/completed", "item/completed"] });
+    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: String(EVENT_PAGE), beforeSeq, types: ["client/turn/requested", "turn/started", "turn/completed", "system/thread/interrupted", "item/completed"] });
     after.push(...events.filter((event) => event.seq > seq));
     if (events.length < EVENT_PAGE || events[events.length - 1].seq <= seq) break;
     beforeSeq = String(events[events.length - 1].seq);
@@ -255,7 +255,7 @@ async function workedSince(bb: BbPluginApi, threadId: string, control: ThreadEve
   for (const event of after.sort((a, b) => a.seq - b.seq)) {
     if (event.type === "client/turn/requested") { if (!stop || !automatic(event)) asked = event; }
     // Once a turn ends, a later turn nobody asked for is the Lead's own work; a Stop keeps covering its wind-down.
-    else if (event.type === "turn/completed") { if (!stop) asked = undefined; }
+    else if (event.type === "turn/completed" || event.type === "system/thread/interrupted") { if (!stop) asked = undefined; }
     else if (event.type === "item/completed" && event.data.item.type === "fileChange") { if (!stop || (turn !== undefined && turn !== control)) return true; }
     else if (event.type === "turn/started") {
       turn = asked;

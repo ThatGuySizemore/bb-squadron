@@ -423,3 +423,15 @@ test("a wait sent to a stopped, idle Lead starts a turn that only saves and ends
   assert.equal(board.lanes[0].stopped, false);
   assert.deepEqual(needsYou(board), []);
 });
+
+test("a wait whose turn was interrupted clears when the Lead later runs a turn of its own", async (t) => {
+  const f = await fixture(t);
+  const lead = f.lead("one", "Lead FIX-5");
+  const interrupted = { id: "e7", threadId: lead.id, seq: 7, createdAt: epoch + 7, scope: { kind: "thread" as const }, type: "system/thread/interrupted" as const, data: {} };
+  f.events.set(lead.id, [
+    row(lead.id, 9, "completed"), row(lead.id, 8, "started"), interrupted, row(lead.id, 6, "started"),
+    row(lead.id, 5, "request", waitMessage("FIX-9")), row(lead.id, 4, "completed"), row(lead.id, 3, "started"), row(lead.id, 1, "request", "Go."),
+  ] as never);
+  idle(f, lead.id);
+  assert.equal((await f.board()).lanes[0].waitingOn, undefined);
+});

@@ -503,3 +503,18 @@ test("a landed spec that gains a new open ticket still returns", () => {
   ]), { leads: [landedLead()], pullRequests: mergedPr }));
   assert.deepEqual(board.ready.map((row) => [row.id, row.justLanded]), [["FIX-20", undefined]]);
 });
+
+test("an unreadable Lead history raises Needs you on a returning spec that is Done but still Flying, and not on a landed one", () => {
+  const unread = (id: string, previousLeadId?: string) => ({ specId: "fix-20", branch: "spec/fix-20", unreadable: "HTTP 400",
+    ...(previousLeadId ? { previousLeadId } : {}), route: { family: "gpt" as const, model: "gpt-6.1-sol", effort: "high" as const },
+    thread: makeThreadResponse({ id, projectId: "proj-one", environmentId: `${id}-env`, status: "idle" }) });
+  const returning = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"], done: true }), issue("FIX-21", { parent: "FIX-20" }),
+  ]), { leads: [unread("new-lead", "old-lead")] })).board;
+  assert.deepEqual(returning.lanes.map((row) => [row.specId, row.state]), [["FIX-20", "flying"]]);
+  assert.match(needsYou(returning).map((item) => item.text).join("\n"), /couldn't read the Lead for FIX-20/);
+  const landed = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"], done: true }), issue("FIX-21", { parent: "FIX-20", done: true }),
+  ]), { leads: [unread("only-lead")] })).board;
+  assert.deepEqual(needsYou(landed).filter((item) => /couldn't read/.test(item.text)), []);
+});

@@ -80,7 +80,8 @@ test("both briefs tell the lane to run the check right after posting the complet
     assert.match(text, /right after posting/);
     assert.match(text, /corrected block/);
   }
-  assert.match(brief, /"checks":\[\{"command":"npm run check","result":"passed"\}\]/, "the brief shows the exact shape");
+  for (const text of [brief, skill]) assert.match(text, /"checks":\[\{"command":"npm run check","result":"passed"\}\]/, "each brief shows the exact shape");
+  assert.doesNotMatch(brief, /replacement route[^\n]*result block/, "the brief doesn't ask for replacements in the block");
   const report = await readFile("skills/squadron-lead/report.md", "utf8");
   assert.match(report, /launch records[^\n]*leave them out/i);
   assert.match(report, /every strike/);

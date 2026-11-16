@@ -1446,7 +1446,7 @@ for (const reason of ["hold or blocker", "two strikes", "time limit"]) {
     assert.deepEqual(needsYou(resumed), []);
     assert.match(prompt, /Resume doesn't reset strikes or the time budget/);
     assert.match(prompt, /Start and Resume grant no release, deploy, deletion or other held action/);
-    assert.match(prompt, /Track cumulative elapsed time across Stop\/Resume/);
+    assert.match(prompt, /counts only active time[^\n]*bb squadron time[^\n]*across Stop\/Resume/);
   });
 }
 

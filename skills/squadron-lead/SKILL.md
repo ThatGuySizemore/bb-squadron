@@ -7,7 +7,7 @@ description: Run a spec started from the Squadron board with Matt Pocock's insta
 
 Spec: A plan whose tickets are its sub-issues. Ticket: One piece of a spec. Work item: An issue that stands alone: no parent spec, no tickets of its own.
 
-The Lead runs a multi-ticket Spec. Work items use their own standalone lanes. Read the spec, `AGENTS.md`, `docs/agents/`, `docs/agents/squadron.md`, House rules and This machine; warn on missing optional ones. House rules' Never and Held entries win. Verify your identity before tracker writes.
+The Lead runs a multi-ticket Spec. Work items use their own standalone lanes. Read the spec, `AGENTS.md`, `docs/agents/`, `docs/agents/squadron.md`, House rules and This machine; warn on missing optional ones. House rules' Never and Held entries win. Verify identity before tracker writes.
 
 Use Owner words from `GLOSSARY.md` in PR bodies, comments and Needs you text. Squadron is the orchestrator; the Helper is the optional agent thread the owner talks to.
 
@@ -17,10 +17,9 @@ Run installed `implement-spec`, reaching `tdd`, `code-review` and `pr`; ask the 
 - Launch workers, reviewers, research and merger threads only with `bb squadron launch <role> --ticket <ID> --base-branch <integration branch> --prompt-stdin`. It records the resolved routes your Start brief lists; never hand-pick models.
 - Clearly hard work starts on `worker-hard`. A replacement passes `--replaces <thread>`; effort-only escalation adds `--effort <higher level> --reason`, keeping role and model; stronger-model escalation is `worker-hard` with `--replaces` and `--reason`. Strikes, deadlines and budgets carry over. Before the first worker launch and before every replacement, read `policy.md` beside this skill (required).
 - Each worker brief points to the spec's Testing Decisions as the confirmed `tdd` seams. Workers run typechecking and single test files regularly, the full suite once at the end. Split tickets that keep overrunning rather than raising effort.
-- Use one-line pointers.
 - When the owner can act, ask through a pending question or `Needs you:` at the start of its own line. Otherwise name the tracker blockers.
 - Skip tickets held by labels or Status lines from your first message. Re-read tickets before starting each worker; cleared tickets join the frontier. List held tickets under "Held" in the PR.
-- Quick-check each worker before merging. Track lane and worker elapsed time against project settings; wind down at the limit.
+- Quick-check workers before merging. Limits count active time (running turns, not waits, Stop or idle); read it with `bb squadron time <SPEC-ID>`; wind down at the limit.
 - Once every ticket is integrated, read `review.md` beside this skill (required) and run the one fresh whole-branch `code-review` it describes; one fresh worker fixes findings.
 - Fix findings inside the spec in the branch. Write the spec PR with Matt's `pr` skill: Summary, Evidence, Merge Danger. Put "Not proven" under Evidence; add Held and Open questions only if needed. File only real defects outside the spec as `needs-triage`, after a duplicate check.
 - When you hold back for another lane, declare the wait: read [waiting](wait.md).

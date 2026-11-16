@@ -4,6 +4,7 @@ import { deriveBoard } from "./board-derive.js";
 import { isRunningThread, latestLeads, readLeadThreads } from "./lead-threads.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import { LAUNCH_METADATA_KEY, launchRoutes, policyBriefLines, requestedRoute, resolveLaunch, routeViewLine, spawnRoute, type LaunchRecord } from "./launch-record.js";
+import { formatActiveTime, readActiveTime } from "./active-time.js";
 import { workItemPrompt } from "./work-item-prompt.js";
 import { leadFinalReviewLine, workItemFinalReviewLine } from "./final-reviewer-brief.js";
 import type { DoctorReport } from "./doctor.js";
@@ -170,6 +171,15 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
       if (!cleanWaitTarget(on)) throw new Error("Say what the lane is waiting on.");
       return tell(projectId, specId, waitMessage(on), "steer-if-active", "wait");
     },
+    /** What the lane's Lead and workers spent running turns, against the project's limit. Waiting and stopped time isn't counted. */
+    async activeTime(projectId: string, specId: string): Promise<string> {
+      const lead = await leadOf(projectId, specId, "read the time of");
+      const read = (await readProjectCheckout(bb, projectId))?.settings;
+      const limits = read?.ok ? read.settings.limits : undefined;
+      const workItem = lead.kind === "work-item";
+      return formatActiveTime(specId, await readActiveTime(bb, projectId, lead, Date.now()),
+        workItem ? limits?.workerTimeLimitMs : limits?.laneTimeLimitMs, workItem ? "worker" : "lane");
+    },
     resume: (projectId: string, specId: string) => tell(projectId, specId, RESUME_MESSAGE, "queue-if-active", "resume"),
     start(projectId: string, specId: string) {
       return startLane(projectId, specId, "owner").then((result): Promise<{ threadId: string }> | { threadId: string } => {
@@ -203,4 +213,4 @@ export function registerLaneStart(bb: BbPluginApi, sources: {
   return { ...actions, startAutomatic: startLane };
 }
 
-export type LaneActions = Pick<ReturnType<typeof registerLaneStart>, "start" | "stop" | "wait" | "resume" | "merge">;
+export type LaneActions = Pick<ReturnType<typeof registerLaneStart>, "start" | "stop" | "wait" | "resume" | "merge" | "activeTime">;

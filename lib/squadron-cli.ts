@@ -53,7 +53,7 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
     if (matches.length > 1) throw new PluginCliError("Choose a project with --project.");
     return matches[0].id;
   }
-  function actionCommand(action: Exclude<keyof LaneActions, "wait">, summary: string) {
+  function actionCommand(action: Exclude<keyof LaneActions, "wait" | "activeTime">, summary: string) {
     return cliCommand({
       summary,
       options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." },
@@ -186,6 +186,19 @@ export function registerSquadronCli(bb: BbPluginApi, board: { read(projectId: st
             if (!project) throw new PluginCliError(`No project matches "${selected}".`);
             const checked = await checkTicketResult(report.history, project.id, positionals.ticket);
             return checked.ok ? { exitCode: 0, stdout: checked.text } : { exitCode: 1, stderr: `${oneLine(checked.problem)}\n` };
+          } catch (error) {
+            return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
+          }
+        },
+      }),
+      time: cliCommand({
+        summary: "Show a lane's active time against its time limit: the time its Lead and workers spent running a turn.",
+        options: { project: { type: "string", description: "Project ID or unique name; defaults to the caller's project." } },
+        positionals: [{ name: "spec", description: "Spec or work item identifier.", required: true }],
+        async run({ options, positionals }, context) {
+          try {
+            const projectId = await actionProject(options.project, context.projectId);
+            return { exitCode: 0, stdout: await actions.activeTime(projectId, positionals.spec) };
           } catch (error) {
             return { exitCode: 1, stderr: `${oneLine(error instanceof Error ? error.message : String(error))}\n` };
           }

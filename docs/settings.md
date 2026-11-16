@@ -26,7 +26,7 @@ Every tracker needs these sections before Start:
 |---|---|
 | Quick check | The test command in a fenced code block. |
 | Stop list | A bullet list of problems that stop a merge. |
-| Time limits | A Setting / Value table with positive Lane time limit and Worker time limit durations, such as `8 h` and `3 h`. |
+| Time limits | A Setting / Value table with positive Lane time limit and Worker time limit durations, such as `8 h` and `3 h`. Both limits count active time only, for every project: the time a lane's Lead and workers spend running a turn, with overlap counted once. A declared wait, a Stop and idle time don't count. A lane reads its active time with `bb squadron time <ID>`. |
 | Routes | `Defaults: House rules` plus optional label exceptions, or a legacy table with one `(default)` row. |
 | Final review | `other` reviews with the family that didn't build most of the branch; `same` reviews on the Lead's own route. |
 

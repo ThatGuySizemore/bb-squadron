@@ -518,3 +518,24 @@ test("an unreadable Lead history raises Needs you on a returning spec that is Do
   ]), { leads: [unread("only-lead")] })).board;
   assert.deepEqual(needsYou(landed).filter((item) => /couldn't read/.test(item.text)), []);
 });
+
+test("a replacement Lead with no PR of its own reads Landed once the spec merged from the previous Lead's PR", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"], done: true }),
+    issue("FIX-21", { parent: "FIX-20", done: true }),
+  ]), { leads: [landedLead("old-lead"), { ...landedLead("new-lead"), previousLeadId: "old-lead",
+    thread: makeThreadResponse({ id: "new-lead", projectId: "proj-one", environmentId: "new-env", status: "idle",
+      createdAt: Date.parse("2026-11-15T15:00:00Z") }) }], pullRequests: mergedPr }));
+  assert.deepEqual(board.lanes.map((row) => [row.specId, row.state, row.leadThreadId]), [["FIX-20", "landed", "new-lead"]]);
+});
+
+test("a completed spec that returns with a new open ticket still reads Flying under its replacement Lead", () => {
+  const { board } = deriveBoard(input(snapshot([
+    issue("FIX-20", { labels: ["ready-for-agent"], done: true }),
+    issue("FIX-21", { parent: "FIX-20", done: true }),
+    issue("FIX-23", { parent: "FIX-20" }),
+  ]), { leads: [landedLead("old-lead"), { ...landedLead("new-lead"), previousLeadId: "old-lead",
+    thread: makeThreadResponse({ id: "new-lead", projectId: "proj-one", environmentId: "new-env", status: "active",
+      createdAt: Date.parse("2026-11-15T15:00:00Z") }) }], pullRequests: mergedPr }));
+  assert.deepEqual(board.lanes.map((row) => [row.specId, row.state, row.leadThreadId]), [["FIX-20", "flying", "new-lead"]]);
+});

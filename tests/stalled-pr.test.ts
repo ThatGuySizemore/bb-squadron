@@ -144,3 +144,13 @@ test("an accept:owner lane with no checks raises no stall", async (t) => {
   assert.equal(board.lanes[0].stall, undefined);
   assert.equal(stallSends(f).length, 0);
 });
+
+test("a stall that clears before its notice is delivered sends nothing", async (t) => {
+  const f = await fixture(t);
+  idleLead(f); pr(f, "no_checks");
+  await f.startWatcher(); await f.advance(300_000);
+  assert.ok((await f.board()).lanes[0].stall);
+  pr(f, "passing", epoch, "merged");
+  await f.advance(30_000); await f.advance(150_000);
+  assert.equal(stallSends(f).length, 0, "the cleared stall is withdrawn before delivery");
+});

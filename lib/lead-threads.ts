@@ -240,23 +240,27 @@ async function workedSince(bb: BbPluginApi, threadId: string, control: ThreadEve
   const seq = control.seq;
   const after: ThreadEvent[] = [];
   for (let beforeSeq: string | undefined; ;) {
-    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: String(EVENT_PAGE), beforeSeq, types: ["client/turn/requested", "turn/started", "item/completed"] });
+    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: String(EVENT_PAGE), beforeSeq, types: ["client/turn/requested", "turn/started", "turn/completed", "item/completed"] });
     after.push(...events.filter((event) => event.seq > seq));
     if (events.length < EVENT_PAGE || events[events.length - 1].seq <= seq) break;
     beforeSeq = String(events[events.length - 1].seq);
   }
   // Oldest first, so each turn's start is read against the request just before it, whichever page it fell on.
   // After a Stop, the wind-down (its own turn, saved files, worker outcomes) isn't the Lead running again.
-  let asked: ThreadEvent | undefined = stop ? control : undefined;
+  // The control itself may start the next turn, as a wait or Stop sent to an idle Lead does.
+  let asked: ThreadEvent | undefined = control;
   // Whose request started the turn being read; a Stop's own wind-down may save files, any other turn's file changes are work.
   let turn: ThreadEvent | undefined;
   const automatic = (event: ThreadEvent) => event.type === "client/turn/requested" && !!event.data.systemMessageKind && event.data.systemMessageKind !== "unlabeled";
   for (const event of after.sort((a, b) => a.seq - b.seq)) {
     if (event.type === "client/turn/requested") { if (!stop || !automatic(event)) asked = event; }
+    // Once a turn ends, a later turn nobody asked for is the Lead's own work; a Stop keeps covering its wind-down.
+    else if (event.type === "turn/completed") { if (!stop) asked = undefined; }
     else if (event.type === "item/completed" && event.data.item.type === "fileChange") { if (!stop || (turn !== undefined && turn !== control)) return true; }
     else if (event.type === "turn/started") {
       turn = asked;
-      if (!asked || !(isPeerMessage(asked) || (stop && asked === control))) return true;
+      // The turn the control itself started (a Stop's wind-down, or a wait sent to an idle Lead that only saves and ends) isn't new work.
+      if (!asked || !(isPeerMessage(asked) || asked === control)) return true;
     }
   }
   return false;

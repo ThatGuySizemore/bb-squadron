@@ -225,6 +225,9 @@ async function readLeadLifecycle(bb: BbPluginApi, thread: Awaited<ReturnType<BbP
   return {};
 }
 
+/** BB serves at most 100 thread events per page; a larger limit is rejected with HTTP 400. */
+const EVENT_PAGE = 100;
+
 type ThreadEvent = Awaited<ReturnType<BbPluginApi["sdk"]["threads"]["events"]["list"]>>[number];
 type Control = ThreadEvent;
 const inputTexts = (control: Control) => control.type === "client/turn/requested"
@@ -237,9 +240,9 @@ async function workedSince(bb: BbPluginApi, threadId: string, control: ThreadEve
   const seq = control.seq;
   const after: ThreadEvent[] = [];
   for (let beforeSeq: string | undefined; ;) {
-    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested", "turn/started", "item/completed"] });
+    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: String(EVENT_PAGE), beforeSeq, types: ["client/turn/requested", "turn/started", "item/completed"] });
     after.push(...events.filter((event) => event.seq > seq));
-    if (events.length < 200 || events[events.length - 1].seq <= seq) break;
+    if (events.length < EVENT_PAGE || events[events.length - 1].seq <= seq) break;
     beforeSeq = String(events[events.length - 1].seq);
   }
   // Oldest first, so each turn's start is read against the request just before it, whichever page it fell on.
@@ -264,10 +267,10 @@ async function workedSince(bb: BbPluginApi, threadId: string, control: ThreadEve
 async function readLatestControl(bb: BbPluginApi, threadId: string, skipPeers = false): Promise<ThreadEvent | undefined> {
   let beforeSeq: string | undefined;
   for (;;) {
-    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: "200", beforeSeq, types: ["client/turn/requested"] });
+    const events = await bb.sdk.threads.events.list({ threadId, order: "desc", limit: String(EVENT_PAGE), beforeSeq, types: ["client/turn/requested"] });
     const control = events.find((event) => event.type === "client/turn/requested" &&
       (!event.data.systemMessageKind || event.data.systemMessageKind === "unlabeled") && !(skipPeers && isPeerMessage(event)));
-    if (control || events.length < 200) return control;
+    if (control || events.length < EVENT_PAGE) return control;
     beforeSeq = String(events[events.length - 1].seq);
   }
 }

@@ -45,6 +45,12 @@ const lane = z.object({
   workingThreads: z.number().int().nonnegative().optional(),
   /** Open blockers outside this lane when every remaining ticket waits. */
   waitingOn: z.array(z.string()).optional(),
+  /**
+   * An open PR whose required checks are unposted or failing, with an idle Lead, no wait and no owner question.
+   * `key` is the PR number plus its updatedAt: the PR plugin gives no head commit, so a new push (or other PR activity) is a new key.
+   * `owner` is set when the project has no Helper to route the next step, so the stall is also a Needs you item.
+   */
+  stall: z.object({ text: z.string(), key: z.string(), owner: z.boolean().optional() }).optional(),
   /** A no-remote lane whose tickets are ready for the Lead's local merge. */
   localMerge: z.boolean().optional(),
   /** Started outside Squadron: read-only, with no Stop, Resume or Merge. leadThreadId is its thread. */

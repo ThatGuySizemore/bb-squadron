@@ -29,6 +29,8 @@ export interface BoardInput extends LaneProgress {
   leads?: LeadThread[];
   /** Rows from BB's pull-request plugin, keyed by environment id. */
   pullRequests?: Record<string, PullRequestRow>;
+  /** Whether the project has a Helper to route a stalled lane's next step. Unknown counts as yes. */
+  hasHelper?: boolean;
   /** The board clock for derived lane state. */
   now: number;
 }
@@ -246,6 +248,14 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       !needs.length && lead.asksOwner === true && lead.idleSince !== undefined && input.now - lead.idleSince >= 300_000) {
       needs.push({ threadId: lead.thread.id, kind: "waiting", text: "The Lead is waiting on you" });
     }
+    // A stalled handoff isn't an owner decision: the Helper routes the next step to the Lead. Only with no Helper does it go to Needs you.
+    const stallText = pr?.state === "open" && (checks === "none" || checks === "failing")
+      ? `Stalled: PR #${pr.number} is open and its ${checks === "none" ? "required checks aren't posted" : "checks are failing"}. Next: the Lead runs the repo's merge steps.` : undefined;
+    const stalled = stallText !== undefined && !outside && !acceptOwner && landedAt === undefined && !stopped && noRunningThreads
+      && !needs.length && waitingOn.length === 0 && lead.asksOwner !== true
+      && lead.idleSince !== undefined && input.now - lead.idleSince >= 300_000;
+    const stallOwner = stalled && input.hasHelper === false;
+    if (stallOwner) needs.push({ threadId: lead.thread.id, kind: "waiting", text: stallText! });
     /** The reviewer the one resolver chooses from this lane's builders; omitted when none can be chosen. */
     function finalReview(): Pick<Lane, "reviewer" | "reviewerLaunch" | "finalReview"> {
       // A work item's own thread is its builder; a spec Lead only coordinates.
@@ -278,6 +288,7 @@ export function deriveBoard(input: BoardInput): DerivedBoard {
       ...(outside ? { outside } : {}),
       ...(noRemote && !outside ? { localMerge } : {}),
       ...(needs.length ? { needs } : {}),
+      ...(stalled ? { stall: { text: stallText!, key: `${pr!.number}:${pr!.updatedAt}`, ...(stallOwner ? { owner: true } : {}) } } : {}),
       minutes: Math.max(0, Math.floor(((landedAt ?? input.now) - lead.thread.createdAt) / 60_000)),
       ...(pr && checks ? { pr: { number: pr.number, state: pr.state, url: pr.url, checks } } : {}),
       ...(landedAt !== undefined ? { landedAt } : {}),

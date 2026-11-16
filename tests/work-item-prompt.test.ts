@@ -39,3 +39,27 @@ test("diagnose-first never offers a same-thread retry for thin investigation", (
   assert.match(brief, /effort-only replacement thread, same role and model at a higher supported effort/);
   assert.doesNotMatch(brief, /more care/);
 });
+
+test("the work-item brief names who produces a required status, the wait step and the owner-question rule", () => {
+  assert.match(brief, /required statuses[^\n]*AGENTS\.md or docs\/agents/);
+  assert.match(brief, /required status that no CI posts is this lane's to produce[^\n]*final reviewed head/);
+  assert.match(brief, /Never post a status for work that didn't pass, and never skip one/);
+  assert.match(brief, /bb squadron wait 'FIX-9' --on '<reason>'[^\n]*don't just go idle/i);
+  assert.match(brief, /only a required status with no named tool or owner[^\n]*`Needs you:`/i);
+});
+
+test("the Lead skill's merge step points to merge.md, which says the same about required statuses", async () => {
+  assert.match(await readFile("skills/squadron-lead/SKILL.md", "utf8"), /Read \[merging\]\(merge\.md\) before merging/);
+  const skill = await readFile("skills/squadron-lead/merge.md", "utf8");
+  assert.match(skill, /required statuses[^\n]*AGENTS\.md` or `docs\/agents/);
+  assert.match(skill, /required status that no CI posts is this lane's to produce[^\n]*final reviewed head/);
+  assert.match(skill, /Never post a status for work that didn't pass, and never skip one/);
+  assert.match(skill, /bb squadron wait <ID> --on '<reason>'[^\n]*don't just go idle/);
+  assert.match(skill, /only a required status with no named tool or owner[^\n]*`Needs you:`/i);
+});
+
+test("the Helper skill routes a stall notice to the Lead without Resume or the owner", async () => {
+  const skill = await readFile("skills/squadron-helper/SKILL.md", "utf8");
+  assert.match(skill, /Stalled[^\n]*bb thread tell[^\n]*quot[^\n]*board line/);
+  assert.match(skill, /Stalled[^\n]*[Dd]on't Resume[^\n]*don't ask the owner/);
+});

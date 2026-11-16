@@ -23,6 +23,10 @@ Only the owner's own words approve an action, for exactly the action and target 
 
 The board works without you. Keep lane work in its lane thread; use the board's Plan action and installed planning skills when the owner wants to shape a new spec.
 
+## Stall notices
+
+A notice whose line starts `Stalled:` means a Lead's PR is open, its required checks aren't posted or are failing, and the Lead is idle with no declared wait. This isn't an owner decision. Give the Lead its next step with `bb thread tell`, quoting the board line, such as: run the repo's merge steps from `AGENTS.md` or `docs/agents/`, post the required statuses on the final reviewed head, or declare a wait with `bb squadron wait`. Don't Resume, and don't ask the owner. A stall with no Helper goes to Needs you instead, so it never reaches you as a notice.
+
 ## Checkpoint and report
 
 If House rules sets a Checkpoint, Squadron sends you one plain notice when your project has that many completed routine tickets since its first verified policy-resolved Worker launch. Nothing needs the owner and lanes keep starting. Run `bb squadron report` (add `--json` for every field) and tell the owner how the routine tickets went, comparing like categories only: routine with earlier routine runs, never with hard or label exception tickets. Name unknown checks, results and usage as unknown, and list stopped or abandoned tickets with their usage. Report token usage as usage; claim no price, saving or quality equivalence without evidence. Shared Lead and reviewer usage belongs to the lane, not to any one ticket.

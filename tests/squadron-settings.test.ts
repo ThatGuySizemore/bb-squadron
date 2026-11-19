@@ -200,3 +200,9 @@ test("an unknown Clean up value is a settings issue that names it", () => {
   assert.deepEqual(result, { ok: false, issues: [{ section: "Clean up",
     message: "Clean up \"Always\" isn't a setting. Use After landing to archive saved worker threads when a lane lands, or Off (or remove the section) to keep them." }] });
 });
+
+// SQD-281: this repo opts in to Clean up after landing, and Doctor's settings reader accepts it.
+test("this repo's own squadron.md turns Clean up after landing on", () => {
+  const result = parseSquadronSettings(readFileSync("docs/agents/squadron.md", "utf8"), "linear", house);
+  assert.equal(result.ok && result.settings.cleanUp, "after landing", JSON.stringify(result));
+});

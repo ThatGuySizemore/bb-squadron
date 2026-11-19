@@ -11,7 +11,7 @@ function worker(id: string, overrides: Partial<WorkerThread> & { role?: string }
     ...rest } as unknown as WorkerThread;
 }
 function lead(workers: WorkerThread[], overrides: Partial<LeadThread> = {}, id = "lead-1"): LeadThread {
-  return { specId: "WW-1", thread: { id, environmentId: `env-${id}` }, workers, ...overrides } as unknown as LeadThread;
+  return { specId: "WW-1", thread: { id, environmentId: `env-${id}`, status: "idle" }, workers, ...overrides } as unknown as LeadThread;
 }
 function lanes(leads: LeadThread[], merged: string[] = ["lead-1"]): CleanupLanes {
   return { leads, merged: new Set(merged), identify: (id) => id };
@@ -19,8 +19,9 @@ function lanes(leads: LeadThread[], merged: string[] = ["lead-1"]): CleanupLanes
 function deps(states: Record<string, WorktreeState | null | "throw">, resume: string[] = []) {
   const archived: string[] = [];
   return { archived, deps: {
-    inspect: async (w: WorkerThread) => { const s = states[w.id]; if (s === "throw") throw new Error("host offline"); return s ?? null; },
+    inspect: async (w: { id: string }) => { const s = states[w.id]; if (s === "throw") throw new Error("host offline"); return s ?? null; },
     current: async (w: WorkerThread) => resume.includes(w.id) ? { ...w, status: "active" } as WorkerThread : w,
+    currentLead: async (l: LeadThread) => ({ lead: l.thread, children: [] as WorkerThread[] }),
     archive: async (id: string) => { archived.push(id); },
   } };
 }
@@ -111,4 +112,63 @@ test("a merged PR with no open tickets left archives every saved worker, as befo
   const { archived, deps: d } = deps({ a: saved });
   await cleanUpLanes({ ...lanes([lead([onTicket("a", "WW-72")])]), openTickets: () => new Set() }, d);
   assert.deepEqual(archived, ["a"]);
+});
+
+// SQD-281: a fully landed spec's Lead and review threads are archived too.
+const done = (extra: Partial<CleanupLanes> = {}, merged = ["lead-1"]) => (leads: LeadThread[]): CleanupLanes => ({ ...lanes(leads, merged), specDone: () => true, ...extra });
+const reviewer = (id: string, overrides: Partial<WorkerThread> = {}) => worker(id, { role: "Review of codex", ...overrides } as Partial<WorkerThread> & { role: string });
+
+test("a merged PR and a Done spec archive an idle, saved Lead and its review threads, the Lead last", async () => {
+  const { archived, deps: d } = deps({ a: saved, r: saved, "lead-1": saved });
+  const result = await cleanUpLanes(done()([lead([worker("a"), reviewer("r"), worker("s", { environmentId: "env-lead-1" })])]), d);
+  assert.deepEqual(archived, ["a", "r", "s", "lead-1"]);
+  assert.deepEqual(result.kept, []);
+});
+
+test("a merged PR but a spec that isn't Done keeps the Lead and its review threads", async () => {
+  const { archived, deps: d } = deps({ a: saved, r: saved, "lead-1": saved });
+  const result = await cleanUpLanes({ ...done()([lead([worker("a"), reviewer("r")])]), specDone: () => false }, d);
+  assert.deepEqual(archived, ["a"]);
+  assert.deepEqual(result.kept, []);
+});
+
+test("a Lead with uncommitted changes or unpushed commits is kept and listed under Needs you", async () => {
+  for (const [state, why] of [[{ clean: false, pushed: true }, "Its worktree has uncommitted changes."],
+    [{ clean: true, pushed: false }, "Its branch has commits that aren't on the remote."], [null, "Its worktree couldn't be checked."]] as const) {
+    const { archived, deps: d } = deps({ r: saved, "lead-1": state });
+    const result = await cleanUpLanes(done()([lead([reviewer("r")])]), d);
+    assert.deepEqual(archived, [], why);
+    assert.deepEqual(result.kept, [{ specId: "WW-1", threadId: "lead-1", text: `Unsaved work in WW-1's Lead. ${why}` }]);
+  }
+});
+
+test("a Lead with a running child, or that is running itself, is kept and nothing of the lane is archived beyond its workers", async () => {
+  const { archived, deps: d } = deps({ a: saved, r: saved, "lead-1": saved });
+  await cleanUpLanes(done()([lead([worker("a"), reviewer("r", { status: "active" } as Partial<WorkerThread>)])]), d);
+  assert.deepEqual(archived, ["a"]);
+  const again = deps({ r: saved, "lead-1": saved });
+  await cleanUpLanes(done()([lead([reviewer("r")], { thread: { id: "lead-1", environmentId: "env-lead-1", status: "active" } } as Partial<LeadThread>)]), again.deps);
+  assert.deepEqual(again.archived, []);
+});
+
+test("a Lead whose child was kept, or has no launch record, stays", async () => {
+  const kept = deps({ a: { clean: false, pushed: true }, "lead-1": saved });
+  await cleanUpLanes(done()([lead([worker("a")])]), kept.deps);
+  assert.deepEqual(kept.archived, []);
+  const bare = deps({ r: saved, "lead-1": saved });
+  await cleanUpLanes(done()([lead([reviewer("r"), worker("b", { record: undefined } as Partial<WorkerThread>)])]), bare.deps);
+  assert.deepEqual(bare.archived, ["r"]);
+});
+
+test("a Lead resumed during the check is not archived", async () => {
+  const { archived, deps: d } = deps({ r: saved, "lead-1": saved });
+  await cleanUpLanes(done()([lead([reviewer("r")])]), { ...d, currentLead: async (l) => ({ lead: { ...l.thread, status: "active" }, children: [] }) });
+  assert.deepEqual(archived, ["r"]);
+});
+
+test("a Lead is kept when the lane has an unmerged PR, and when the lanes name no spec state", async () => {
+  const { archived, deps: d } = deps({ r: saved, "lead-1": saved });
+  await cleanUpLanes(done({}, [])([lead([reviewer("r")])]), d);
+  await cleanUpLanes(lanes([lead([reviewer("r")])]), d);
+  assert.deepEqual(archived, []);
 });

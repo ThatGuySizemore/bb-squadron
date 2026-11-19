@@ -10,11 +10,11 @@ import { done } from "./fixtures/linear-mirror.js";
 const epoch = Date.parse("2026-11-14T12:00:00Z");
 const route = { providerId: "codex", model: "gpt-6.1-sol", effort: "medium", serviceTier: "default" };
 
-async function landedLane(t: TestContext, settingsExtra: string, state: "merged" | "open" = "merged", tickets: "done" | "open" = "done") {
-  const worktrees: Record<string, { clean: boolean; pushed: boolean } | "offline"> = {};
+async function landedLane(t: TestContext, settingsExtra: string, state: "merged" | "open" = "merged", tickets: "done" | "open" = "done", spec: "done" | "open" = "open") {
+  const worktrees: Record<string, { clean: boolean; pushed: boolean } | "offline"> = { "/worktrees/env-one": { clean: true, pushed: true } };
   // SQD-279: a merged PR lands a lane only when its spec's tickets are done, so FIX-5's ticket is Done unless a test keeps it open.
   const issues = () => Response.json({ data: { issues: { ...workspaceIssues.data.issues, nodes: workspaceIssues.data.issues.nodes
-    .map((node) => node.identifier === "FIX-6" && tickets === "done" ? { ...node, state: done } : node) } } });
+    .map((node) => (node.identifier === "FIX-6" && tickets === "done") || (node.identifier === "FIX-5" && spec === "done") ? { ...node, state: done } : node) } } });
   const f = await helperFixture(t, epoch, { issues }, undefined, undefined, undefined, { settingsExtra, worktree: (path) => {
     const value = worktrees[path];
     if (!value || value === "offline") throw new Error("host offline");
@@ -22,6 +22,8 @@ async function landedLane(t: TestContext, settingsExtra: string, state: "merged"
   } });
   f.projects.splice(1);
   f.lead("one", "Lead FIX-5");
+  // A Lead that finished its work is idle; the fixture's Lead is mid-turn.
+  if (spec === "done") f.threads.set("lead-one", { ...f.threads.get("lead-one")!, status: "idle" });
   const metadata = new Map<string, Record<string, unknown>>();
   f.harness.sdk.stub("threads.getPluginMetadata", async ({ threadId }: { threadId: string }) =>
     metadata.get(threadId) ?? (threadId.startsWith("lead-") ? { role: "lead", specId: "fix-5" } : {}));
@@ -47,7 +49,8 @@ async function landedLane(t: TestContext, settingsExtra: string, state: "merged"
     return id;
   };
   const pass = async () => { await f.startWatcher(); await f.advance(30_000); await settle(); return await f.board(); };
-  return { f, worker, archived, pass };
+  const leadWorktree = (state: { clean: boolean; pushed: boolean } | "offline") => { worktrees["/worktrees/env-one"] = state; };
+  return { f, worker, archived, pass, leadWorktree };
 }
 
 test("a landed lane's saved workers are archived, and an unsaved worker is kept under Needs you", async (t) => {
@@ -132,4 +135,37 @@ test("a merged PR with an open ticket left keeps the lane Flying and its open-ti
   assert.equal(board.lanes[0].state, "flying");
   assert.deepEqual(archived, ["w-a"]);
   assert.equal(f.threads.get("w-6")?.archivedAt ?? null, null);
+});
+
+// SQD-281: a fully landed spec's Lead and review threads are archived too, the Lead last.
+test("a merged PR and a Done spec archive the saved Lead and its review thread, after the workers", async (t) => {
+  const { worker, archived, pass } = await landedLane(t, "\n## Clean up\n\nAfter landing\n", "merged", "done", "done");
+  worker("a", { clean: true, pushed: true });
+  worker("r", { clean: true, pushed: true }, "Review of codex");
+  const board = await pass();
+  assert.deepEqual(archived, ["w-a", "w-r", "lead-one"]);
+  assert.equal(board.cleanup?.length ?? 0, 0);
+});
+
+test("a Done spec keeps a Lead with uncommitted changes and lists it under Needs you", async (t) => {
+  const { worker, archived, pass, leadWorktree } = await landedLane(t, "\n## Clean up\n\nAfter landing\n", "merged", "done", "done");
+  worker("r", { clean: true, pushed: true }, "Review of codex");
+  leadWorktree({ clean: false, pushed: true });
+  const board = await pass();
+  assert.deepEqual(archived, [], "the review thread stays with its Lead until the Lead is saved");
+  assert.deepEqual(board.cleanup?.map((item) => [item.threadId, item.text]), [["lead-one", "Unsaved work in FIX-5's Lead. Its worktree has uncommitted changes."]]);
+});
+
+test("a spec that isn't Done keeps the Lead and its review thread", async (t) => {
+  const { worker, archived, pass } = await landedLane(t, "\n## Clean up\n\nAfter landing\n", "merged", "done", "open");
+  worker("r", { clean: true, pushed: true }, "Review of codex");
+  await pass();
+  assert.deepEqual(archived, []);
+});
+
+test("a project without the setting archives no Lead or review thread, even when the spec is Done", async (t) => {
+  const { worker, archived, pass } = await landedLane(t, "", "merged", "done", "done");
+  worker("r", { clean: true, pushed: true }, "Review of codex");
+  await pass();
+  assert.deepEqual(archived, []);
 });

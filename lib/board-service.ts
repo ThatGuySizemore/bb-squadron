@@ -146,7 +146,9 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       const spec = snapshot.issues.find((issue) => issue.id === specId);
       return spec ? openLaneTickets(spec, progress.laneSnapshots?.[specId] ?? snapshot, entry.settings?.value?.ok === true ? entry.settings.value.settings : null) : new Set();
     };
-    entry.cleanup = cleanUpOn ? { leads, openTickets, identify: (specId) => snapshot.issues.find((issue) => issue.id === specId)?.identifier ?? specId,
+    // The Lead and its review threads go only once the spec is Done on its tracker and has no open tickets: a lane that merged part of its spec keeps its Lead.
+    const specDone = (specId: string) => snapshot.issues.find((issue) => issue.id === specId)?.state.type === "completed" && openTickets(specId).size === 0;
+    entry.cleanup = cleanUpOn ? { leads, openTickets, specDone, identify: (specId) => snapshot.issues.find((issue) => issue.id === specId)?.identifier ?? specId,
       merged: new Set(leads.flatMap(({ thread, outside }) => {
         const row = thread.environmentId ? pullRequests?.[thread.environmentId] : undefined;
         return !outside && row?.outcome === "available" && row.pullRequest.state === "merged" ? [thread.id] : [];

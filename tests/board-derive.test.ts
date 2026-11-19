@@ -580,3 +580,14 @@ test("open lane tickets come from the lane's snapshot: a ticket main shows Done 
   const item = snapshot([issue("FIX-30", { labels: ["ready-for-agent"] })]);
   assert.deepEqual([...openLaneTickets(item.issues[0] as never, item as never, null)], ["FIX-30"], "a work item is its own ticket");
 });
+
+// SQD-281 review: a spec is Done by its tracker's completed type or the status the mapping names for Landed.
+test("a spec is Done by a completed state or the mapped Landed status", async () => {
+  const { isSpecDone } = await import("../lib/board-derive.js");
+  const spec = (name: string, type: string) => ({ state: { name, type } }) as never;
+  const mapped = { statusMapping: { lane: { landed: "Delivered" } } } as never;
+  assert.equal(isSpecDone(spec("Done", "completed"), "linear", null), true);
+  assert.equal(isSpecDone(spec("Delivered", "started"), "linear", mapped), true);
+  assert.equal(isSpecDone(spec("Delivered", "started"), "github", mapped), false);
+  assert.equal(isSpecDone(spec("In Progress", "started"), "linear", mapped), false);
+});

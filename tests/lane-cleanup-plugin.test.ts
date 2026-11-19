@@ -169,3 +169,15 @@ test("a project without the setting archives no Lead or review thread, even when
   await pass();
   assert.deepEqual(archived, []);
 });
+
+// SQD-281 review: background work that starts while the Lead's worktree is read keeps the Lead, though its status stays idle.
+test("a Lead that starts background work during the worktree check is not archived", async (t) => {
+  const { f, worker, archived, pass } = await landedLane(t, "\n## Clean up\n\nAfter landing\n", "merged", "done", "done");
+  worker("r", { clean: true, pushed: true }, "Review of codex");
+  f.harness.sdk.stub("environments.get", async ({ environmentId }: { environmentId: string }) => {
+    if (environmentId === "env-one") f.threads.set("lead-one", { ...f.threads.get("lead-one")!, activity: { activeBackgroundCommandCount: 1 } } as never);
+    return { id: environmentId, projectId: "one", hostId: "host", path: `/worktrees/${environmentId}`, status: "ready" };
+  });
+  await pass();
+  assert.ok(!archived.includes("lead-one"));
+});

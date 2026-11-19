@@ -8,7 +8,7 @@ import type { registerLaneStart } from "./lane-start.js";
 import type { Board } from "./board-model.js";
 import { boardContract, type ProjectCounts } from "./board-contract.js";
 import { boardChanged, publishSquadronSignal, onSquadronSignal } from "./realtime-contract.js";
-import { deriveBoard, openLaneTickets, type BoardInput, type PlanningThread } from "./board-derive.js";
+import { deriveBoard, isSpecDone, openLaneTickets, type BoardInput, type PlanningThread } from "./board-derive.js";
 import type { LinearConnectionState } from "./linear-contract.js";
 import { readProjectCheckout } from "./project-checkout.js";
 import type { ProviderModels } from "./model-capabilities.js";
@@ -147,7 +147,10 @@ export function registerBoard(bb: BbPluginApi, sources: BoardSources, options: {
       return spec ? openLaneTickets(spec, progress.laneSnapshots?.[specId] ?? snapshot, entry.settings?.value?.ok === true ? entry.settings.value.settings : null) : new Set();
     };
     // The Lead and its review threads go only once the spec is Done on its tracker and has no open tickets: a lane that merged part of its spec keeps its Lead.
-    const specDone = (specId: string) => snapshot.issues.find((issue) => issue.id === specId)?.state.type === "completed" && openTickets(specId).size === 0;
+    const specDone = (specId: string) => {
+      const spec = snapshot.issues.find((issue) => issue.id === specId);
+      return spec !== undefined && isSpecDone(spec, snapshot.kind, entry.settings?.value?.ok === true ? entry.settings.value.settings : null) && openTickets(specId).size === 0;
+    };
     entry.cleanup = cleanUpOn ? { leads, openTickets, specDone, identify: (specId) => snapshot.issues.find((issue) => issue.id === specId)?.identifier ?? specId,
       merged: new Set(leads.flatMap(({ thread, outside }) => {
         const row = thread.environmentId ? pullRequests?.[thread.environmentId] : undefined;

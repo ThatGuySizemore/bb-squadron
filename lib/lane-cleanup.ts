@@ -131,9 +131,13 @@ export function liveCleanUp(bb: BbPluginApi): (projectId: string, lanes: Cleanup
       return host.call("readWorktreeState", { worktreePath: environment.path }, { hostId: environment.hostId, timeoutMs: 30_000 });
     },
     currentLead: async (lead) => {
-      const thread = await bb.sdk.threads.get({ threadId: lead.thread.id }).catch(() => null);
-      if (!thread || thread.archivedAt !== null || thread.deletedAt !== null) return null;
-      return { lead: thread, children: await readWorkers(bb, projectId, lead.thread.id) };
+      // The thread list carries the attention fields (background work, pending requests) that a single get leaves out.
+      for (let offset = 0; ; offset += 200) {
+        const threads = await bb.sdk.threads.list({ projectId, originPluginId: bb.pluginId, archived: false, includeHidden: true, limit: 200, offset });
+        const thread = threads.find(({ id }) => id === lead.thread.id);
+        if (thread) return thread.deletedAt === null ? { lead: thread, children: await readWorkers(bb, projectId, lead.thread.id) } : null;
+        if (threads.length < 200) return null;
+      }
     },
     archive: async (threadId) => { await bb.sdk.threads.archive({ threadId }); },
   });

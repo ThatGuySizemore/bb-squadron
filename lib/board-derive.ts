@@ -113,6 +113,11 @@ export function trackerTicketState(issue: TrackerIssue, kind: TrackerSnapshot["k
   return "blocked";
 }
 
+/** The spec is Done on its tracker: a completed state, or on Linear the status the Status mapping names for Landed. */
+export function isSpecDone(spec: TrackerIssue, kind: TrackerSnapshot["kind"], settings: SquadronSettings | null): boolean {
+  return spec.state.type === "completed" || (kind === "linear" && spec.state.name === settings?.statusMapping.lane.landed);
+}
+
 /**
  * Identifiers of a lane's tickets still open, held and declined ones aside. A work item stands for itself.
  * The board and Clean up both read this from the lane's own snapshot (a local-markdown lane's integration branch), never from main.
